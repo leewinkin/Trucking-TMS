@@ -4,12 +4,13 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV PORT=3000
-ENV DATA_FILE_PATH=/data/local-db.json
-
-RUN mkdir -p /data
 
 COPY package.json ./
+
+RUN npm install --omit=dev
+
 COPY server.js ./
+COPY store.js ./
 COPY public ./public
 COPY docs ./docs
 COPY README.md ./

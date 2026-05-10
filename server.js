@@ -1,16 +1,21 @@
 import http from "node:http";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createAppStore } from "./store.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const port = Number(process.env.PORT || 3000);
-const dataFile = resolveDataFilePath(process.env.DATA_FILE_PATH || ".local-db.json");
 const publicDir = path.join(__dirname, "public");
 
 await loadLocalEnv();
+
+const store = await createAppStore({
+  dbUrl: process.env.DATABASE_URL,
+  dataFile: process.env.DATA_FILE_PATH || ".local-db.json"
+});
 
 const mothershipBaseUrl =
   process.env.MOTHERSHIP_API_BASE_URL || "https://sandbox.api.mothership.com/beta";
@@ -55,110 +60,80 @@ server.listen(port, () => {
 });
 
 async function handleApi(req, res, url) {
-  if (req.method === "GET" && url.pathname === "/api/health") {
-    sendJson(res, 200, {
-      ok: true,
-      app: "Trucking TMS local prototype",
-      mothershipConfigured: Boolean(process.env.MOTHERSHIP_API_TOKEN),
-      mothershipBaseUrl
-    });
-    return;
-  }
-
-  if (req.method === "GET" && url.pathname === "/api/customers") {
-    const db = await readDb();
-    sendJson(res, 200, { customers: db.customers });
-    return;
-  }
-
-  if (req.method === "POST" && url.pathname === "/api/customers") {
-    const input = await readJson(req);
-    const db = await readDb();
-    const customer = {
-      id: createId("cust"),
-      companyName: requiredString(input.companyName, "companyName"),
-      billingEmail: String(input.billingEmail || "").trim(),
-      paymentTerms: String(input.paymentTerms || "Net 15").trim(),
-      status: "active",
-      createdAt: new Date().toISOString()
-    };
-
-    db.customers.push(customer);
-    db.tariffRules.push(defaultTariffRule(customer.id));
-    await writeDb(db);
-    sendJson(res, 201, { customer });
-    return;
-  }
-
-  if (req.method === "GET" && url.pathname === "/api/tariffs") {
-    const db = await readDb();
-    const customerId = url.searchParams.get("customerId");
-    const tariffRules = customerId
-      ? db.tariffRules.filter((rule) => rule.customerId === customerId)
-      : db.tariffRules;
-    sendJson(res, 200, { tariffRules });
-    return;
-  }
-
-  if (req.method === "POST" && url.pathname === "/api/tariffs") {
-    const input = await readJson(req);
-    const db = await readDb();
-    const customer = db.customers.find((item) => item.id === input.customerId);
-
-    if (!customer) {
-      sendJson(res, 404, { error: "CUSTOMER_NOT_FOUND", message: "Customer was not found." });
+    if (req.method === "GET" && url.pathname === "/api/health") {
+      sendJson(res, 200, {
+        ok: true,
+        app: "Trucking TMS local prototype",
+        dataStore: store.kind,
+        mothershipConfigured: Boolean(process.env.MOTHERSHIP_API_TOKEN),
+        mothershipBaseUrl
+      });
       return;
     }
 
-    db.tariffRules = db.tariffRules.filter((rule) => rule.customerId !== input.customerId);
-    const tariffRule = {
-      id: createId("tariff"),
-      customerId: input.customerId,
-      ruleType: ["fixed", "percentage", "hybrid"].includes(input.ruleType)
-        ? input.ruleType
-        : "percentage",
-      fixedAmount: toMoney(input.fixedAmount),
-      markupPercentage: toNumber(input.markupPercentage),
-      minimumMargin: toMoney(input.minimumMargin),
-      status: "active",
-      createdAt: new Date().toISOString()
-    };
+    if (req.method === "GET" && url.pathname === "/api/customers") {
+      const customers = await store.listCustomers();
+      sendJson(res, 200, { customers });
+      return;
+    }
 
-    db.tariffRules.push(tariffRule);
-    await writeDb(db);
-    sendJson(res, 200, { tariffRule });
-    return;
-  }
+    if (req.method === "POST" && url.pathname === "/api/customers") {
+      const input = await readJson(req);
+      input.companyName = requiredString(input.companyName, "companyName");
+      const customer = await store.createCustomer(input);
+      sendJson(res, 201, { customer });
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/tariffs") {
+      const customerId = url.searchParams.get("customerId");
+      const tariffRules = await store.listTariffs(customerId);
+      sendJson(res, 200, { tariffRules });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/tariffs") {
+      const input = await readJson(req);
+      const customer = await store.getCustomer(input.customerId);
+
+      if (!customer) {
+        sendJson(res, 404, { error: "CUSTOMER_NOT_FOUND", message: "Customer was not found." });
+        return;
+      }
+
+      const tariffRule = await store.upsertTariff(input);
+      sendJson(res, 200, { tariffRule });
+      return;
+    }
 
   if (req.method === "POST" && url.pathname === "/api/quotes") {
     await createQuote(req, res);
     return;
   }
 
-  if (req.method === "GET" && url.pathname === "/api/quotes") {
-    const db = await readDb();
-    sendJson(res, 200, { quotes: db.quotes.slice().reverse() });
-    return;
-  }
-
-  if (req.method === "POST" && url.pathname === "/api/shipments") {
-    await createShipment(req, res);
-    return;
-  }
-
-  if (req.method === "GET" && url.pathname === "/api/shipments") {
-    const db = await readDb();
-    sendJson(res, 200, { shipments: db.shipments.slice().reverse() });
-    return;
-  }
-
-  const shipmentMatch = url.pathname.match(/^\/api\/shipments\/([^/]+)$/);
-  if (req.method === "GET" && shipmentMatch) {
-    const db = await readDb();
-    const shipment = db.shipments.find((item) => item.id === shipmentMatch[1]);
-    if (!shipment) {
-      sendJson(res, 404, { error: "SHIPMENT_NOT_FOUND", message: "Shipment was not found." });
+    if (req.method === "GET" && url.pathname === "/api/quotes") {
+      const quotes = await store.listQuotes();
+      sendJson(res, 200, { quotes });
       return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/shipments") {
+      await createShipment(req, res);
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/shipments") {
+      const shipments = await store.listShipments();
+      sendJson(res, 200, { shipments });
+      return;
+    }
+
+    const shipmentMatch = url.pathname.match(/^\/api\/shipments\/([^/]+)$/);
+    if (req.method === "GET" && shipmentMatch) {
+      const shipment = await store.getShipment(shipmentMatch[1]);
+      if (!shipment) {
+        sendJson(res, 404, { error: "SHIPMENT_NOT_FOUND", message: "Shipment was not found." });
+        return;
     }
     sendJson(res, 200, { shipment });
     return;
@@ -168,30 +143,28 @@ async function handleApi(req, res, url) {
   if (req.method === "GET" && trackingMatch) {
     await getTracking(res, trackingMatch[1]);
     return;
-  }
+    }
 
-  if (req.method === "GET" && url.pathname === "/api/invoices") {
-    const db = await readDb();
-    sendJson(res, 200, { invoices: db.invoices.slice().reverse() });
-    return;
-  }
+    if (req.method === "GET" && url.pathname === "/api/invoices") {
+      const invoices = await store.listInvoices();
+      sendJson(res, 200, { invoices });
+      return;
+    }
 
   sendJson(res, 404, { error: "NOT_FOUND", message: "Route not found." });
 }
 
 async function createQuote(req, res) {
   const input = await readJson(req);
-  const db = await readDb();
-  const customer = db.customers.find((item) => item.id === input.customerId);
+  const customer = await store.getCustomer(input.customerId);
 
   if (!customer) {
     sendJson(res, 404, { error: "CUSTOMER_NOT_FOUND", message: "Customer was not found." });
     return;
   }
 
-  const tariffRule =
-    db.tariffRules.find((rule) => rule.customerId === customer.id && rule.status === "active") ||
-    defaultTariffRule(customer.id);
+  const tariffs = await store.listTariffs(customer.id);
+  const tariffRule = tariffs.find((rule) => rule.status === "active") || defaultTariffRule(customer.id);
 
   const carrierMode = input.carrierMode === "mothershipSandbox" ? "mothershipSandbox" : "demo";
   const mothershipRequest = buildMothershipQuoteRequest(input);
@@ -245,15 +218,13 @@ async function createQuote(req, res) {
     createdAt: new Date().toISOString()
   };
 
-  db.quotes.push(quote);
-  await writeDb(db);
+  await store.createQuote(quote);
   sendJson(res, 201, { quote });
 }
 
 async function createShipment(req, res) {
   const input = await readJson(req);
-  const db = await readDb();
-  const quote = db.quotes.find((item) => item.id === input.quoteId);
+  const quote = await store.getQuote(input.quoteId);
 
   if (!quote) {
     sendJson(res, 404, { error: "QUOTE_NOT_FOUND", message: "Quote was not found." });
@@ -315,11 +286,9 @@ async function createShipment(req, res) {
   };
 
   const invoice = {
-    id: createId("inv"),
     shipmentId: shipment.id,
     customerId: quote.customerId,
     customerName: quote.customerName,
-    invoiceNumber: `INV-${String(db.invoices.length + 1).padStart(5, "0")}`,
     amount: rate.sellPrice,
     status: "draft",
     issuedAt: null,
@@ -327,16 +296,12 @@ async function createShipment(req, res) {
     createdAt: new Date().toISOString()
   };
 
-  db.shipments.push(shipment);
-  db.invoices.push(invoice);
-  quote.status = "booked";
-  await writeDb(db);
-  sendJson(res, 201, { shipment, invoice });
+  const result = await store.createShipment({ quoteId: quote.id, shipment, invoice });
+  sendJson(res, 201, result);
 }
 
 async function getTracking(res, shipmentId) {
-  const db = await readDb();
-  const shipment = db.shipments.find((item) => item.id === shipmentId);
+  const shipment = await store.getShipment(shipmentId);
 
   if (!shipment) {
     sendJson(res, 404, { error: "SHIPMENT_NOT_FOUND", message: "Shipment was not found." });
@@ -349,10 +314,18 @@ async function getTracking(res, shipmentId) {
     process.env.MOTHERSHIP_API_TOKEN
   ) {
     const tracking = await requestMothershipTracking(shipment.carrierShipmentId);
+    const events = normalizeTrackingEvents(tracking);
+    await store.replaceTrackingEvents(shipment.id, events, tracking);
+    sendJson(res, 200, { shipmentId: shipment.id, carrierShipmentId: shipment.carrierShipmentId, events });
+    return;
+  }
+
+  const storedEvents = await store.getTrackingEvents(shipment.id);
+  if (storedEvents.length > 0) {
     sendJson(res, 200, {
       shipmentId: shipment.id,
       carrierShipmentId: shipment.carrierShipmentId,
-      events: normalizeTrackingEvents(tracking)
+      events: storedEvents
     });
     return;
   }
@@ -588,46 +561,6 @@ async function serveStatic(res, pathname) {
   }
 }
 
-async function readDb() {
-  if (!existsSync(dataFile)) {
-    const seed = createSeedDb();
-    await writeDb(seed);
-    return seed;
-  }
-
-  const raw = await readFile(dataFile, "utf8");
-  return JSON.parse(raw);
-}
-
-async function writeDb(db) {
-  await writeFile(dataFile, `${JSON.stringify(db, null, 2)}\n`, "utf8");
-}
-
-function createSeedDb() {
-  const customerId = "cust_demo";
-  return {
-    customers: [
-      {
-        id: customerId,
-        companyName: "Demo Customer",
-        billingEmail: "billing@example.com",
-        paymentTerms: "Net 15",
-        status: "active",
-        createdAt: new Date().toISOString()
-      }
-    ],
-    tariffRules: [
-      {
-        ...defaultTariffRule(customerId),
-        id: "tariff_demo"
-      }
-    ],
-    quotes: [],
-    shipments: [],
-    invoices: []
-  };
-}
-
 function defaultTariffRule(customerId) {
   return {
     id: createId("tariff"),
@@ -695,11 +628,6 @@ function roundMoney(value) {
 
 function createId(prefix) {
   return `${prefix}_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-4)}`;
-}
-
-function resolveDataFilePath(value) {
-  const filePath = String(value || ".local-db.json").trim();
-  return path.isAbsolute(filePath) ? filePath : path.join(__dirname, filePath);
 }
 
 async function loadLocalEnv() {

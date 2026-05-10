@@ -1,6 +1,6 @@
 # Cloud Deployment Notes
 
-The local prototype is now deployment-friendly because the data file path can be configured with `DATA_FILE_PATH`.
+The app is now deployment-friendly because the data store can switch to PostgreSQL through `DATABASE_URL`.
 
 ## Docker
 
@@ -10,11 +10,11 @@ Build:
 docker build -t trucking-tms .
 ```
 
-Run with a mounted data directory:
+Run with a database URL:
 
 ```powershell
-docker run --rm -p 3000:3000 -v "${PWD}/data:/data" `
-  -e DATA_FILE_PATH=/data/local-db.json `
+docker run --rm -p 3000:3000 `
+  -e DATABASE_URL=postgres://postgres:password@host.docker.internal:5432/trucking_tms `
   -e MOTHERSHIP_API_BASE_URL=https://sandbox.api.mothership.com/beta `
   -e MOTHERSHIP_API_TOKEN=your_token_here `
   trucking-tms
@@ -23,11 +23,10 @@ docker run --rm -p 3000:3000 -v "${PWD}/data:/data" `
 ## What To Set In Cloud
 
 - `PORT` if the host assigns one
-- `DATA_FILE_PATH` to a writable path on the host or mounted volume
+- `DATABASE_URL` for PostgreSQL
 - `MOTHERSHIP_API_BASE_URL`
 - `MOTHERSHIP_API_TOKEN`
 
 ## Important Note
 
-This prototype still stores app data in a JSON file. That is fine for early testing, but a real production deployment should move to PostgreSQL or another managed database before you depend on it for live operations.
-
+PostgreSQL is now the primary store when `DATABASE_URL` is set. The JSON fallback exists only as a temporary bridge for local transition and should not be used for production.
