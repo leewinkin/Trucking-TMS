@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const port = Number(process.env.PORT || 3000);
-const dataFile = path.join(__dirname, ".local-db.json");
+const dataFile = resolveDataFilePath(process.env.DATA_FILE_PATH || ".local-db.json");
 const publicDir = path.join(__dirname, "public");
 
 await loadLocalEnv();
@@ -695,6 +695,11 @@ function roundMoney(value) {
 
 function createId(prefix) {
   return `${prefix}_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-4)}`;
+}
+
+function resolveDataFilePath(value) {
+  const filePath = String(value || ".local-db.json").trim();
+  return path.isAbsolute(filePath) ? filePath : path.join(__dirname, filePath);
 }
 
 async function loadLocalEnv() {

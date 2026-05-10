@@ -52,7 +52,10 @@ Speedship and Priority1 should be added later behind the same internal carrier a
 - `docs/mothership-integration.md`: Mothership-specific endpoints, backend contracts, and risks.
 - `docs/first-build-checklist.md`: First implementation phases.
 - `docs/local-development.md`: How to run the local prototype.
+- `docs/cloud-deployment.md`: Docker and cloud deployment notes.
 - `.env.example`: Safe environment variable template for backend secrets.
+- `Dockerfile`: Container image for cloud deploys.
+- `.dockerignore`: Files excluded from the container build.
 
 ## Run Locally
 
