@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Trucking TMS Prototype</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-mark">TMS</span>
+          <span>
+            <strong>Shipment Desk</strong>
+            <small>Local prototype</small>
+          </span>
+        </div>
+        <nav class="nav">
+          <button class="nav-button active" data-view="dashboard">Dashboard</button>
+          <button class="nav-button" data-view="customers">Customers</button>
+          <button class="nav-button" data-view="quote">New Quote</button>
+          <button class="nav-button" data-view="shipments">Shipments</button>
+          <button class="nav-button" data-view="invoices">Invoices</button>
+        </nav>
+        <div class="system-status">
+          <span class="status-dot" id="statusDot"></span>
+          <span id="healthText">Checking server</span>
+        </div>
+      </aside>
+
+      <main class="content">
+        <section class="topbar">
+          <div>
+            <h1 id="viewTitle">Dashboard</h1>
+            <p id="viewSubtitle">Watch quote activity, shipment status, and invoice drafts.</p>
+          </div>
+          <button class="primary-action" id="refreshButton">Refresh</button>
+        </section>
+
+        <section class="view active" id="dashboardView">
+          <div class="metric-grid">
+            <article class="metric">
+              <span>Customers</span>
+              <strong id="customerCount">0</strong>
+            </article>
+            <article class="metric">
+              <span>Quotes</span>
+              <strong id="quoteCount">0</strong>
+            </article>
+            <article class="metric">
+              <span>Shipments</span>
+              <strong id="shipmentCount">0</strong>
+            </article>
+            <article class="metric">
+              <span>Draft invoices</span>
+              <strong id="invoiceCount">0</strong>
+            </article>
+          </div>
+          <div class="two-column">
+            <section class="panel">
+              <div class="panel-heading">
+                <h2>Recent Shipments</h2>
+              </div>
+              <div id="recentShipments" class="table-list"></div>
+            </section>
+            <section class="panel">
+              <div class="panel-heading">
+                <h2>Next Setup Steps</h2>
+              </div>
+              <ul class="check-list">
+                <li>Add real customers.</li>
+                <li>Set customer markup rules.</li>
+                <li>Add your Mothership sandbox token to backend env.</li>
+                <li>Run one sandbox quote before enabling carrier booking.</li>
+              </ul>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" id="customersView">
+          <div class="two-column">
+            <section class="panel">
+              <div class="panel-heading">
+                <h2>Customer Accounts</h2>
+              </div>
+              <form id="customerForm" class="form-grid compact">
+                <label>
+                  Company name
+                  <input name="companyName" required placeholder="ABC Warehouse">
+                </label>
+                <label>
+                  Billing email
+                  <input name="billingEmail" type="email" placeholder="billing@example.com">
+                </label>
+                <label>
+                  Payment terms
+                  <input name="paymentTerms" value="Net 15">
+                </label>
+                <button class="primary-action" type="submit">Add Customer</button>
+              </form>
+              <div id="customerList" class="table-list"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-heading">
+                <h2>Tariff Rule</h2>
+              </div>
+              <form id="tariffForm" class="form-grid compact">
+                <label>
+                  Customer
+                  <select name="customerId" id="tariffCustomerSelect"></select>
+                </label>
+                <label>
+                  Rule type
+                  <select name="ruleType">
+                    <option value="percentage">Percentage markup</option>
+                    <option value="fixed">Fixed markup</option>
+                    <option value="hybrid">Greater of fixed or percent</option>
+                  </select>
+                </label>
+                <label>
+                  Fixed amount
+                  <input name="fixedAmount" type="number" min="0" step="0.01" value="50">
+                </label>
+                <label>
+                  Markup percent
+                  <input name="markupPercentage" type="number" min="0" step="0.1" value="15">
+                </label>
+                <label>
+                  Minimum margin
+                  <input name="minimumMargin" type="number" min="0" step="0.01" value="75">
+                </label>
+                <button class="primary-action" type="submit">Save Tariff</button>
+              </form>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" id="quoteView">
+          <form id="quoteForm" class="quote-layout">
+            <section class="panel">
+              <div class="panel-heading">
+                <h2>Customer and Mode</h2>
+              </div>
+              <div class="form-grid compact">
+                <label>
+                  Customer
+                  <select name="customerId" id="quoteCustomerSelect"></select>
+                </label>
+                <label>
+                  Carrier mode
+                  <select name="carrierMode">
+                    <option value="demo">Demo rates</option>
+                    <option value="mothershipSandbox">Mothership sandbox</option>
+                  </select>
+                </label>
+                <label>
+                  Pickup date
+                  <input name="pickupDate" type="date" required>
+                </label>
+                <label>
+                  Ready time
+                  <input name="pickupTime" value="0930" maxlength="4" required>
+                </label>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-heading">
+                <h2>Pickup</h2>
+              </div>
+              <div class="form-grid">
+                <label>
+                  Location name
+                  <input name="pickupName" required value="Griffith Observatory">
+                </label>
+                <label>
+                  Street
+                  <input name="pickupStreet" required value="2800 East Observatory Road">
+                </label>
+                <label>
+                  City
+                  <input name="pickupCity" required value="Los Angeles">
+                </label>
+                <label>
+                  State
+                  <input name="pickupState" required value="CA" maxlength="2">
+                </label>
+                <label>
+                  ZIP
+                  <input name="pickupZip" required value="90027">
+                </label>
+                <label>
+                  Phone
+                  <input name="pickupPhone" required value="+15555555555">
+                </label>
+                <label>
+                  Open
+                  <input name="pickupOpen" required value="0800" maxlength="4">
+                </label>
+                <label>
+                  Close
+                  <input name="pickupClose" required value="1700" maxlength="4">
+                </label>
+                <label>
+                  Accessorials
+                  <input name="pickupAccessorials" value="liftgate">
+                </label>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-heading">
+                <h2>Delivery</h2>
+              </div>
+              <div class="form-grid">
+                <label>
+                  Location name
+                  <input name="deliveryName" required value="LACMA">
+                </label>
+                <label>
+                  Street
+                  <input name="deliveryStreet" required value="5905 Wilshire Boulevard">
+                </label>
+                <label>
+                  City
+                  <input name="deliveryCity" required value="Los Angeles">
+                </label>
+                <label>
+                  State
+                  <input name="deliveryState" required value="CA" maxlength="2">
+                </label>
+                <label>
+                  ZIP
+                  <input name="deliveryZip" required value="90036">
+                </label>
+                <label>
+                  Phone
+                  <input name="deliveryPhone" required value="+15555555555">
+                </label>
+                <label>
+                  Open
+                  <input name="deliveryOpen" required value="0900" maxlength="4">
+                </label>
+                <label>
+                  Close
+                  <input name="deliveryClose" required value="1600" maxlength="4">
+                </label>
+                <label>
+                  Accessorials
+                  <input name="deliveryAccessorials" value="residential">
+                </label>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-heading">
+                <h2>Freight</h2>
+              </div>
+              <div class="form-grid">
+                <label>
+                  Quantity
+                  <input name="quantity" type="number" min="1" value="2" required>
+                </label>
+                <label>
+                  Type
+                  <select name="freightType">
+                    <option>Pallet</option>
+                    <option>Box</option>
+                    <option>Crate</option>
+                  </select>
+                </label>
+                <label>
+                  Weight each
+                  <input name="weight" type="number" min="1" value="50" required>
+                </label>
+                <label>
+                  Length
+                  <input name="length" type="number" min="1" value="48" required>
+                </label>
+                <label>
+                  Width
+                  <input name="width" type="number" min="1" value="42" required>
+                </label>
+                <label>
+                  Height
+                  <input name="height" type="number" min="1" value="46" required>
+                </label>
+                <label class="span-2">
+                  Description
+                  <input name="description" value="General merchandise" required>
+                </label>
+              </div>
+              <div class="button-row">
+                <button class="primary-action" type="submit">Get Rates</button>
+              </div>
+            </section>
+          </form>
+
+          <section class="panel" id="quoteResultsPanel">
+            <div class="panel-heading">
+              <h2>Quote Results</h2>
+            </div>
+            <div id="quoteResults" class="rate-list empty-state">Submit a quote to see available rates.</div>
+          </section>
+        </section>
+
+        <section class="view" id="shipmentsView">
+          <section class="panel">
+            <div class="panel-heading">
+              <h2>Shipments</h2>
+            </div>
+            <div id="shipmentList" class="table-list"></div>
+          </section>
+        </section>
+
+        <section class="view" id="invoicesView">
+          <section class="panel">
+            <div class="panel-heading">
+              <h2>Invoices</h2>
+            </div>
+            <div id="invoiceList" class="table-list"></div>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <div id="toast" class="toast" role="status"></div>
+    <script src="/app.js"></script>
+  </body>
+</html>
