@@ -10,7 +10,8 @@ const state = {
   quotes: [],
   shipments: [],
   invoices: [],
-  currentQuote: null
+  currentQuote: null,
+  carrierModeTouched: false
 };
 
 const viewMeta = {
@@ -37,6 +38,12 @@ function wireNavigation() {
 }
 
 function wireForms() {
+  const carrierModeSelect = document.querySelector("[name='carrierMode']");
+  carrierModeSelect.addEventListener("change", () => {
+    state.carrierModeTouched = true;
+    syncCarrierControls();
+  });
+
   document.getElementById("customerForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -81,6 +88,8 @@ function wireForms() {
     renderQuoteResults(response.quote);
     await refreshAll({ keepQuoteResults: true });
   });
+
+  syncCarrierControls();
 }
 
 async function refreshAll(options = {}) {
@@ -107,6 +116,7 @@ async function refreshAll(options = {}) {
     renderDashboard();
     renderShipments();
     renderInvoices();
+    syncCarrierControls();
 
     if (!options.keepQuoteResults && !state.currentQuote) {
       document.getElementById("quoteResults").textContent = "Submit a quote to see available rates.";
@@ -152,6 +162,34 @@ function renderHealth() {
   healthText.textContent = state.health?.mothershipConfigured
     ? "Server ready, Mothership configured"
     : "Server ready, demo mode";
+}
+
+function syncCarrierControls() {
+  const carrierModeSelect = document.querySelector("[name='carrierMode']");
+  const bookWithCarrier = document.querySelector("[name='bookWithCarrier']");
+  const hint = document.getElementById("carrierModeHint");
+  if (!carrierModeSelect || !bookWithCarrier) {
+    return;
+  }
+
+  if (
+    state.health?.mothershipConfigured &&
+    !state.carrierModeTouched &&
+    !state.currentQuote &&
+    carrierModeSelect.value === "demo"
+  ) {
+    carrierModeSelect.value = "mothershipSandbox";
+  }
+
+  const sandboxEnabled = carrierModeSelect.value === "mothershipSandbox";
+  bookWithCarrier.disabled = !sandboxEnabled;
+  if (!sandboxEnabled) {
+    bookWithCarrier.checked = false;
+  }
+
+  hint.textContent = sandboxEnabled
+    ? "Mothership sandbox is selected. Checking booking will purchase the rate in sandbox after quote."
+    : "Demo rates only create local test bookings.";
 }
 
 function renderCustomerOptions() {
@@ -216,12 +254,17 @@ function renderQuoteResults(quote) {
           <div class="meta-line">
             <span class="pill">Cost ${money.format(rate.carrierCost)}</span>
             <span class="pill">Markup ${money.format(rate.markup)}</span>
-            <span class="pill">Margin ${money.format(rate.margin)}</span>
+            <span class="pill">${escapeHtml(rate.provider)}${rate.providerScac ? ` · ${escapeHtml(rate.providerScac)}` : ""}</span>
           </div>
+          ${Array.isArray(rate.warnings) && rate.warnings.length > 0 ? `
+            <div class="meta-line">
+              ${rate.warnings.map((warning) => `<span class="pill">${escapeHtml(warning)}</span>`).join("")}
+            </div>
+          ` : ""}
         </div>
         <div class="price-block">
           <strong>${money.format(rate.sellPrice)}</strong>
-          <button class="secondary-action" type="button" data-book-rate="${escapeHtml(rate.id)}">Book Local</button>
+          <button class="secondary-action" type="button" data-book-rate="${escapeHtml(rate.id)}">Book Rate</button>
         </div>
       </article>
     `)
@@ -233,12 +276,13 @@ function renderQuoteResults(quote) {
 }
 
 async function bookRate(quoteId, rateId) {
+  const bookWithCarrier = Boolean(document.querySelector("[name='bookWithCarrier']")?.checked);
   const response = await api("/api/shipments", {
     method: "POST",
     body: {
       quoteId,
       rateId,
-      bookWithCarrier: false
+      bookWithCarrier
     }
   });
 

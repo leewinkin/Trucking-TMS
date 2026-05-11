@@ -150,6 +150,13 @@
                     <option value="mothershipSandbox">Mothership sandbox</option>
                   </select>
                 </label>
+                <label class="checkbox-row span-2">
+                  <span>Booking</span>
+                  <span class="checkbox-wrap">
+                    <input name="bookWithCarrier" type="checkbox">
+                    <span>Book with carrier after quote</span>
+                  </span>
+                </label>
                 <label>
                   Pickup date
                   <input name="pickupDate" type="date" required>
@@ -158,6 +165,7 @@
                   Ready time
                   <input name="pickupTime" value="0930" maxlength="4" required>
                 </label>
+                <div class="helper-text span-2" id="carrierModeHint">Use demo rates for local testing, or switch to Mothership sandbox when your token is set.</div>
               </div>
             </section>
 

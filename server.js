@@ -313,7 +313,7 @@ async function getTracking(res, shipmentId) {
     shipment.carrier === "mothership" &&
     process.env.MOTHERSHIP_API_TOKEN
   ) {
-    const tracking = await requestMothershipTracking(shipment.carrierShipmentId);
+    const tracking = await requestMothershipShipmentDetails(shipment.carrierShipmentId);
     const events = normalizeTrackingEvents(tracking);
     await store.replaceTrackingEvents(shipment.id, events, tracking);
     sendJson(res, 200, { shipmentId: shipment.id, carrierShipmentId: shipment.carrierShipmentId, events });
@@ -352,7 +352,9 @@ function buildMothershipQuoteRequest(input) {
       date: requiredString(input.pickupReadyDate?.date, "pickupReadyDate.date"),
       time: requiredString(input.pickupReadyDate?.time, "pickupReadyDate.time")
     },
-    freight: normalizeFreight(input.freight)
+    freight: normalizeFreight(input.freight),
+    rateResponseTimeoutMs: 25000,
+    applyAvailableCredits: true
   };
 }
 
@@ -409,6 +411,12 @@ async function requestMothershipTracking(shipmentId) {
   });
 }
 
+async function requestMothershipShipmentDetails(shipmentId) {
+  return requestMothership(`/shipments/${encodeURIComponent(shipmentId)}`, {
+    method: "GET"
+  });
+}
+
 async function requestMothership(route, options) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 35000);
@@ -455,6 +463,7 @@ function normalizeMothershipRates(payload) {
     id: String(rate.id || rate.rateId || `rate_${index + 1}`),
     carrierRateId: String(rate.id || rate.rateId || `rate_${index + 1}`),
     provider: String(rate.provider || rate.providerScac || "mothership"),
+    providerScac: rate.providerScac || null,
     service: Array.isArray(rate.services) && rate.services.length > 0 ? rate.services.join(", ") : "Standard",
     carrierCost: toMoney(rate.price || rate.total || rate.cost || 0),
     estimatedPickupDate: rate.estimatedPickupDate || null,
@@ -466,16 +475,31 @@ function normalizeMothershipRates(payload) {
 
 function normalizeTrackingEvents(payload) {
   const events = payload?.results || payload?.data?.trackingEvents || payload?.data || [];
-  if (!Array.isArray(events)) {
-    return [];
+  if (Array.isArray(events)) {
+    return events.map((event) => ({
+      status: event.status || event.type || "Updated",
+      eventTime: event.eventTime || event.timestamp || event.createdAt || new Date().toISOString(),
+      location: event.location || [event.city, event.state].filter(Boolean).join(", "),
+      description: event.description || event.message || "Tracking event received."
+    }));
   }
 
-  return events.map((event) => ({
-    status: event.status || event.type || "Updated",
-    eventTime: event.eventTime || event.timestamp || event.createdAt || new Date().toISOString(),
-    location: event.location || [event.city, event.state].filter(Boolean).join(", "),
-    description: event.description || event.message || "Tracking event received."
-  }));
+  const data = payload?.data || payload || {};
+  return [
+    {
+      status: data.status || "Updated",
+      eventTime:
+        data.estimatedDeliveryDate ||
+        data.earliestPickupDate ||
+        data.createdAt ||
+        new Date().toISOString(),
+      location:
+        data.estimatedLocation && typeof data.estimatedLocation === "object"
+          ? `${data.estimatedLocation.latitude}, ${data.estimatedLocation.longitude}`
+          : "",
+      description: "Shipment details updated."
+    }
+  ];
 }
 
 function createDemoCarrierQuote(request) {

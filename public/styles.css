@@ -287,6 +287,33 @@ select:focus {
   grid-column: span 2;
 }
 
+.checkbox-row {
+  align-content: start;
+}
+
+.checkbox-row > span:first-child {
+  display: block;
+}
+
+.checkbox-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+}
+
+.checkbox-wrap input {
+  width: auto;
+  height: auto;
+  margin: 0;
+}
+
+.helper-text {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .button-row {
   display: flex;
   justify-content: flex-end;
