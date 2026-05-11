@@ -7,6 +7,7 @@ The first build should focus on a clean MVP:
 - Customer accounts and user login
 - Admin customer management
 - Customer-specific tariff rules
+- Customer-scoped permissions
 - Shipment quoting through your backend
 - Booking through Mothership
 - Tracking lookup
@@ -34,9 +35,9 @@ For a first version, I recommend keeping frontend and backend in one app until t
 
 Build a working quote-to-book flow for Mothership only:
 
-1. Admin creates a customer.
+1. Admin signs in and creates a customer.
 2. Admin sets that customer's tariff rule.
-3. Customer submits shipment details.
+3. Customer signs in and submits shipment details.
 4. Backend requests your cost from Mothership.
 5. Backend applies the customer's tariff.
 6. Customer sees the final sell rate.
