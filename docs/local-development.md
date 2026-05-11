@@ -45,7 +45,7 @@ Never put the token in `public/`, frontend JavaScript, screenshots, or customer-
 - Add customers
 - Save tariff rules
 - Create demo quotes
-- Apply fixed, percentage, or hybrid markup
+- Apply fixed or percentage markup
 - Create local bookings from quoted rates
 - Create draft invoices from bookings
 - Store all business data in PostgreSQL when `DATABASE_URL` is set

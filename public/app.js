@@ -62,8 +62,7 @@ function wireForms() {
         customerId: form.get("customerId"),
         ruleType: form.get("ruleType"),
         fixedAmount: form.get("fixedAmount"),
-        markupPercentage: form.get("markupPercentage"),
-        minimumMargin: form.get("minimumMargin")
+        markupPercentage: form.get("markupPercentage")
       }
     });
     showToast("Tariff saved.");
@@ -182,8 +181,8 @@ function renderCustomers() {
             <small>${escapeHtml(customer.billingEmail || "No billing email")} · ${escapeHtml(customer.paymentTerms)}</small>
             <div class="meta-line">
               <span class="pill">${escapeHtml(tariff?.ruleType || "no tariff")}</span>
-              <span class="pill">${money.format(Number(tariff?.minimumMargin || 0))} min margin</span>
               <span class="pill">${Number(tariff?.markupPercentage || 0)}% markup</span>
+              <span class="pill">${money.format(Number(tariff?.fixedAmount || 0))} fixed</span>
             </div>
           </div>
           <span class="pill">${escapeHtml(customer.status)}</span>

@@ -98,8 +98,6 @@ Each customer should support one or more tariff rules.
 
 - Fixed markup: cost plus a fixed dollar amount
 - Percentage markup: cost multiplied by a markup percentage
-- Minimum margin: enforce minimum profit per shipment
-- Manual override: admin-entered final sell price
 
 ### Suggested Formula
 
@@ -107,7 +105,6 @@ Each customer should support one or more tariff rules.
 carrier_cost = Mothership returned cost
 markup_amount = fixed_amount OR carrier_cost * markup_percentage
 sell_price = carrier_cost + markup_amount
-final_sell_price = max(sell_price, carrier_cost + minimum_margin)
 ```
 
 ### Future Rule Options
@@ -147,7 +144,6 @@ final_sell_price = max(sell_price, carrier_cost + minimum_margin)
 - rule_type
 - fixed_amount
 - markup_percentage
-- minimum_margin
 - applies_to
 - status
 - created_at
@@ -243,4 +239,3 @@ The frontend should never know which carrier API format is being used.
 - Customer can see booking details and tracking.
 - Customer can view invoice records.
 - Carrier API token is never exposed to the frontend.
-

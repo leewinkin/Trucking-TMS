@@ -14,7 +14,6 @@
 - Add tariff rule table
 - Add fixed markup rule
 - Add percentage markup rule
-- Add minimum margin
 - Add admin tariff editor
 - Add server-side tariff calculation
 
@@ -70,4 +69,3 @@ Choose the first implementation stack:
 - Option C: React frontend plus Supabase backend
 
 Recommended: Option A for fastest MVP, then split services later if needed.
-

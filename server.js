@@ -519,12 +519,6 @@ function applyTariff(carrierCost, tariffRule) {
     markup = fixedMarkup;
   }
 
-  if (tariffRule.ruleType === "hybrid") {
-    markup = Math.max(fixedMarkup, percentageMarkup);
-  }
-
-  markup = Math.max(markup, toMoney(tariffRule.minimumMargin));
-
   return {
     carrierCost: roundMoney(carrierCost),
     markup: roundMoney(markup),
@@ -568,7 +562,6 @@ function defaultTariffRule(customerId) {
     ruleType: "percentage",
     fixedAmount: 50,
     markupPercentage: 15,
-    minimumMargin: 75,
     status: "active",
     createdAt: new Date().toISOString()
   };

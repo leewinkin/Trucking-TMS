@@ -65,15 +65,14 @@ async function createPostgresStore(dbUrl) {
         const customer = customerResult.rows[0];
         await client.query(
           `INSERT INTO tariff_rules
-           (id, customer_id, rule_type, fixed_amount, markup_percentage, minimum_margin, status, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+           (id, customer_id, rule_type, fixed_amount, markup_percentage, status, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
           [
             createId("tariff"),
             customer.id,
             "percentage",
             50,
             15,
-            75,
             "active",
             nowIso()
           ]
@@ -110,8 +109,8 @@ async function createPostgresStore(dbUrl) {
         await client.query("DELETE FROM tariff_rules WHERE customer_id = $1", [input.customerId]);
         const result = await client.query(
           `INSERT INTO tariff_rules
-           (id, customer_id, rule_type, fixed_amount, markup_percentage, minimum_margin, status, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           (id, customer_id, rule_type, fixed_amount, markup_percentage, status, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
            RETURNING *`,
           [
             createId("tariff"),
@@ -119,7 +118,6 @@ async function createPostgresStore(dbUrl) {
             normalizeRuleType(input.ruleType),
             toMoney(input.fixedAmount),
             toNumber(input.markupPercentage),
-            toMoney(input.minimumMargin),
             "active",
             nowIso()
           ]
@@ -305,7 +303,6 @@ async function ensureSchema(pool) {
       rule_type text NOT NULL,
       fixed_amount numeric NOT NULL DEFAULT 0,
       markup_percentage numeric NOT NULL DEFAULT 0,
-      minimum_margin numeric NOT NULL DEFAULT 0,
       status text NOT NULL DEFAULT 'active',
       created_at timestamptz NOT NULL DEFAULT now()
     )`,
@@ -401,10 +398,10 @@ async function seedPostgres(pool) {
 
     await client.query(
       `INSERT INTO tariff_rules
-       (id, customer_id, rule_type, fixed_amount, markup_percentage, minimum_margin, status, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       (id, customer_id, rule_type, fixed_amount, markup_percentage, status, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (id) DO NOTHING`,
-      ["tariff_demo", "cust_demo", "percentage", 50, 15, 75, "active", now]
+      ["tariff_demo", "cust_demo", "percentage", 50, 15, "active", now]
     );
     await client.query("COMMIT");
   } catch (error) {
@@ -462,7 +459,6 @@ function createJsonStore(filePath) {
         ruleType: normalizeRuleType(input.ruleType),
         fixedAmount: toMoney(input.fixedAmount),
         markupPercentage: toNumber(input.markupPercentage),
-        minimumMargin: toMoney(input.minimumMargin),
         status: "active",
         createdAt: nowIso()
       };
@@ -582,7 +578,6 @@ function createSeedDb() {
         ruleType: "percentage",
         fixedAmount: 50,
         markupPercentage: 15,
-        minimumMargin: 75,
         status: "active",
         createdAt: now
       }
@@ -601,14 +596,13 @@ function defaultTariffRule(customerId) {
     ruleType: "percentage",
     fixedAmount: 50,
     markupPercentage: 15,
-    minimumMargin: 75,
     status: "active",
     createdAt: nowIso()
   };
 }
 
 function normalizeRuleType(ruleType) {
-  return ["fixed", "percentage", "hybrid"].includes(ruleType) ? ruleType : "percentage";
+  return ["fixed", "percentage"].includes(ruleType) ? ruleType : "percentage";
 }
 
 function toMoney(value) {
@@ -645,7 +639,6 @@ function mapTariffRuleRow(row) {
     ruleType: row.rule_type,
     fixedAmount: row.fixed_amount,
     markupPercentage: row.markup_percentage,
-    minimumMargin: row.minimum_margin,
     status: row.status,
     createdAt: row.created_at
   };
