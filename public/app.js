@@ -249,12 +249,14 @@ function renderQuoteResults(quote) {
     .map((rate) => `
       <article class="rate-item">
         <div>
-          <strong>${escapeHtml(rate.provider)} · ${escapeHtml(rate.service)}</strong>
+          <div class="rate-title-row">
+            <strong>${escapeHtml(rate.provider)} · ${escapeHtml(rate.service)}</strong>
+            <span class="carrier-badge">${escapeHtml(rate.provider)}${rate.providerScac ? ` (${escapeHtml(rate.providerScac)})` : ""}</span>
+          </div>
           <small>Carrier quote ${escapeHtml(quote.carrierQuoteId)} · Rate ${escapeHtml(rate.carrierRateId || rate.id)}</small>
           <div class="meta-line">
             <span class="pill">Cost ${money.format(rate.carrierCost)}</span>
             <span class="pill">Markup ${money.format(rate.markup)}</span>
-            <span class="pill">${escapeHtml(rate.provider)}${rate.providerScac ? ` · ${escapeHtml(rate.providerScac)}` : ""}</span>
           </div>
           ${Array.isArray(rate.warnings) && rate.warnings.length > 0 ? `
             <div class="meta-line">
