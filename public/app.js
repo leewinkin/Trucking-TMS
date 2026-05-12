@@ -13,6 +13,8 @@ const state = {
   invoices: [],
   currentQuote: null,
   carrierModeTouched: false,
+  pendingQuoteReentry: null,
+  pendingBooking: null,
   modal: null
 };
 
@@ -30,7 +32,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   wireForms();
   wireAuth();
   wireModal();
-  setDefaultPickupDate();
   await bootApp();
 });
 
@@ -59,9 +60,27 @@ function wireNavigation() {
       return;
     }
 
+    const reenterButton = event.target.closest("[data-reenter-quote]");
+    if (reenterButton) {
+      reenterQuote(reenterButton.dataset.reenterQuote);
+      return;
+    }
+
     const invoiceButton = event.target.closest("[data-view-invoice]");
     if (invoiceButton) {
       openInvoiceDetails(invoiceButton.dataset.viewInvoice);
+      return;
+    }
+
+    const confirmBookingButton = event.target.closest("[data-confirm-booking]");
+    if (confirmBookingButton) {
+      confirmPendingBooking();
+      return;
+    }
+
+    const cancelBookingButton = event.target.closest("[data-cancel-booking]");
+    if (cancelBookingButton) {
+      cancelPendingBooking();
       return;
     }
 
@@ -127,6 +146,13 @@ function wireForms() {
         companyName: form.get("companyName"),
         billingEmail: form.get("billingEmail"),
         paymentTerms: form.get("paymentTerms"),
+        companyPhone: form.get("companyPhone"),
+        companyOpenTime: form.get("companyOpenTime"),
+        companyCloseTime: form.get("companyCloseTime"),
+        companyStreet: form.get("companyStreet"),
+        companyCity: form.get("companyCity"),
+        companyState: form.get("companyState"),
+        companyZip: form.get("companyZip"),
         portalEmail: form.get("portalEmail"),
         portalPassword: form.get("portalPassword")
       }
@@ -161,15 +187,33 @@ function wireForms() {
       return;
     }
 
-    const body = quotePayload(new FormData(event.currentTarget));
-    const response = await api("/api/quotes", {
-      method: "POST",
-      body
-    });
-    state.currentQuote = response.quote;
-    showToast("Quote created.");
-    renderQuoteResults(response.quote);
-    await refreshAll({ keepQuoteResults: true });
+    const formError = document.getElementById("quoteFormError");
+    try {
+      const body = quotePayload(new FormData(event.currentTarget));
+      const response = await api("/api/quotes", {
+        method: "POST",
+        body
+      });
+      state.currentQuote = response.quote;
+      showToast("Quote created.");
+      renderQuoteResults(response.quote);
+      await refreshAll({ keepQuoteResults: true });
+    } catch (error) {
+      const noRates = error?.code === "NO_RATES_FOUND";
+      const message = noRates
+        ? "Carrier returned no rates for this lane."
+        : error.message || "Quote request failed.";
+      state.currentQuote = null;
+      if (formError) {
+        formError.textContent = message;
+      }
+      if (noRates) {
+        const results = document.getElementById("quoteResults");
+        results.classList.add("empty-state");
+        results.textContent = message;
+      }
+      showToast(message, true);
+    }
   });
 
   syncCarrierControls();
@@ -222,6 +266,9 @@ async function refreshAll(options = {}) {
     renderInvoices();
     renderModal();
     syncCarrierControls();
+    if (isCustomerUser()) {
+      autofillPickupFromCustomer(state.user?.customerId, true);
+    }
 
     if (!options.keepQuoteResults && !state.currentQuote) {
       document.getElementById("quoteResults").textContent = "Submit a quote to see available rates.";
@@ -275,6 +322,12 @@ function setView(name) {
   const [title, subtitle] = typeof meta === "function" ? meta() : meta;
   document.getElementById("viewTitle").textContent = title;
   document.getElementById("viewSubtitle").textContent = subtitle;
+
+  if (name === "quote" && isCustomerUser() && !state.pendingQuoteReentry) {
+    window.requestAnimationFrame(() => {
+      autofillPickupFromCustomer(state.user?.customerId, true);
+    });
+  }
 }
 
 function showLogin() {
@@ -326,6 +379,15 @@ function applyPermissions() {
   const quoteCustomerSelect = document.getElementById("quoteCustomerSelect");
   if (quoteCustomerSelect && isCustomer) {
     quoteCustomerSelect.value = state.user?.customerId || quoteCustomerSelect.value;
+    if (!state.pendingQuoteReentry) {
+      autofillPickupFromCustomer(quoteCustomerSelect.value, true);
+    }
+  }
+  if (quoteCustomerSelect && !quoteCustomerSelect.dataset.autofillBound) {
+    quoteCustomerSelect.addEventListener("change", () => {
+      autofillPickupFromCustomer(quoteCustomerSelect.value, true);
+    });
+    quoteCustomerSelect.dataset.autofillBound = "true";
   }
   if (!isStaff && document.querySelector(".nav-button.active")?.dataset.view === "customers") {
     setView("dashboard");
@@ -440,6 +502,7 @@ function closeModal() {
   overlay.setAttribute("aria-hidden", "true");
   document.getElementById("modalBody").innerHTML = "";
   state.modal = null;
+  state.pendingBooking = null;
 }
 
 function renderModal() {
@@ -534,7 +597,73 @@ async function openQuoteDetails(quoteId) {
     return;
   }
 
-  openModal(`Quote ${quote.carrierQuoteId}`, quoteDetailsHtml(quote));
+  openModal(isCustomerUser() ? "Quote Details" : `Quote ${quote.carrierQuoteId}`, quoteDetailsHtml(quote));
+}
+
+function reenterQuote(quoteId) {
+  const quote = state.quotes.find((item) => item.id === quoteId);
+  if (!quote) {
+    return;
+  }
+
+  closeModal();
+  state.currentQuote = null;
+  state.pendingQuoteReentry = quote.id;
+  setView("quote");
+  window.requestAnimationFrame(() => {
+    populateQuoteFormFromQuote(quote);
+    clearQuoteFormErrors(document.getElementById("quoteForm"));
+    state.pendingQuoteReentry = null;
+    const results = document.getElementById("quoteResults");
+    if (results) {
+      results.classList.add("empty-state");
+      results.textContent = "Submit a quote to see available rates.";
+    }
+    showToast("Quote details copied into New Quote.");
+  });
+}
+
+function openBookingConfirmation(quoteId, rateId) {
+  const quote = state.currentQuote || state.quotes.find((item) => item.id === quoteId);
+  if (!quote) {
+    return;
+  }
+
+  const rate = Array.isArray(quote.rates) ? quote.rates.find((item) => item.id === rateId) : null;
+  if (!rate) {
+    return;
+  }
+
+  state.pendingBooking = { quoteId, rateId };
+  openModal("Confirm Shipment Booking", bookingConfirmationHtml(quote, rate));
+}
+
+function cancelPendingBooking() {
+  state.pendingBooking = null;
+  closeModal();
+}
+
+async function confirmPendingBooking() {
+  const pending = state.pendingBooking;
+  if (!pending) {
+    return;
+  }
+
+  const quote = state.currentQuote || state.quotes.find((item) => item.id === pending.quoteId);
+  if (!quote) {
+    cancelPendingBooking();
+    return;
+  }
+
+  const rate = Array.isArray(quote.rates) ? quote.rates.find((item) => item.id === pending.rateId) : null;
+  if (!rate) {
+    cancelPendingBooking();
+    return;
+  }
+
+  state.pendingBooking = null;
+  closeModal();
+  await finalizeBooking(quote.id, rate.id);
 }
 
 async function openInvoiceDetails(invoiceId) {
@@ -576,6 +705,38 @@ function openCustomerEditor(customerId) {
           <input name="paymentTerms" value="${escapeHtml(customer.paymentTerms || "Net 15")}">
         </label>
         <label>
+          Company phone
+          <input name="companyPhone" type="tel" inputmode="numeric" autocomplete="tel" value="${escapeHtml(customer.companyPhone || "")}" placeholder="(555) 123-4567">
+        </label>
+        <label class="span-2">
+          Company street
+          <input name="companyStreet" value="${escapeHtml(customer.companyStreet || "")}" placeholder="123 Main St">
+        </label>
+        <label>
+          Company city
+          <input name="companyCity" value="${escapeHtml(customer.companyCity || "")}" placeholder="City">
+        </label>
+        <label>
+          Company state
+          <input name="companyState" value="${escapeHtml(customer.companyState || "")}" placeholder="CA" maxlength="2">
+        </label>
+        <label>
+          Company ZIP
+          <input name="companyZip" value="${escapeHtml(customer.companyZip || "")}" placeholder="ZIP">
+        </label>
+        <label>
+          Open
+          <select name="companyOpenTime" data-time-select>
+            <option value="">Select time</option>
+          </select>
+        </label>
+        <label>
+          Close
+          <select name="companyCloseTime" data-time-select>
+            <option value="">Select time</option>
+          </select>
+        </label>
+        <label>
           Portal username
           <input name="portalEmail" value="${escapeHtml(customer.portalEmail || "")}">
         </label>
@@ -611,6 +772,15 @@ function openCustomerEditor(customerId) {
       </form>
     `
   );
+  populateTimeSelects();
+  const openTimeField = document.querySelector("#customerEditForm [name='companyOpenTime']");
+  const closeTimeField = document.querySelector("#customerEditForm [name='companyCloseTime']");
+  if (openTimeField) {
+    openTimeField.value = customer.companyOpenTime || "";
+  }
+  if (closeTimeField) {
+    closeTimeField.value = customer.companyCloseTime || "";
+  }
 
   document.getElementById("customerEditForm").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -621,6 +791,13 @@ function openCustomerEditor(customerId) {
         companyName: form.get("companyName"),
         billingEmail: form.get("billingEmail"),
         paymentTerms: form.get("paymentTerms"),
+        companyPhone: form.get("companyPhone"),
+        companyOpenTime: form.get("companyOpenTime"),
+        companyCloseTime: form.get("companyCloseTime"),
+        companyStreet: form.get("companyStreet"),
+        companyCity: form.get("companyCity"),
+        companyState: form.get("companyState"),
+        companyZip: form.get("companyZip"),
         portalEmail: form.get("portalEmail"),
         portalPassword: form.get("portalPassword"),
         status: form.get("status"),
@@ -685,6 +862,11 @@ function customerSummaryHtml() {
                 <div class="meta-line">
                   <span class="pill">${escapeHtml(customer.portalEmail || "No portal user")}</span>
                   <span class="pill">${escapeHtml(customer.status)}</span>
+                  ${(customer.companyStreet || customer.companyCity || customer.companyState || customer.companyZip)
+                    ? `<span class="pill">${escapeHtml([customer.companyStreet, customer.companyCity, customer.companyState, customer.companyZip].filter(Boolean).join(", "))}</span>`
+                    : ""}
+                  ${customer.companyPhone ? `<span class="pill">${escapeHtml(customer.companyPhone)}</span>` : ""}
+                  ${customerHoursRange(customer) ? `<span class="pill">${escapeHtml(customerHoursRange(customer))}</span>` : ""}
                   <span class="pill">${escapeHtml(tariff?.ruleType || "no tariff")}</span>
                   <span class="pill">${money.format(Number(tariff?.fixedAmount || 0))} fixed</span>
                   <span class="pill">${Number(tariff?.markupPercentage || 0)}% markup</span>
@@ -788,6 +970,48 @@ function renderDashboardSupportPanel() {
   `;
 }
 
+function autofillPickupFromCustomer(customerId, force = false) {
+  const customer = state.customers.find((item) => item.id === customerId);
+  if (!customer) {
+    return;
+  }
+
+  const values = {
+    pickupName: customer.companyName || "",
+    pickupPhone: customer.companyPhone || "",
+    pickupOpen: customer.companyOpenTime || "",
+    pickupClose: customer.companyCloseTime || "",
+    pickupStreet: customer.companyStreet || "",
+    pickupCity: customer.companyCity || "",
+    pickupState: customer.companyState || "",
+    pickupZip: customer.companyZip || ""
+  };
+
+  if (!Object.values(values).some((value) => String(value || "").trim())) {
+    return;
+  }
+
+  Object.entries(values).forEach(([name, value]) => {
+    const input = document.querySelector(`[name='${name}']`);
+    if (!input) {
+      return;
+    }
+    if (force || !String(input.value || "").trim()) {
+      input.value = value;
+    }
+  });
+}
+
+function customerHoursRange(customer) {
+  if (!customer?.companyOpenTime && !customer?.companyCloseTime) {
+    return "";
+  }
+
+  const openLabel = customer.companyOpenTime ? formatTimeHour(customer.companyOpenTime) : "Open";
+  const closeLabel = customer.companyCloseTime ? formatTimeHour(customer.companyCloseTime) : "Close";
+  return `${openLabel} - ${closeLabel}`;
+}
+
 function renderQuotePreview() {
   return;
   const preview = document.getElementById("quotePreview");
@@ -885,6 +1109,7 @@ function quoteRow(quote, options = {}) {
 function shipmentRow(shipment, options = {}) {
   const showActions = options.showActions !== false;
   const priceLabel = customerPriceLabel();
+  const carrierLabel = shipment.carrierName || carrierDisplayName(shipment.provider || shipment.carrier || "", shipment.carrier || "");
   return `
     <article class="row-item">
       <div>
@@ -892,7 +1117,7 @@ function shipmentRow(shipment, options = {}) {
         <small>${escapeHtml(shipment.customerName)} · ${escapeHtml(shipment.pickup.address.city)}, ${escapeHtml(shipment.pickup.address.state)} to ${escapeHtml(shipment.delivery.address.city)}, ${escapeHtml(shipment.delivery.address.state)}</small>
         <div class="meta-line">
           <span class="pill">${escapeHtml(shipment.status)}</span>
-          <span class="pill">${escapeHtml(shipment.provider)}</span>
+          <span class="pill">${escapeHtml(carrierLabel)}</span>
           ${shipment.referenceNumber ? `<span class="pill">PO ${escapeHtml(shipment.referenceNumber)}</span>` : ""}
           <span class="pill">${formatDate(shipment.createdAt)}</span>
           <span class="pill">${priceLabel} ${money.format(shipment.sellPrice)}</span>
@@ -973,12 +1198,13 @@ function quoteDetailsHtml(quote) {
             <article class="rate-item compact-rate quote-rate-card">
               <div class="rate-main">
                 <div class="rate-title-row">
-                  <strong>${escapeHtml(carrierDisplayName(rate.provider, quote.carrierMode))} · ${escapeHtml(formatRateService(rate.service))}</strong>
-                  <span class="carrier-badge">${escapeHtml(carrierDisplayName(rate.provider, quote.carrierMode))}</span>
+                  <strong>${escapeHtml(carrierNameLabel(rate, quote, customerView))}</strong>
+                  <span class="service-badge">${escapeHtml(formatRateService(rate?.service))}</span>
+                  <span class="carrier-badge">${escapeHtml(carrierBadgeLabel(rate.provider, quote.carrierMode, customerView))}</span>
                 </div>
                 <div class="rate-meta-row">
-                  <span class="pill">${escapeHtml(rate.providerScac || "No SCAC")}</span>
-                  <span class="pill">Offer ${escapeHtml(rate.carrierRateId || rate.id || "")}</span>
+                  ${customerView ? "" : `<span class="pill">${escapeHtml(rate.providerScac || "No SCAC")}</span>`}
+                  ${customerView ? "" : `<span class="pill">Offer ${escapeHtml(rate.carrierRateId || rate.id || "")}</span>`}
                   ${rate.transitDays ? `<span class="pill">Transit ${escapeHtml(formatTransitDays(rate.transitDays))}</span>` : ""}
                   ${rate.estimatedDeliveryDate ? `<span class="pill">ETA ${escapeHtml(formatDate(rate.estimatedDeliveryDate))}</span>` : ""}
                   ${customerView
@@ -1012,9 +1238,9 @@ function quoteDetailsHtml(quote) {
         "Quote Summary",
         `
           <div class="meta-line">
-            <span class="pill">${escapeHtml(quote.carrierMode)}</span>
+            ${customerView ? `<span class="pill">Shipment quote</span>` : `<span class="pill">${escapeHtml(quote.carrierMode)}</span>`}
             <span class="pill">${escapeHtml(quote.status)}</span>
-            <span class="pill">${escapeHtml(quote.carrierQuoteId)}</span>
+            ${customerView ? "" : `<span class="pill">${escapeHtml(quote.carrierQuoteId)}</span>`}
           </div>
           ${carrierNotice}
           <p><strong>Reference / PO:</strong> ${escapeHtml(quote.referenceNumber || "")}</p>
@@ -1023,8 +1249,49 @@ function quoteDetailsHtml(quote) {
           <p><strong>Delivery:</strong> ${escapeHtml(quote.delivery?.name || "")}, ${escapeHtml(quote.delivery?.address?.street || "")}, ${escapeHtml(quote.delivery?.address?.city || "")}, ${escapeHtml(quote.delivery?.address?.state || "")}</p>
           <p><strong>Freight:</strong> ${escapeHtml(quote.freight?.[0]?.quantity || "")} ${escapeHtml(quote.freight?.[0]?.type || "")} · Class ${escapeHtml(quote.freight?.[0]?.freightClass || "")} · ${escapeHtml(quote.freight?.[0]?.weight || "")} lbs each${totalWeight ? ` (${escapeHtml(totalWeight)} lbs total)` : ""}${freightSize ? ` · ${escapeHtml(freightSize)} in` : ""}</p>
         `
-      )}
+      )} 
       ${detailSection("Rates", rateCards)}
+      <div class="modal-actions">
+        <button class="primary-action" type="button" data-reenter-quote="${escapeHtml(quote.id)}">Re-enter Quote</button>
+      </div>
+    </div>
+  `;
+}
+
+function bookingConfirmationHtml(quote, rate) {
+  const customerView = isCustomerUser();
+  return `
+    <div class="booking-confirmation">
+      <div class="quote-status notice-state success-state">
+        <strong>Confirm shipment booking</strong>
+        <p>This will finalize the shipment with the carrier platform. Please confirm before continuing.</p>
+      </div>
+      <div class="confirmation-grid">
+        <div>
+          <small>Carrier</small>
+          <strong>${escapeHtml(carrierBadgeLabel(rate.provider, quote.carrierMode, customerView))}</strong>
+        </div>
+        <div>
+          <small>Service</small>
+          <strong>${escapeHtml(rateHeading(rate, quote, customerView))}</strong>
+        </div>
+        <div>
+          <small>Reference / PO</small>
+          <strong>${escapeHtml(quote.referenceNumber || "N/A")}</strong>
+        </div>
+        <div>
+          <small>Lane</small>
+          <strong>${escapeHtml([quote.pickup?.address?.zip, quote.delivery?.address?.zip].filter(Boolean).join(" → ") || "N/A")}</strong>
+        </div>
+        <div>
+          <small>Cost</small>
+          <strong>${money.format(rate.sellPrice)}</strong>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="secondary-action" data-cancel-booking>Cancel</button>
+        <button type="button" class="primary-action" data-confirm-booking>Confirm Booking</button>
+      </div>
     </div>
   `;
 }
@@ -1157,6 +1424,26 @@ function invoiceDetailsHtml(invoice, shipment) {
 function carrierDisplayName(provider, carrierMode = "") {
   const normalized = String(provider || "").trim().toLowerCase();
   const mode = String(carrierMode || "").trim().toLowerCase();
+  const knownNames = {
+    xpo: "XPO Logistics",
+    xpol: "XPO Logistics",
+    saia: "SAIA Freight",
+    olddominion: "Old Dominion Freight Line",
+    odfl: "Old Dominion Freight Line",
+    abf: "ABF Freight",
+    abfs: "ABF Freight",
+    roadrunner: "Roadrunner Freight",
+    rdfs: "Roadrunner Freight",
+    frontline: "Frontline Freight",
+    fcsy: "Frontline Freight",
+    tforce: "TForce Freight",
+    tfin: "TForce Freight",
+    stg: "STG Logistics",
+    stglogistics: "STG Logistics"
+  };
+  if (knownNames[normalized]) {
+    return knownNames[normalized];
+  }
   if (normalized.includes("speedship") || mode === "speedshipltl") {
     return "SpeedShip";
   }
@@ -1169,6 +1456,55 @@ function carrierDisplayName(provider, carrierMode = "") {
   return String(provider)
     .replace(/[_-]+/g, " ")
     .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function carrierBadgeLabel(provider, carrierMode = "", customerView = false) {
+  if (!customerView) {
+    return carrierDisplayName(provider, carrierMode);
+  }
+
+  const normalized = String(provider || "").trim().toLowerCase();
+  const mode = String(carrierMode || "").trim().toLowerCase();
+  if (normalized.includes("speedship") || mode === "speedshipltl") {
+    return "SS";
+  }
+  if (normalized.includes("mothership") || mode === "mothershipsandbox") {
+    return "M";
+  }
+  if (!provider) {
+    return "C";
+  }
+
+  return String(provider)
+    .replace(/[_-]+/g, " ")
+    .split(" ")
+    .filter(Boolean)
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 3)
+    .toUpperCase();
+}
+
+function carrierNameLabel(rate, quote, customerView = false) {
+  const explicitName = String(rate?.carrierName || "").trim();
+  if (explicitName) {
+    return explicitName;
+  }
+
+  return carrierDisplayName(rate?.provider || quote?.carrierMode || "", quote?.carrierMode || "");
+}
+
+function rateHeading(rate, quote, customerView = false) {
+  const provider = rate?.provider || quote?.carrierMode || "";
+  const providerMode = String(quote?.carrierMode || "").trim().toLowerCase();
+  const providerNormalized = String(rate?.provider || "").trim().toLowerCase();
+  const service = String(rate?.service || "").trim().toLowerCase();
+
+  if (customerView && (providerNormalized.includes("mothership") || providerMode === "mothershipsandbox")) {
+    return carrierNameLabel(rate, quote, customerView);
+  }
+
+  return `${carrierDisplayName(provider, quote?.carrierMode)} · ${formatRateService(rate?.service)}`;
 }
 
 function formatRateService(service) {
@@ -1216,8 +1552,27 @@ function validateQuoteForm(form) {
   const error = document.getElementById("quoteFormError");
   clearQuoteFormErrors(form);
 
-  const requiredControls = Array.from(form.querySelectorAll("[required]"));
-  const invalidControls = requiredControls.filter((control) => !control.checkValidity());
+  const controls = Array.from(form.querySelectorAll("input, select, textarea")).filter((control) => !control.disabled);
+  const invalidControls = [];
+
+  controls.forEach((control) => {
+    const value = String(control.value || "").trim();
+
+    if (control.name === "pickupPhone" || control.name === "deliveryPhone") {
+      const normalized = normalizePhoneNumber(value);
+      if (value && normalized.length !== 10) {
+        control.setCustomValidity("Phone numbers must be 10 digits.");
+      } else {
+        control.setCustomValidity("");
+      }
+    } else {
+      control.setCustomValidity("");
+    }
+
+    if (!control.checkValidity()) {
+      invalidControls.push(control);
+    }
+  });
 
   if (invalidControls.length === 0) {
     if (error) {
@@ -1236,7 +1591,10 @@ function validateQuoteForm(form) {
   });
 
   if (error) {
-    error.textContent = "Please fill in the highlighted required fields before getting rates.";
+    const phoneInvalid = invalidControls.some((control) => control.name === "pickupPhone" || control.name === "deliveryPhone");
+    error.textContent = phoneInvalid
+      ? "Phone numbers must be 10 digits and the highlighted fields must be completed before getting rates."
+      : "Please fill in the highlighted required fields before getting rates.";
   }
 
   invalidControls[0].focus();
@@ -1250,6 +1608,11 @@ function clearQuoteFormErrors(form) {
   });
   form.querySelectorAll("[aria-invalid='true']").forEach((element) => {
     element.removeAttribute("aria-invalid");
+  });
+  form.querySelectorAll("input, select, textarea").forEach((control) => {
+    if (typeof control.setCustomValidity === "function") {
+      control.setCustomValidity("");
+    }
   });
 
   const error = document.getElementById("quoteFormError");
@@ -1265,30 +1628,16 @@ function syncCarrierControls() {
     return;
   }
 
-  if (
-    state.health?.speedshipConfigured &&
-    !state.carrierModeTouched &&
-    !state.currentQuote &&
-    carrierModeSelect.value === "demo"
-  ) {
-    carrierModeSelect.value = "speedshipLtl";
-  } else if (
-    state.health?.mothershipConfigured &&
-    !state.health?.speedshipConfigured &&
-    !state.carrierModeTouched &&
-    !state.currentQuote &&
-    carrierModeSelect.value === "demo"
-  ) {
-    carrierModeSelect.value = "mothershipSandbox";
-  }
-
   const speedshipEnabled = carrierModeSelect.value === "speedshipLtl";
   const sandboxEnabled = carrierModeSelect.value === "mothershipSandbox";
+  const demoEnabled = carrierModeSelect.value === "demo";
   hint.textContent = speedshipEnabled
     ? "SpeedShip LTL is selected. Click a rate below to create the shipment."
     : sandboxEnabled
       ? "Mothership sandbox is selected. Click a rate below to purchase it in sandbox."
-      : "Demo rates create local test bookings. Click a rate below to create the shipment.";
+      : demoEnabled
+        ? "Demo rates create local test bookings. Click a rate below to create the shipment."
+        : "Choose a carrier mode to continue.";
 }
 
 function renderCustomerOptions() {
@@ -1305,6 +1654,9 @@ function renderCustomerOptions() {
     quoteSelect.innerHTML = options;
     if (isCustomerUser()) {
       quoteSelect.value = state.user?.customerId || state.customers[0]?.id || "";
+    }
+    if (quoteSelect.value && !state.pendingQuoteReentry) {
+      autofillPickupFromCustomer(quoteSelect.value, true);
     }
   }
 }
@@ -1326,6 +1678,9 @@ function renderCustomers() {
             <strong>${escapeHtml(customer.companyName)}</strong>
             <small>${escapeHtml(customer.billingEmail || "No billing email")} · ${escapeHtml(customer.paymentTerms)}</small>
             <div class="meta-line">
+              ${(customer.companyStreet || customer.companyCity || customer.companyState || customer.companyZip)
+                ? `<span class="pill">${escapeHtml([customer.companyStreet, customer.companyCity, customer.companyState, customer.companyZip].filter(Boolean).join(", "))}</span>`
+                : ""}
               <span class="pill">${escapeHtml(tariff?.ruleType || "no tariff")}</span>
               <span class="pill">${Number(tariff?.markupPercentage || 0)}% markup</span>
               <span class="pill">${money.format(Number(tariff?.fixedAmount || 0))} fixed</span>
@@ -1399,15 +1754,22 @@ function renderQuoteResults(quote) {
   list.classList.toggle("compare-grid", Array.isArray(quote.rates) && quote.rates.length > 1);
   const customerView = isCustomerUser();
   const priceLabel = customerPriceLabel();
+  const carrierLabel = customerView && quote.carrierMode === "mothershipSandbox"
+    ? "Carrier"
+    : quote.carrierMode === "speedshipLtl"
+      ? "SpeedShip"
+      : quote.carrierMode === "mothershipSandbox"
+        ? "Mothership"
+        : "Carrier";
   if (!Array.isArray(quote.rates) || quote.rates.length === 0) {
     const notice = quote.carrierMode === "speedshipLtl"
       ? quote.carrierMessage || "SpeedShip sandbox connection succeeded, but this lane returned no matching rates."
       : "No rates were returned for this quote.";
     list.innerHTML = `
       <div class="quote-status notice-state success-state">
-        <strong>SpeedShip connection succeeded</strong>
+        <strong>${escapeHtml(carrierLabel)} connection succeeded</strong>
         <p>${escapeHtml(notice)}</p>
-        ${quote.carrierQuoteId ? `<span class="pill">${escapeHtml(quote.carrierQuoteId)}</span>` : ""}
+        ${customerView ? "" : (quote.carrierQuoteId ? `<span class="pill">${escapeHtml(quote.carrierQuoteId)}</span>` : "")}
       </div>
     `;
     return;
@@ -1417,13 +1779,14 @@ function renderQuoteResults(quote) {
       <article class="rate-item quote-rate-card">
         <div class="rate-main">
           <div class="rate-title-row">
-            <strong>${escapeHtml(carrierDisplayName(rate.provider, quote.carrierMode))} · ${escapeHtml(formatRateService(rate.service))}</strong>
-            <span class="carrier-badge">${escapeHtml(carrierDisplayName(rate.provider, quote.carrierMode))}</span>
+            <strong>${escapeHtml(carrierNameLabel(rate, quote, customerView))}</strong>
+            <span class="service-badge">${escapeHtml(formatRateService(rate?.service))}</span>
+            <span class="carrier-badge">${escapeHtml(carrierBadgeLabel(rate.provider, quote.carrierMode, customerView))}</span>
           </div>
           <div class="rate-meta-row">
-            <span class="pill">Quote ${escapeHtml(quote.carrierQuoteId)}</span>
-            <span class="pill">Rate ${escapeHtml(rate.carrierRateId || rate.id)}</span>
-            <span class="pill">${escapeHtml(rate.providerScac || "No SCAC")}</span>
+            ${customerView ? "" : `<span class="pill">Quote ${escapeHtml(quote.carrierQuoteId)}</span>`}
+            ${customerView ? "" : `<span class="pill">Rate ${escapeHtml(rate.carrierRateId || rate.id)}</span>`}
+            ${customerView ? "" : `<span class="pill">${escapeHtml(rate.providerScac || "No SCAC")}</span>`}
             ${rate.transitDays ? `<span class="pill">Transit ${escapeHtml(formatTransitDays(rate.transitDays))}</span>` : ""}
             ${rate.estimatedDeliveryDate ? `<span class="pill">ETA ${escapeHtml(formatDate(rate.estimatedDeliveryDate))}</span>` : ""}
             ${customerView
@@ -1449,11 +1812,11 @@ function renderQuoteResults(quote) {
     .join("");
 
   list.querySelectorAll("[data-book-rate]").forEach((button) => {
-    button.addEventListener("click", () => bookRate(quote.id, button.dataset.bookRate));
+    button.addEventListener("click", () => openBookingConfirmation(quote.id, button.dataset.bookRate));
   });
 }
 
-async function bookRate(quoteId, rateId) {
+async function finalizeBooking(quoteId, rateId) {
   const quote = state.currentQuote || state.quotes.find((item) => item.id === quoteId);
   const response = await api("/api/shipments", {
     method: "POST",
@@ -1486,10 +1849,21 @@ function renderInvoices() {
 }
 
 function quotePayload(form) {
+  const customerId = form.get("customerId");
+  const customer = state.customers.find((item) => item.id === customerId) || null;
   const pickupAccessorials = form.getAll("pickupAccessorials");
   const deliveryAccessorials = normalizeDeliveryAccessorials(form.getAll("deliveryAccessorials"));
+  const pickupName = String(form.get("pickupName") || "").trim() || customer?.companyName || "";
+  const pickupStreet = String(form.get("pickupStreet") || "").trim() || customer?.companyStreet || "";
+  const pickupCity = String(form.get("pickupCity") || "").trim() || customer?.companyCity || "";
+  const pickupState = String(form.get("pickupState") || "").trim() || customer?.companyState || "";
+  const pickupZip = String(form.get("pickupZip") || "").trim() || customer?.companyZip || "";
+  const pickupPhone = normalizePhoneNumber(String(form.get("pickupPhone") || "").trim() || customer?.companyPhone || "");
+  const pickupOpen = String(form.get("pickupOpen") || "").trim() || customer?.companyOpenTime || "";
+  const pickupClose = String(form.get("pickupClose") || "").trim() || customer?.companyCloseTime || "";
+  const deliveryPhone = normalizePhoneNumber(String(form.get("deliveryPhone") || "").trim());
   return {
-    customerId: form.get("customerId"),
+    customerId,
     carrierMode: form.get("carrierMode"),
     referenceNumber: form.get("referenceNumber"),
     pickupReadyDate: {
@@ -1497,17 +1871,17 @@ function quotePayload(form) {
       time: form.get("pickupTime")
     },
     pickup: {
-      name: form.get("pickupName"),
+      name: pickupName,
       address: {
-        street: form.get("pickupStreet"),
-        city: form.get("pickupCity"),
-        state: form.get("pickupState"),
-        zip: form.get("pickupZip")
+        street: pickupStreet,
+        city: pickupCity,
+        state: pickupState,
+        zip: pickupZip
       },
-      phoneNumber: form.get("pickupPhone"),
-      emails: [],
-      openTime: form.get("pickupOpen"),
-      closeTime: form.get("pickupClose"),
+      phoneNumber: pickupPhone,
+      emails: form.get("pickupEmail") ? [form.get("pickupEmail")] : [],
+      openTime: pickupOpen,
+      closeTime: pickupClose,
       accessorials: pickupAccessorials
     },
     delivery: {
@@ -1518,8 +1892,8 @@ function quotePayload(form) {
         state: form.get("deliveryState"),
         zip: form.get("deliveryZip")
       },
-      phoneNumber: form.get("deliveryPhone"),
-      emails: [],
+      phoneNumber: deliveryPhone,
+      emails: form.get("deliveryEmail") ? [form.get("deliveryEmail")] : [],
       openTime: form.get("deliveryOpen"),
       closeTime: form.get("deliveryClose"),
       accessorials: deliveryAccessorials
@@ -1539,6 +1913,75 @@ function quotePayload(form) {
   };
 }
 
+function populateQuoteFormFromQuote(quote) {
+  const form = document.getElementById("quoteForm");
+  if (!form || !quote) {
+    return;
+  }
+
+  const setValue = (name, value) => {
+    const control = form.querySelector(`[name='${name}']`);
+    if (control) {
+      control.value = value ?? "";
+    }
+  };
+
+  const setCheckboxGroup = (name, values) => {
+    const selected = new Set((Array.isArray(values) ? values : []).filter(Boolean));
+    form.querySelectorAll(`input[name='${name}']`).forEach((input) => {
+      input.checked = selected.has(input.value);
+    });
+  };
+
+  setValue("customerId", quote.customerId || "");
+  setValue("carrierMode", quote.carrierMode || "demo");
+  setValue("referenceNumber", "");
+  setValue("pickupDate", "");
+  setValue("pickupTime", "");
+
+  setValue("pickupName", quote.pickup?.name || "");
+  setValue("pickupStreet", quote.pickup?.address?.street || "");
+  setValue("pickupCity", quote.pickup?.address?.city || "");
+  setValue("pickupState", quote.pickup?.address?.state || "");
+  setValue("pickupZip", quote.pickup?.address?.zip || "");
+  setValue("pickupPhone", quote.pickup?.phoneNumber || "");
+  setValue("pickupEmail", Array.isArray(quote.pickup?.emails) ? quote.pickup.emails[0] || "" : "");
+  setValue("pickupOpen", quote.pickup?.openTime || "");
+  setValue("pickupClose", quote.pickup?.closeTime || "");
+
+  setValue("deliveryName", quote.delivery?.name || "");
+  setValue("deliveryStreet", quote.delivery?.address?.street || "");
+  setValue("deliveryCity", quote.delivery?.address?.city || "");
+  setValue("deliveryState", quote.delivery?.address?.state || "");
+  setValue("deliveryZip", quote.delivery?.address?.zip || "");
+  setValue("deliveryPhone", quote.delivery?.phoneNumber || "");
+  setValue("deliveryEmail", Array.isArray(quote.delivery?.emails) ? quote.delivery.emails[0] || "" : "");
+  setValue("deliveryOpen", quote.delivery?.openTime || "");
+  setValue("deliveryClose", quote.delivery?.closeTime || "");
+
+  const freight = Array.isArray(quote.freight) ? quote.freight[0] || {} : {};
+  setValue("quantity", freight.quantity ?? "");
+  setValue("freightType", freight.type || "");
+  setValue("weight", freight.weight ?? "");
+  setValue("freightClass", freight.freightClass || "");
+  setValue("length", freight.length ?? "");
+  setValue("width", freight.width ?? "");
+  setValue("height", freight.height ?? "");
+  setValue("description", freight.description || "");
+
+  setCheckboxGroup("pickupAccessorials", quote.pickup?.accessorials || []);
+  setCheckboxGroup("deliveryAccessorials", quote.delivery?.accessorials || []);
+  document.querySelectorAll(".accessorial-dropdown").forEach((details) => {
+    if (details.dataset.accessorialGroup === "delivery") {
+      enforceDeliveryAccessorialDependencies(details);
+    }
+    syncAccessorialDropdown(details);
+  });
+
+  syncCarrierControls();
+  clearQuoteFormErrors(form);
+}
+
 function normalizeDeliveryAccessorials(accessorials) {
   const normalized = Array.from(new Set(accessorials.filter(Boolean)));
   if (normalized.includes("residential") && !normalized.includes("scheduledDelivery")) {
@@ -1547,29 +1990,36 @@ function normalizeDeliveryAccessorials(accessorials) {
   return normalized;
 }
 
+function normalizePhoneNumber(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (digits.length === 11 && digits.startsWith("1")) {
+    return digits.slice(1);
+  }
+  return digits;
+}
+
 function populateTimeSelects() {
   document.querySelectorAll("[data-time-select]").forEach((select) => {
     if (select.dataset.populated === "true") {
       return;
     }
 
-    const defaultValue = select.dataset.defaultValue || "0000";
     select.innerHTML = "";
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "Select time";
+    placeholder.disabled = true;
+    placeholder.selected = true;
+    select.appendChild(placeholder);
 
     for (let hour = 0; hour < 24; hour += 1) {
       const value = `${String(hour).padStart(2, "0")}00`;
       const option = document.createElement("option");
       option.value = value;
       option.textContent = formatTimeHour(value);
-      if (value === defaultValue) {
-        option.selected = true;
-      }
       select.appendChild(option);
     }
 
-    if (!select.value) {
-      select.value = defaultValue;
-    }
     select.dataset.populated = "true";
   });
 }
@@ -1626,10 +2076,7 @@ function enforceDeliveryAccessorialDependencies(details) {
 }
 
 function setDefaultPickupDate() {
-  const input = document.querySelector("[name='pickupDate']");
-  const date = new Date();
-  date.setDate(date.getDate() + 1);
-  input.value = date.toISOString().slice(0, 10);
+  return;
 }
 
 function showToast(message, isError = false) {
@@ -1666,6 +2113,26 @@ function formatTimeHour(value) {
 }
 
 function formatTransitDays(value) {
+  if (value && typeof value === "object") {
+    const minimum = Number(value.minimum);
+    const maximum = Number(value.maximum);
+
+    if (Number.isFinite(minimum) && Number.isFinite(maximum)) {
+      if (minimum === maximum) {
+        return `${minimum} day${minimum === 1 ? "" : "s"}`;
+      }
+      return `${minimum}-${maximum} days`;
+    }
+
+    if (Number.isFinite(maximum)) {
+      return `${maximum} day${maximum === 1 ? "" : "s"}`;
+    }
+
+    if (Number.isFinite(minimum)) {
+      return `${minimum} day${minimum === 1 ? "" : "s"}`;
+    }
+  }
+
   const text = String(value || "").trim();
   if (!text) {
     return "";

@@ -135,7 +135,8 @@ async function handleApi(req, res, url) {
     requireStaff(currentUser);
     const input = await readJson(req);
 
-    if (Object.prototype.hasOwnProperty.call(input, "status")) {
+    const inputKeys = Object.keys(input || {});
+    if (inputKeys.length === 1 && Object.prototype.hasOwnProperty.call(input, "status")) {
       const customer = await store.setCustomerStatus(customerMatch[1], input.status);
       sendJson(res, 200, { customer });
       return;
@@ -343,7 +344,7 @@ async function createQuote(req, res, currentUser) {
 
     sendJson(res, 422, {
       error: "NO_RATES_FOUND",
-      message: "No carrier rates were returned for this quote."
+      message: "Carrier returned no rates for this lane."
     });
     return;
   }
@@ -433,6 +434,7 @@ async function createShipment(req, res, currentUser) {
     sellPrice: rate.sellPrice,
     margin: rate.margin,
     provider: rate.provider,
+    carrierName: rate.carrierName || null,
     service: rate.service,
     status: shouldBookCarrier ? "booked_with_carrier" : "local_booking",
     pickupDate: quote.pickupReadyDate,
@@ -834,6 +836,7 @@ function formatSpeedshipDateTime(pickupReadyDate) {
 }
 
 function normalizeStop(stop, label) {
+  const phoneNumber = normalizePhoneNumber(stop?.phoneNumber, `${label}.phoneNumber`);
   return {
     name: requiredString(stop?.name, `${label}.name`),
     address: {
@@ -842,7 +845,7 @@ function normalizeStop(stop, label) {
       state: requiredString(stop?.address?.state, `${label}.address.state`).toUpperCase(),
       zip: requiredString(stop?.address?.zip, `${label}.address.zip`)
     },
-    phoneNumber: requiredString(stop?.phoneNumber, `${label}.phoneNumber`),
+    phoneNumber,
     emails: Array.isArray(stop?.emails) ? stop.emails.filter(Boolean) : [],
     openTime: requiredString(stop?.openTime, `${label}.openTime`),
     closeTime: requiredString(stop?.closeTime, `${label}.closeTime`),
@@ -1100,6 +1103,14 @@ function normalizeMothershipRates(payload) {
     carrierRateId: String(rate.id || rate.rateId || `rate_${index + 1}`),
     provider: String(rate.provider || rate.providerScac || "mothership"),
     providerScac: rate.providerScac || null,
+    carrierName:
+      rate.carrierName ||
+      rate.vendorName ||
+      rate.providerName ||
+      rate.primaryVendor?.name ||
+      rate.carrier?.name ||
+      rate.vendor?.name ||
+      null,
     service: Array.isArray(rate.services) && rate.services.length > 0 ? rate.services.join(", ") : "Standard",
     carrierCost: toMoney(rate.price || rate.total || rate.cost || 0),
     estimatedPickupDate: rate.estimatedPickupDate || null,
@@ -1163,6 +1174,14 @@ function normalizeSpeedshipLtlRates(payload) {
       carrierRateId,
       provider: String(rate.vendorId || rate.carrierCode || rate.provider || "speedship"),
       providerScac: rate.vendorId || rate.carrierCode || rate.timeInTransit?.scac || rate.primaryVendor?.scac || null,
+      carrierName:
+        rate.carrierName ||
+        rate.vendorName ||
+        rate.primaryVendor?.name ||
+        rate.timeInTransit?.carrierName ||
+        rate.timeInTransit?.vendorName ||
+        rate.carrierDescription ||
+        null,
       service: String(
         rate.serviceName ||
           rate.serviceType ||
@@ -1477,6 +1496,17 @@ function requiredString(value, field) {
     throw new PublicError(400, "VALIDATION_ERROR", `${field} is required.`);
   }
   return text;
+}
+
+function normalizePhoneNumber(value, field) {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (digits.length === 11 && digits.startsWith("1")) {
+    return digits.slice(1);
+  }
+  if (digits.length === 10) {
+    return digits;
+  }
+  throw new PublicError(400, "VALIDATION_ERROR", `${field} must be a 10-digit phone number.`);
 }
 
 function toPositiveNumber(value, field) {

@@ -73,14 +73,21 @@ async function createPostgresStore(dbUrl) {
       try {
         await client.query("BEGIN");
         const customerResult = await client.query(
-          `INSERT INTO customers (id, company_name, billing_email, payment_terms, status, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6)
+          `INSERT INTO customers (id, company_name, billing_email, payment_terms, company_phone, company_open_time, company_close_time, company_street, company_city, company_state, company_zip, status, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
            RETURNING *`,
           [
             createId("cust"),
             String(input.companyName || "").trim(),
             String(input.billingEmail || "").trim(),
             String(input.paymentTerms || "Net 15").trim(),
+            String(input.companyPhone || "").trim(),
+            String(input.companyOpenTime || "").trim(),
+            String(input.companyCloseTime || "").trim(),
+            String(input.companyStreet || "").trim(),
+            String(input.companyCity || "").trim(),
+            String(input.companyState || "").trim().toUpperCase(),
+            String(input.companyZip || "").trim(),
             "active",
             nowIso()
           ]
@@ -136,7 +143,14 @@ async function createPostgresStore(dbUrl) {
            SET company_name = COALESCE($2, company_name),
                billing_email = COALESCE($3, billing_email),
                payment_terms = COALESCE($4, payment_terms),
-               status = COALESCE($5, status)
+               company_phone = COALESCE($5, company_phone),
+               company_open_time = COALESCE($6, company_open_time),
+               company_close_time = COALESCE($7, company_close_time),
+               company_street = COALESCE($8, company_street),
+               company_city = COALESCE($9, company_city),
+               company_state = COALESCE($10, company_state),
+               company_zip = COALESCE($11, company_zip),
+               status = COALESCE($12, status)
            WHERE id = $1
            RETURNING *`,
           [
@@ -144,6 +158,13 @@ async function createPostgresStore(dbUrl) {
             normalizeNullableString(input.companyName),
             normalizeNullableString(input.billingEmail),
             normalizeNullableString(input.paymentTerms),
+            normalizeNullableString(input.companyPhone),
+            normalizeNullableString(input.companyOpenTime),
+            normalizeNullableString(input.companyCloseTime),
+            normalizeNullableString(input.companyStreet),
+            normalizeNullableString(input.companyCity),
+            normalizeNullableString(input.companyState),
+            normalizeNullableString(input.companyZip),
             normalizeNullableString(input.status)
           ]
         );
@@ -480,9 +501,23 @@ async function ensureSchema(pool) {
       company_name text NOT NULL,
       billing_email text NOT NULL DEFAULT '',
       payment_terms text NOT NULL DEFAULT 'Net 15',
+      company_phone text NOT NULL DEFAULT '',
+      company_open_time text NOT NULL DEFAULT '',
+      company_close_time text NOT NULL DEFAULT '',
+      company_street text NOT NULL DEFAULT '',
+      company_city text NOT NULL DEFAULT '',
+      company_state text NOT NULL DEFAULT '',
+      company_zip text NOT NULL DEFAULT '',
       status text NOT NULL DEFAULT 'active',
       created_at timestamptz NOT NULL DEFAULT now()
     )`,
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS company_phone text NOT NULL DEFAULT ''",
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS company_open_time text NOT NULL DEFAULT ''",
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS company_close_time text NOT NULL DEFAULT ''",
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS company_street text NOT NULL DEFAULT ''",
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS company_city text NOT NULL DEFAULT ''",
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS company_state text NOT NULL DEFAULT ''",
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS company_zip text NOT NULL DEFAULT ''",
     `CREATE TABLE IF NOT EXISTS tariff_rules (
       id text PRIMARY KEY,
       customer_id text NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
@@ -709,6 +744,13 @@ function createJsonStore(filePath) {
         companyName: String(input.companyName || "").trim(),
         billingEmail: String(input.billingEmail || "").trim(),
         paymentTerms: String(input.paymentTerms || "Net 15").trim(),
+        companyPhone: String(input.companyPhone || "").trim(),
+        companyOpenTime: String(input.companyOpenTime || "").trim(),
+        companyCloseTime: String(input.companyCloseTime || "").trim(),
+        companyStreet: String(input.companyStreet || "").trim(),
+        companyCity: String(input.companyCity || "").trim(),
+        companyState: String(input.companyState || "").trim().toUpperCase(),
+        companyZip: String(input.companyZip || "").trim(),
         status: "active",
         createdAt: nowIso()
       };
@@ -747,6 +789,27 @@ function createJsonStore(filePath) {
       }
       if (Object.prototype.hasOwnProperty.call(input, "paymentTerms") && String(input.paymentTerms || "").trim()) {
         customer.paymentTerms = String(input.paymentTerms).trim();
+      }
+      if (Object.prototype.hasOwnProperty.call(input, "companyPhone")) {
+        customer.companyPhone = String(input.companyPhone || "").trim();
+      }
+      if (Object.prototype.hasOwnProperty.call(input, "companyOpenTime")) {
+        customer.companyOpenTime = String(input.companyOpenTime || "").trim();
+      }
+      if (Object.prototype.hasOwnProperty.call(input, "companyCloseTime")) {
+        customer.companyCloseTime = String(input.companyCloseTime || "").trim();
+      }
+      if (Object.prototype.hasOwnProperty.call(input, "companyStreet")) {
+        customer.companyStreet = String(input.companyStreet || "").trim();
+      }
+      if (Object.prototype.hasOwnProperty.call(input, "companyCity")) {
+        customer.companyCity = String(input.companyCity || "").trim();
+      }
+      if (Object.prototype.hasOwnProperty.call(input, "companyState")) {
+        customer.companyState = String(input.companyState || "").trim().toUpperCase();
+      }
+      if (Object.prototype.hasOwnProperty.call(input, "companyZip")) {
+        customer.companyZip = String(input.companyZip || "").trim();
       }
       if (Object.prototype.hasOwnProperty.call(input, "status") && String(input.status || "").trim()) {
         customer.status = String(input.status).trim();
@@ -1025,6 +1088,13 @@ function createSeedDb() {
         companyName: "Demo Customer",
         billingEmail: "billing@example.com",
         paymentTerms: "Net 15",
+        companyPhone: "",
+        companyOpenTime: "",
+        companyCloseTime: "",
+        companyStreet: "",
+        companyCity: "",
+        companyState: "",
+        companyZip: "",
         status: "active",
         createdAt: now
       }
@@ -1101,6 +1171,13 @@ function mapCustomerRow(row) {
     companyName: row.company_name,
     billingEmail: row.billing_email,
     paymentTerms: row.payment_terms,
+    companyPhone: row.company_phone || "",
+    companyOpenTime: row.company_open_time || "",
+    companyCloseTime: row.company_close_time || "",
+    companyStreet: row.company_street || "",
+    companyCity: row.company_city || "",
+    companyState: row.company_state || "",
+    companyZip: row.company_zip || "",
     status: row.status,
     portalEmail: row.portal_email || null,
     createdAt: row.created_at

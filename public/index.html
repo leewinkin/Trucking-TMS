@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Trucking TMS Prototype</title>
+    <title>Trucking TMS</title>
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
@@ -13,27 +13,26 @@
           <span class="brand-mark">TMS</span>
           <span>
             <strong>Shipment Desk</strong>
-            <small>Sign in to continue</small>
+            <small>Employee sign in</small>
           </span>
         </div>
 
         <form id="loginForm" class="login-form">
           <label>
             Email or username
-            <input name="email" type="text" required placeholder="admin@local.test">
+            <input name="email" type="text" required placeholder="you@company.com" autocomplete="username">
           </label>
           <label>
             Password
-            <input name="password" type="password" required placeholder="Admin123!">
+            <input name="password" type="password" required placeholder="Your password" autocomplete="current-password">
           </label>
           <button class="primary-action" type="submit">Sign In</button>
           <div id="loginError" class="form-error" aria-live="polite"></div>
         </form>
 
         <div class="login-help">
-          <strong>Local demo accounts</strong>
-          <p>Admin: <code>admin@local.test</code> / <code>Admin123!</code></p>
-          <p>Customer: <code>customer@local.test</code> / <code>Customer123!</code></p>
+          <strong>Need access?</strong>
+          <p>Sign in with your company employee account.</p>
         </div>
 
         <div class="system-status login-status">
@@ -49,7 +48,7 @@
           <span class="brand-mark">TMS</span>
           <span>
             <strong>Shipment Desk</strong>
-            <small>Local prototype</small>
+            <small>Operations portal</small>
           </span>
         </div>
         <nav class="nav">
@@ -139,6 +138,34 @@
                   Payment terms
                   <input name="paymentTerms" value="Net 15">
                 </label>
+                <label>
+                  Company phone
+                  <input name="companyPhone" type="tel" inputmode="numeric" autocomplete="tel" placeholder="(555) 123-4567">
+                </label>
+                <label class="span-2">
+                  Company street
+                  <input name="companyStreet" placeholder="123 Main St">
+                </label>
+                <label>
+                  Company city
+                  <input name="companyCity" placeholder="City">
+                </label>
+                <label>
+                  Company state
+                  <input name="companyState" placeholder="CA" maxlength="2">
+                </label>
+                <label>
+                  Company ZIP
+                  <input name="companyZip" placeholder="ZIP">
+                </label>
+                <label>
+                  Open
+                  <select name="companyOpenTime" data-time-select></select>
+                </label>
+                <label>
+                  Close
+                  <select name="companyCloseTime" data-time-select></select>
+                </label>
                 <label class="span-2">
                   Portal username
                   <input name="portalEmail" type="text" placeholder="customer123">
@@ -196,15 +223,16 @@
                 </label>
                 <label>
                   Carrier mode
-                  <select name="carrierMode">
-                    <option value="demo">Demo rates</option>
+                  <select name="carrierMode" required>
+                    <option value="" selected disabled>Select carrier mode</option>
                     <option value="speedshipLtl">SpeedShip LTL</option>
                     <option value="mothershipSandbox">Mothership sandbox</option>
+                    <option value="demo">Demo rates</option>
                   </select>
                 </label>
                 <label>
                   Reference / PO number
-                  <input name="referenceNumber" required value="PO-1001">
+                  <input name="referenceNumber" required placeholder="PO-1001">
                 </label>
                 <label>
                   Pickup date
@@ -212,9 +240,10 @@
                 </label>
                 <label>
                   Ready time
-                  <input name="pickupTime" value="0930" maxlength="4" required>
+                  <select name="pickupTime" data-time-select required></select>
                 </label>
-                <div class="helper-text span-2" id="carrierModeHint">Use demo rates for local testing, SpeedShip LTL for freight quotes, or Mothership sandbox when your token is set. Click a rate to book the shipment.</div>
+                <div class="helper-text span-2">If the selected customer has an address on file, pickup will prefill from it.</div>
+                <div class="helper-text span-2" id="carrierModeHint">Choose a carrier mode to continue.</div>
               </div>
             </section>
 
@@ -229,23 +258,23 @@
                     <div class="form-grid location-address-grid">
                       <label>
                         Company name
-                        <input name="pickupName" required value="Griffith Observatory">
+                        <input name="pickupName" required placeholder="Company name">
                       </label>
                       <label>
                         Street
-                        <input name="pickupStreet" required value="2800 East Observatory Road">
+                        <input name="pickupStreet" required placeholder="Street">
                       </label>
                       <label>
                         City
-                        <input name="pickupCity" required value="Los Angeles">
+                        <input name="pickupCity" required placeholder="City">
                       </label>
                       <label>
                         State
-                        <input name="pickupState" required value="CA" maxlength="2">
+                        <input name="pickupState" required placeholder="CA" maxlength="2">
                       </label>
                       <label>
                         ZIP
-                        <input name="pickupZip" required value="90027">
+                        <input name="pickupZip" required placeholder="ZIP">
                       </label>
                     </div>
                   </section>
@@ -255,15 +284,19 @@
                     <div class="form-grid location-contact-grid">
                       <label class="span-2">
                         Phone
-                        <input name="pickupPhone" type="tel" required value="+15555555555">
+                        <input name="pickupPhone" type="tel" inputmode="numeric" autocomplete="tel" required placeholder="Phone">
+                      </label>
+                      <label class="span-2">
+                        Email
+                        <input name="pickupEmail" type="email" placeholder="Email">
                       </label>
                       <label>
                         Open
-                        <select name="pickupOpen" data-time-select data-default-value="0800" required></select>
+                        <select name="pickupOpen" data-time-select required></select>
                       </label>
                       <label>
                         Close
-                        <select name="pickupClose" data-time-select data-default-value="1700" required></select>
+                        <select name="pickupClose" data-time-select required></select>
                       </label>
                     </div>
                   </section>
@@ -275,7 +308,7 @@
                         <summary><span class="accessorial-summary">Select accessorials</span></summary>
                         <div class="accessorial-menu">
                           <label><input type="checkbox" name="pickupAccessorials" value="appointment" data-label="Appointment"> Appointment</label>
-                          <label><input type="checkbox" name="pickupAccessorials" value="liftgate" data-label="Liftgate" checked> Liftgate</label>
+                          <label><input type="checkbox" name="pickupAccessorials" value="liftgate" data-label="Liftgate"> Liftgate</label>
                           <label><input type="checkbox" name="pickupAccessorials" value="inside" data-label="Inside"> Inside</label>
                           <label><input type="checkbox" name="pickupAccessorials" value="limitedAccess" data-label="Limited access"> Limited access</label>
                           <label><input type="checkbox" name="pickupAccessorials" value="residential" data-label="Residential"> Residential</label>
@@ -302,23 +335,23 @@
                     <div class="form-grid location-address-grid">
                       <label>
                         Company name
-                        <input name="deliveryName" required value="LACMA">
+                        <input name="deliveryName" required placeholder="Company name">
                       </label>
                       <label>
                         Street
-                        <input name="deliveryStreet" required value="5905 Wilshire Boulevard">
+                        <input name="deliveryStreet" required placeholder="Street">
                       </label>
                       <label>
                         City
-                        <input name="deliveryCity" required value="Los Angeles">
+                        <input name="deliveryCity" required placeholder="City">
                       </label>
                       <label>
                         State
-                        <input name="deliveryState" required value="CA" maxlength="2">
+                        <input name="deliveryState" required placeholder="CA" maxlength="2">
                       </label>
                       <label>
                         ZIP
-                        <input name="deliveryZip" required value="90036">
+                        <input name="deliveryZip" required placeholder="ZIP">
                       </label>
                     </div>
                   </section>
@@ -328,15 +361,19 @@
                     <div class="form-grid location-contact-grid">
                       <label class="span-2">
                         Phone
-                        <input name="deliveryPhone" type="tel" required value="+15555555555">
+                        <input name="deliveryPhone" type="tel" inputmode="numeric" autocomplete="tel" required placeholder="Phone">
+                      </label>
+                      <label class="span-2">
+                        Email
+                        <input name="deliveryEmail" type="email" placeholder="Email">
                       </label>
                       <label>
                         Open
-                        <select name="deliveryOpen" data-time-select data-default-value="0900" required></select>
+                        <select name="deliveryOpen" data-time-select required></select>
                       </label>
                       <label>
                         Close
-                        <select name="deliveryClose" data-time-select data-default-value="1600" required></select>
+                        <select name="deliveryClose" data-time-select required></select>
                       </label>
                     </div>
                   </section>
@@ -348,10 +385,10 @@
                         <summary><span class="accessorial-summary">Select accessorials</span></summary>
                         <div class="accessorial-menu">
                           <label><input type="checkbox" name="deliveryAccessorials" value="appointment" data-label="Appointment"> Appointment</label>
-                          <label><input type="checkbox" name="deliveryAccessorials" value="liftgate" data-label="Liftgate" checked> Liftgate</label>
+                          <label><input type="checkbox" name="deliveryAccessorials" value="liftgate" data-label="Liftgate"> Liftgate</label>
                           <label><input type="checkbox" name="deliveryAccessorials" value="inside" data-label="Inside"> Inside</label>
                           <label><input type="checkbox" name="deliveryAccessorials" value="limitedAccess" data-label="Limited access"> Limited access</label>
-                          <label><input type="checkbox" name="deliveryAccessorials" value="residential" data-label="Residential" checked> Residential</label>
+                          <label><input type="checkbox" name="deliveryAccessorials" value="residential" data-label="Residential"> Residential</label>
                           <label><input type="checkbox" name="deliveryAccessorials" value="scheduledDelivery" data-label="Scheduled delivery"> Scheduled delivery</label>
                           <label><input type="checkbox" name="deliveryAccessorials" value="hazmat" data-label="Hazmat"> Hazmat</label>
                           <label><input type="checkbox" name="deliveryAccessorials" value="alcohol" data-label="Alcohol"> Alcohol</label>
@@ -367,32 +404,34 @@
             </div>
 
             <section class="panel">
-              <div class="panel-heading">
-                <h2>Freight</h2>
-              </div>
-              <div class="freight-grid">
-                <div class="form-grid freight-primary-grid">
-                  <label>
-                    Quantity
-                    <input name="quantity" type="number" min="1" value="2" required>
-                  </label>
-                  <label>
-                    Type
-                    <select name="freightType">
-                      <option>Pallet</option>
-                      <option>Box</option>
-                      <option>Crate</option>
-                    </select>
-                  </label>
-                  <label>
-                    Weight each (lbs)
-                    <input name="weight" type="number" min="1" value="50" required>
-                  </label>
-                  <label>
-                    Freight class
-                    <select name="freightClass" required>
-                      <option value="50" selected>50</option>
-                      <option value="55">55</option>
+                <div class="panel-heading">
+                  <h2>Freight</h2>
+                </div>
+                <div class="freight-grid">
+                  <div class="form-grid freight-primary-grid">
+                    <label>
+                      Quantity
+                      <input name="quantity" type="number" min="1" placeholder="Qty" required>
+                    </label>
+                    <label>
+                      Type
+                      <select name="freightType" required>
+                        <option value="" selected disabled>Select type</option>
+                        <option>Pallet</option>
+                        <option>Box</option>
+                        <option>Crate</option>
+                      </select>
+                    </label>
+                    <label>
+                      Weight each (lbs)
+                      <input name="weight" type="number" min="1" placeholder="Weight" required>
+                    </label>
+                    <label>
+                      Freight class
+                      <select name="freightClass">
+                        <option value="" selected>Optional</option>
+                        <option value="50">50</option>
+                        <option value="55">55</option>
                       <option value="60">60</option>
                       <option value="65">65</option>
                       <option value="70">70</option>
@@ -415,19 +454,19 @@
                 <div class="form-grid freight-secondary-grid">
                   <label>
                     Length (in)
-                    <input name="length" type="number" min="1" value="48" required>
+                    <input name="length" type="number" min="1" placeholder="Length" required>
                   </label>
                   <label>
                     Width (in)
-                    <input name="width" type="number" min="1" value="42" required>
+                    <input name="width" type="number" min="1" placeholder="Width" required>
                   </label>
                   <label>
                     Height (in)
-                    <input name="height" type="number" min="1" value="46" required>
+                    <input name="height" type="number" min="1" placeholder="Height" required>
                   </label>
                   <label>
                     Description
-                    <input name="description" value="General merchandise" required>
+                    <input name="description" placeholder="Description" required>
                   </label>
                 </div>
                 <div class="helper-text freight-note">Total shipment weight = quantity × weight each.</div>
