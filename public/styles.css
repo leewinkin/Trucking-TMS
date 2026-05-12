@@ -580,6 +580,20 @@ select:focus {
   margin: 0;
 }
 
+.mode-checkbox-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.mode-checkbox-grid .checkbox-wrap {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #ffffff;
+}
+
 .helper-text {
   color: var(--muted);
   font-size: 12px;
@@ -1016,6 +1030,10 @@ select:focus {
 
   .quote-meta-grid,
   .quote-stops-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .mode-checkbox-grid {
     grid-template-columns: 1fr;
   }
 

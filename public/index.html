@@ -203,6 +203,25 @@
                   Markup percent
                   <input name="markupPercentage" type="number" min="0" step="0.1" value="15">
                 </label>
+                <div class="span-2">
+                  <div class="field-label">Allowed carrier modes</div>
+                  <div class="mode-checkbox-grid">
+                    <label class="checkbox-wrap">
+                      <input type="checkbox" name="allowedCarrierModes" value="mothershipSandbox" checked>
+                      <span>Mothership sandbox</span>
+                    </label>
+                    <label class="checkbox-wrap">
+                      <input type="checkbox" name="allowedCarrierModes" value="speedshipLtl">
+                      <span>SpeedShip LTL</span>
+                    </label>
+                    <label class="checkbox-wrap">
+                      <input type="checkbox" name="allowedCarrierModes" value="demo">
+                      <span>Demo rates</span>
+                    </label>
+                  </div>
+                  <div id="tariffFormError" class="form-error"></div>
+                  <div class="helper-text">Quotes for this customer will pull rates from every selected carrier mode.</div>
+                </div>
                 <button class="primary-action" type="submit">Save Tariff</button>
               </form>
             </section>
@@ -222,15 +241,6 @@
                   <select name="customerId" id="quoteCustomerSelect" required></select>
                 </label>
                 <label>
-                  Carrier mode
-                  <select name="carrierMode" required>
-                    <option value="" selected disabled>Select carrier mode</option>
-                    <option value="speedshipLtl">SpeedShip LTL</option>
-                    <option value="mothershipSandbox">Mothership sandbox</option>
-                    <option value="demo">Demo rates</option>
-                  </select>
-                </label>
-                <label>
                   Reference / PO number
                   <input name="referenceNumber" required placeholder="PO-1001">
                 </label>
@@ -243,7 +253,7 @@
                   <select name="pickupTime" data-time-select required></select>
                 </label>
                 <div class="helper-text span-2">If the selected customer has an address on file, pickup will prefill from it.</div>
-                <div class="helper-text span-2" id="carrierModeHint">Choose a carrier mode to continue.</div>
+                <div class="helper-text span-2" id="carrierModeHint">Rates will use the carrier modes assigned to the selected customer.</div>
               </div>
             </section>
 

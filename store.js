@@ -72,9 +72,10 @@ async function createPostgresStore(dbUrl) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
+        const allowedCarrierModes = normalizeAllowedCarrierModes(input.allowedCarrierModes);
         const customerResult = await client.query(
-          `INSERT INTO customers (id, company_name, billing_email, payment_terms, company_phone, company_open_time, company_close_time, company_street, company_city, company_state, company_zip, status, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+          `INSERT INTO customers (id, company_name, billing_email, payment_terms, company_phone, company_open_time, company_close_time, company_street, company_city, company_state, company_zip, allowed_carrier_modes, status, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14)
            RETURNING *`,
           [
             createId("cust"),
@@ -88,6 +89,7 @@ async function createPostgresStore(dbUrl) {
             String(input.companyCity || "").trim(),
             String(input.companyState || "").trim().toUpperCase(),
             String(input.companyZip || "").trim(),
+            JSON.stringify(allowedCarrierModes),
             "active",
             nowIso()
           ]
@@ -138,6 +140,9 @@ async function createPostgresStore(dbUrl) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
+        const allowedCarrierModes = Object.prototype.hasOwnProperty.call(input, "allowedCarrierModes")
+          ? normalizeAllowedCarrierModes(input.allowedCarrierModes)
+          : null;
         const customerResult = await client.query(
           `UPDATE customers
            SET company_name = COALESCE($2, company_name),
@@ -150,7 +155,8 @@ async function createPostgresStore(dbUrl) {
                company_city = COALESCE($9, company_city),
                company_state = COALESCE($10, company_state),
                company_zip = COALESCE($11, company_zip),
-               status = COALESCE($12, status)
+               allowed_carrier_modes = COALESCE($12::jsonb, allowed_carrier_modes),
+               status = COALESCE($13, status)
            WHERE id = $1
            RETURNING *`,
           [
@@ -165,6 +171,7 @@ async function createPostgresStore(dbUrl) {
             normalizeNullableString(input.companyCity),
             normalizeNullableString(input.companyState),
             normalizeNullableString(input.companyZip),
+            allowedCarrierModes ? JSON.stringify(allowedCarrierModes) : null,
             normalizeNullableString(input.status)
           ]
         );
@@ -205,6 +212,13 @@ async function createPostgresStore(dbUrl) {
               nowIso()
             ]
           );
+        }
+
+        if (Object.prototype.hasOwnProperty.call(input, "allowedCarrierModes")) {
+          await client.query("UPDATE customers SET allowed_carrier_modes = $2 WHERE id = $1", [
+            id,
+            JSON.stringify(normalizeAllowedCarrierModes(input.allowedCarrierModes))
+          ]);
         }
 
         await client.query("COMMIT");
@@ -301,14 +315,15 @@ async function createPostgresStore(dbUrl) {
     async createQuote(quote) {
       const result = await pool.query(
         `INSERT INTO quotes
-         (id, customer_id, customer_name, carrier_mode, carrier, carrier_quote_id, reference_number, pickup, delivery, freight, pickup_ready_date, tariff_rule, rates, status, raw_carrier_response, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10::jsonb, $11::jsonb, $12::jsonb, $13::jsonb, $14, $15::jsonb, $16)
+         (id, customer_id, customer_name, carrier_mode, carrier_modes, carrier, carrier_quote_id, reference_number, pickup, delivery, freight, pickup_ready_date, tariff_rule, rates, status, carrier_message, raw_carrier_response, created_at)
+         VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9::jsonb, $10::jsonb, $11::jsonb, $12::jsonb, $13::jsonb, $14::jsonb, $15, $16, $17::jsonb, $18)
          RETURNING *`,
         [
           quote.id,
           quote.customerId,
           quote.customerName,
           quote.carrierMode,
+          JSON.stringify(quote.carrierModes || []),
           quote.carrier,
           quote.carrierQuoteId,
           quote.referenceNumber || "",
@@ -319,6 +334,7 @@ async function createPostgresStore(dbUrl) {
           JSON.stringify(quote.tariffRule),
           JSON.stringify(quote.rates),
           quote.status,
+          quote.carrierMessage || "",
           JSON.stringify(quote.rawCarrierResponse),
           quote.createdAt
         ]
@@ -347,8 +363,8 @@ async function createPostgresStore(dbUrl) {
 
         const shipmentResult = await client.query(
           `INSERT INTO shipments
-           (id, customer_id, customer_name, quote_id, carrier, carrier_shipment_id, confirmation_number, reference_number, pickup, delivery, freight, carrier_cost, sell_price, margin, provider, service, status, pickup_date, carrier_shipment, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11::jsonb, $12, $13, $14, $15, $16, $17, $18::jsonb, $19::jsonb, $20)
+           (id, customer_id, customer_name, quote_id, carrier, carrier_name, carrier_shipment_id, confirmation_number, reference_number, pickup, delivery, freight, carrier_cost, sell_price, margin, provider, service, status, pickup_date, carrier_shipment, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12::jsonb, $13, $14, $15, $16, $17, $18, $19::jsonb, $20::jsonb, $21)
            RETURNING *`,
           [
             payload.shipment.id,
@@ -356,6 +372,7 @@ async function createPostgresStore(dbUrl) {
             payload.shipment.customerName,
             payload.quoteId,
             payload.shipment.carrier,
+            payload.shipment.carrierName || "",
             payload.shipment.carrierShipmentId,
             payload.shipment.confirmationNumber,
             payload.shipment.referenceNumber || "",
@@ -508,6 +525,7 @@ async function ensureSchema(pool) {
       company_city text NOT NULL DEFAULT '',
       company_state text NOT NULL DEFAULT '',
       company_zip text NOT NULL DEFAULT '',
+      allowed_carrier_modes jsonb NOT NULL DEFAULT '["mothershipSandbox"]'::jsonb,
       status text NOT NULL DEFAULT 'active',
       created_at timestamptz NOT NULL DEFAULT now()
     )`,
@@ -518,6 +536,7 @@ async function ensureSchema(pool) {
     "ALTER TABLE customers ADD COLUMN IF NOT EXISTS company_city text NOT NULL DEFAULT ''",
     "ALTER TABLE customers ADD COLUMN IF NOT EXISTS company_state text NOT NULL DEFAULT ''",
     "ALTER TABLE customers ADD COLUMN IF NOT EXISTS company_zip text NOT NULL DEFAULT ''",
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS allowed_carrier_modes jsonb NOT NULL DEFAULT '[\"mothershipSandbox\"]'::jsonb",
     `CREATE TABLE IF NOT EXISTS tariff_rules (
       id text PRIMARY KEY,
       customer_id text NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
@@ -550,6 +569,7 @@ async function ensureSchema(pool) {
       customer_id text NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
       customer_name text NOT NULL,
       carrier_mode text NOT NULL,
+      carrier_modes jsonb NOT NULL DEFAULT '[]'::jsonb,
       carrier text NOT NULL,
       carrier_quote_id text NOT NULL,
       reference_number text NOT NULL DEFAULT '',
@@ -560,6 +580,7 @@ async function ensureSchema(pool) {
       tariff_rule jsonb NOT NULL,
       rates jsonb NOT NULL,
       status text NOT NULL DEFAULT 'quoted',
+      carrier_message text NOT NULL DEFAULT '',
       raw_carrier_response jsonb NOT NULL,
       created_at timestamptz NOT NULL DEFAULT now()
     )`,
@@ -569,6 +590,7 @@ async function ensureSchema(pool) {
       customer_name text NOT NULL,
       quote_id text NOT NULL REFERENCES quotes(id) ON DELETE CASCADE,
       carrier text NOT NULL,
+      carrier_name text NOT NULL DEFAULT '',
       carrier_shipment_id text NOT NULL,
       confirmation_number text NOT NULL,
       reference_number text NOT NULL DEFAULT '',
@@ -609,7 +631,10 @@ async function ensureSchema(pool) {
       created_at timestamptz NOT NULL DEFAULT now()
     )`,
     "ALTER TABLE quotes ADD COLUMN IF NOT EXISTS reference_number text NOT NULL DEFAULT ''",
+    "ALTER TABLE quotes ADD COLUMN IF NOT EXISTS carrier_modes jsonb NOT NULL DEFAULT '[]'::jsonb",
+    "ALTER TABLE quotes ADD COLUMN IF NOT EXISTS carrier_message text NOT NULL DEFAULT ''",
     "ALTER TABLE shipments ADD COLUMN IF NOT EXISTS reference_number text NOT NULL DEFAULT ''",
+    "ALTER TABLE shipments ADD COLUMN IF NOT EXISTS carrier_name text NOT NULL DEFAULT ''",
     "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS reference_number text NOT NULL DEFAULT ''",
     "CREATE INDEX IF NOT EXISTS idx_tariff_rules_customer_id ON tariff_rules(customer_id)",
     "CREATE INDEX IF NOT EXISTS idx_quotes_customer_id ON quotes(customer_id)",
@@ -751,6 +776,7 @@ function createJsonStore(filePath) {
         companyCity: String(input.companyCity || "").trim(),
         companyState: String(input.companyState || "").trim().toUpperCase(),
         companyZip: String(input.companyZip || "").trim(),
+        allowedCarrierModes: normalizeAllowedCarrierModes(input.allowedCarrierModes),
         status: "active",
         createdAt: nowIso()
       };
@@ -810,6 +836,9 @@ function createJsonStore(filePath) {
       }
       if (Object.prototype.hasOwnProperty.call(input, "companyZip")) {
         customer.companyZip = String(input.companyZip || "").trim();
+      }
+      if (Object.prototype.hasOwnProperty.call(input, "allowedCarrierModes")) {
+        customer.allowedCarrierModes = normalizeAllowedCarrierModes(input.allowedCarrierModes);
       }
       if (Object.prototype.hasOwnProperty.call(input, "status") && String(input.status || "").trim()) {
         customer.status = String(input.status).trim();
@@ -925,6 +954,9 @@ function createJsonStore(filePath) {
         createdAt: nowIso()
       };
       db.tariffRules.push(tariffRule);
+      if (Object.prototype.hasOwnProperty.call(input, "allowedCarrierModes")) {
+        customer.allowedCarrierModes = normalizeAllowedCarrierModes(input.allowedCarrierModes);
+      }
       await writeJsonDb(filePath, db);
       return tariffRule;
     },
@@ -1095,6 +1127,7 @@ function createSeedDb() {
         companyCity: "",
         companyState: "",
         companyZip: "",
+        allowedCarrierModes: ["mothershipSandbox"],
         status: "active",
         createdAt: now
       }
@@ -1149,6 +1182,40 @@ function normalizeRuleType(ruleType) {
   return ["fixed", "percentage"].includes(ruleType) ? ruleType : "percentage";
 }
 
+function normalizeCarrierMode(value) {
+  const mode = String(value || "").trim();
+  const aliases = {
+    mothership: "mothershipSandbox",
+    mothershipsandbox: "mothershipSandbox",
+    speedship: "speedshipLtl",
+    speedshipltl: "speedshipLtl",
+    demo: "demo",
+    "mothership-demo": "demo"
+  };
+  const key = mode.toLowerCase().replace(/[\s_-]+/g, "");
+  return aliases[key] || mode;
+}
+
+function normalizeAllowedCarrierModes(value, fallback = ["mothershipSandbox"]) {
+  const list = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(/[,\s]+/).filter(Boolean)
+      : [];
+  const normalized = [];
+
+  for (const entry of list) {
+    const mode = normalizeCarrierMode(entry);
+    if (mode === "demo" || mode === "mothershipSandbox" || mode === "speedshipLtl") {
+      if (!normalized.includes(mode)) {
+        normalized.push(mode);
+      }
+    }
+  }
+
+  return normalized.length > 0 ? normalized : fallback;
+}
+
 function toMoney(value) {
   return Number.isFinite(Number(value)) ? Math.round(Number(value) * 100) / 100 : 0;
 }
@@ -1178,6 +1245,7 @@ function mapCustomerRow(row) {
     companyCity: row.company_city || "",
     companyState: row.company_state || "",
     companyZip: row.company_zip || "",
+    allowedCarrierModes: normalizeAllowedCarrierModes(row.allowed_carrier_modes),
     status: row.status,
     portalEmail: row.portal_email || null,
     createdAt: row.created_at
@@ -1197,11 +1265,18 @@ function mapTariffRuleRow(row) {
 }
 
 function mapQuoteRow(row) {
+  const carrierModes =
+    Array.isArray(row.carrier_modes) && row.carrier_modes.length > 0
+      ? normalizeAllowedCarrierModes(row.carrier_modes, [])
+      : row.carrier_mode && row.carrier_mode !== "multiCarrier"
+        ? normalizeAllowedCarrierModes([row.carrier_mode], [])
+        : [];
   return {
     id: row.id,
     customerId: row.customer_id,
     customerName: row.customer_name,
     carrierMode: row.carrier_mode,
+    carrierModes,
     carrier: row.carrier,
     carrierQuoteId: row.carrier_quote_id,
     referenceNumber: row.reference_number || "",
@@ -1212,6 +1287,7 @@ function mapQuoteRow(row) {
     tariffRule: row.tariff_rule,
     rates: row.rates,
     status: row.status,
+    carrierMessage: row.carrier_message || "",
     rawCarrierResponse: row.raw_carrier_response,
     createdAt: row.created_at
   };
@@ -1224,6 +1300,7 @@ function mapShipmentRow(row) {
     customerName: row.customer_name,
     quoteId: row.quote_id,
     carrier: row.carrier,
+    carrierName: row.carrier_name || "",
     carrierShipmentId: row.carrier_shipment_id,
     confirmationNumber: row.confirmation_number,
     referenceNumber: row.reference_number || "",
@@ -1303,7 +1380,7 @@ function mapSessionRow(row) {
 
 function normalizeJsonDb(db) {
   return {
-    customers: Array.isArray(db.customers) ? db.customers : [],
+    customers: Array.isArray(db.customers) ? db.customers.map(normalizeCustomerRecord) : [],
     tariffRules: Array.isArray(db.tariffRules) ? db.tariffRules : [],
     users: Array.isArray(db.users) ? db.users : [],
     sessions: Array.isArray(db.sessions) ? db.sessions : [],
@@ -1311,6 +1388,13 @@ function normalizeJsonDb(db) {
     shipments: Array.isArray(db.shipments) ? db.shipments : [],
     invoices: Array.isArray(db.invoices) ? db.invoices : [],
     trackingEvents: Array.isArray(db.trackingEvents) ? db.trackingEvents : []
+  };
+}
+
+function normalizeCustomerRecord(customer) {
+  return {
+    ...customer,
+    allowedCarrierModes: normalizeAllowedCarrierModes(customer?.allowedCarrierModes)
   };
 }
 

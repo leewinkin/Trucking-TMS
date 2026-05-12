@@ -277,75 +277,56 @@ async function createQuote(req, res, currentUser) {
   const tariffs = await store.listTariffs(customer.id);
   const tariffRule = tariffs.find((rule) => rule.status === "active") || defaultTariffRule(customer.id);
   const referenceNumber = requiredString(input.referenceNumber, "referenceNumber");
-
-  const carrierMode = normalizeCarrierMode(input.carrierMode);
+  const allowedCarrierModes = normalizeAllowedCarrierModes(customer.allowedCarrierModes);
   const mothershipRequest = buildMothershipQuoteRequest(input);
   const speedshipRequests = buildSpeedshipLtlQuoteRequests(input);
-  let carrierQuote;
+  const carrierRuns = await Promise.all(
+    allowedCarrierModes.map((mode) => requestCarrierQuoteForMode(mode, mothershipRequest, speedshipRequests))
+  );
 
-  if (carrierMode === "mothershipSandbox") {
-    if (!process.env.MOTHERSHIP_API_TOKEN) {
-      sendJson(res, 400, {
-        error: "MOTHERSHIP_TOKEN_MISSING",
-        message: "Add MOTHERSHIP_API_TOKEN to .env.local before using Mothership sandbox."
-      });
-      return;
-    }
-
-    carrierQuote = await requestMothershipQuote(mothershipRequest);
-  } else if (carrierMode === "speedshipLtl") {
-    if (!isSpeedshipConfigured()) {
-      sendJson(res, 400, {
-        error: "SPEEDSHIP_TOKEN_MISSING",
-        message: "Add SpeedShip sandbox credentials to .env.local before using SpeedShip LTL."
-      });
-      return;
-    }
-
-    carrierQuote = await requestSpeedshipLtlQuote(speedshipRequests.shopFlow, speedshipRequests.estimateFlow);
-  } else {
-    carrierQuote = createDemoCarrierQuote(mothershipRequest);
-  }
-
-  const normalizedRates = (carrierMode === "speedshipLtl" ? normalizeSpeedshipLtlRates(carrierQuote) : normalizeMothershipRates(carrierQuote)).map((rate) => {
+  const carrierQuoteId = carrierRuns.map((run) => run.carrierQuoteId).filter(Boolean).join(" | ") || createId("carrierQuote");
+  const carrierMessage = carrierRuns.map((run) => run.carrierMessage).filter(Boolean).join(" ").trim();
+  const normalizedRates = carrierRuns
+    .flatMap((run) =>
+      (Array.isArray(run.rates) ? run.rates : []).map((rate) => ({
+        ...rate,
+        carrierSource: run.mode,
+        carrierQuoteId: run.carrierQuoteId
+      }))
+    )
+    .map((rate) => {
     const pricing = applyTariff(rate.carrierCost, tariffRule);
     return {
       ...rate,
       ...pricing
     };
-  });
+    });
+  const carrierNotice = normalizedRates.length === 0 ? carrierMessage || "Carrier returned no rates for this lane." : "";
 
   if (normalizedRates.length === 0) {
-    if (carrierMode === "speedshipLtl") {
-      const quote = {
-        id: createId("quote"),
-        customerId: customer.id,
-        customerName: customer.companyName,
-        carrierMode,
-        carrier: "speedship",
-        carrierQuoteId: getCarrierQuoteId(carrierQuote),
-        referenceNumber,
-        pickup: mothershipRequest.pickup,
-        delivery: mothershipRequest.delivery,
-        freight: mothershipRequest.freight,
-        pickupReadyDate: mothershipRequest.pickupReadyDate,
-        tariffRule,
-        rates: [],
-        status: "speedship_connected_no_rates",
-        carrierMessage: "SpeedShip sandbox connection succeeded, but this lane returned no matching rates.",
-        rawCarrierResponse: carrierQuote,
-        createdAt: new Date().toISOString()
-      };
+    const quote = {
+      id: createId("quote"),
+      customerId: customer.id,
+      customerName: customer.companyName,
+      carrierMode: "multiCarrier",
+      carrierModes: allowedCarrierModes,
+      carrier: "mixed",
+      carrierQuoteId,
+      referenceNumber,
+      pickup: mothershipRequest.pickup,
+      delivery: mothershipRequest.delivery,
+      freight: mothershipRequest.freight,
+      pickupReadyDate: mothershipRequest.pickupReadyDate,
+      tariffRule,
+      rates: [],
+      status: "carrier_connected_no_rates",
+      carrierMessage: carrierNotice,
+      rawCarrierResponse: carrierRuns,
+      createdAt: new Date().toISOString()
+    };
 
-      await store.createQuote(quote);
-      sendJson(res, 201, { quote });
-      return;
-    }
-
-    sendJson(res, 422, {
-      error: "NO_RATES_FOUND",
-      message: "Carrier returned no rates for this lane."
-    });
+    await store.createQuote(quote);
+    sendJson(res, 201, { quote });
     return;
   }
 
@@ -353,9 +334,10 @@ async function createQuote(req, res, currentUser) {
     id: createId("quote"),
     customerId: customer.id,
     customerName: customer.companyName,
-    carrierMode,
-    carrier: carrierMode === "mothershipSandbox" ? "mothership" : carrierMode === "speedshipLtl" ? "speedship" : "demo",
-    carrierQuoteId: getCarrierQuoteId(carrierQuote),
+    carrierMode: "multiCarrier",
+    carrierModes: allowedCarrierModes,
+    carrier: "mixed",
+    carrierQuoteId,
     referenceNumber,
     pickup: mothershipRequest.pickup,
     delivery: mothershipRequest.delivery,
@@ -364,7 +346,8 @@ async function createQuote(req, res, currentUser) {
     tariffRule,
     rates: normalizedRates,
     status: "quoted",
-    rawCarrierResponse: carrierQuote,
+    carrierMessage: carrierNotice,
+    rawCarrierResponse: carrierRuns,
     createdAt: new Date().toISOString()
   };
 
@@ -396,7 +379,7 @@ async function createShipment(req, res, currentUser) {
   const shouldBookCarrier = Boolean(input.bookWithCarrier);
 
   if (shouldBookCarrier) {
-    if (quote.carrierMode !== "mothershipSandbox") {
+    if (rate.carrierSource !== "mothershipSandbox") {
       sendJson(res, 400, {
         error: "CARRIER_BOOKING_UNAVAILABLE",
         message: "Carrier booking is only available for Mothership sandbox quotes."
@@ -413,7 +396,7 @@ async function createShipment(req, res, currentUser) {
     }
 
     carrierShipment = await requestMothershipShipment({
-      quoteId: quote.carrierQuoteId,
+      quoteId: rate.carrierQuoteId || quote.carrierQuoteId,
       rateId: rate.carrierRateId || rate.id
     });
   }
@@ -423,7 +406,7 @@ async function createShipment(req, res, currentUser) {
     customerId: quote.customerId,
     customerName: quote.customerName,
     quoteId: quote.id,
-    carrier: quote.carrier,
+    carrier: rate.carrierSource === "speedshipLtl" ? "speedship" : rate.carrierSource === "mothershipSandbox" ? "mothership" : quote.carrier || "demo",
     carrierShipmentId: getCarrierShipmentId(carrierShipment) || createId("demoShipment"),
     confirmationNumber: getCarrierShipmentId(carrierShipment) || `LOCAL-${Date.now()}`,
     referenceNumber: quote.referenceNumber,
@@ -1319,6 +1302,113 @@ function normalizeCarrierMode(value) {
     return value;
   }
   return "demo";
+}
+
+function normalizeAllowedCarrierModes(values, fallback = ["mothershipSandbox"]) {
+  const list = Array.isArray(values)
+    ? values
+    : typeof values === "string"
+      ? values.split(/[,\s]+/).filter(Boolean)
+      : [];
+  const normalized = [];
+
+  for (const entry of list) {
+    const mode = normalizeCarrierMode(entry);
+    if ((mode === "mothershipSandbox" || mode === "speedshipLtl" || mode === "demo") && !normalized.includes(mode)) {
+      normalized.push(mode);
+    }
+  }
+
+  return normalized.length > 0 ? normalized : fallback;
+}
+
+function carrierModeDisplayName(mode) {
+  switch (normalizeCarrierMode(mode)) {
+    case "mothershipSandbox":
+      return "Mothership sandbox";
+    case "speedshipLtl":
+      return "SpeedShip LTL";
+    case "demo":
+    default:
+      return "Demo rates";
+  }
+}
+
+async function requestCarrierQuoteForMode(mode, mothershipRequest, speedshipRequests) {
+  const normalizedMode = normalizeCarrierMode(mode);
+
+  try {
+    if (normalizedMode === "mothershipSandbox") {
+      if (!process.env.MOTHERSHIP_API_TOKEN) {
+        return {
+          mode: normalizedMode,
+          carrier: "mothership",
+          carrierQuoteId: createId("mothershipQuote"),
+          rates: [],
+          carrierMessage: "Add MOTHERSHIP_API_TOKEN to .env.local before using Mothership sandbox.",
+          rawCarrierResponse: {}
+        };
+      }
+
+      const carrierQuote = await requestMothershipQuote(mothershipRequest);
+      const rates = normalizeMothershipRates(carrierQuote);
+      return {
+        mode: normalizedMode,
+        carrier: "mothership",
+        carrierQuoteId: getCarrierQuoteId(carrierQuote),
+        rates,
+        carrierMessage: rates.length === 0 ? "Mothership sandbox returned no rates for this lane." : "",
+        rawCarrierResponse: carrierQuote
+      };
+    }
+
+    if (normalizedMode === "speedshipLtl") {
+      if (!isSpeedshipConfigured()) {
+        return {
+          mode: normalizedMode,
+          carrier: "speedship",
+          carrierQuoteId: createId("speedshipQuote"),
+          rates: [],
+          carrierMessage: "Add SpeedShip sandbox credentials to .env.local before using SpeedShip LTL.",
+          rawCarrierResponse: {}
+        };
+      }
+
+      const carrierQuote = await requestSpeedshipLtlQuote(speedshipRequests.shopFlow, speedshipRequests.estimateFlow);
+      const rates = normalizeSpeedshipLtlRates(carrierQuote);
+      return {
+        mode: normalizedMode,
+        carrier: "speedship",
+        carrierQuoteId: getCarrierQuoteId(carrierQuote),
+        rates,
+        carrierMessage: rates.length === 0 ? "SpeedShip sandbox connection succeeded, but this lane returned no matching rates." : "",
+        rawCarrierResponse: carrierQuote
+      };
+    }
+
+    const carrierQuote = createDemoCarrierQuote(mothershipRequest);
+    const rates = normalizeMothershipRates(carrierQuote);
+    return {
+      mode: normalizedMode,
+      carrier: "demo",
+      carrierQuoteId: getCarrierQuoteId(carrierQuote),
+      rates,
+      carrierMessage: "",
+      rawCarrierResponse: carrierQuote
+    };
+  } catch (error) {
+    return {
+      mode: normalizedMode,
+      carrier: normalizedMode === "speedshipLtl" ? "speedship" : normalizedMode === "mothershipSandbox" ? "mothership" : "demo",
+      carrierQuoteId: createId(`${normalizedMode}Quote`),
+      rates: [],
+      carrierMessage: error?.message || "Carrier request failed.",
+      rawCarrierResponse: {
+        error: error?.code || "CARRIER_REQUEST_FAILED",
+        message: error?.message || "Carrier request failed."
+      }
+    };
+  }
 }
 
 function isSpeedshipConfigured() {

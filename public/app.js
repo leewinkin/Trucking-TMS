@@ -131,12 +131,6 @@ function wireForms() {
   populateTimeSelects();
   wireAccessorialDropdowns();
 
-  const carrierModeSelect = document.querySelector("[name='carrierMode']");
-  carrierModeSelect.addEventListener("change", () => {
-    state.carrierModeTouched = true;
-    syncCarrierControls();
-  });
-
   document.getElementById("customerForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -165,13 +159,27 @@ function wireForms() {
   document.getElementById("tariffForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
+    const allowedCarrierModes = form.getAll("allowedCarrierModes");
+    const tariffError = document.getElementById("tariffFormError");
+    if (tariffError) {
+      tariffError.textContent = "";
+    }
+    if (allowedCarrierModes.length === 0) {
+      const message = "Select at least one carrier mode for this customer.";
+      if (tariffError) {
+        tariffError.textContent = message;
+      }
+      showToast(message, true);
+      return;
+    }
     await api("/api/tariffs", {
       method: "POST",
       body: {
         customerId: form.get("customerId"),
         ruleType: form.get("ruleType"),
         fixedAmount: form.get("fixedAmount"),
-        markupPercentage: form.get("markupPercentage")
+        markupPercentage: form.get("markupPercentage"),
+        allowedCarrierModes
       }
     });
     showToast("Tariff saved.");
@@ -215,6 +223,14 @@ function wireForms() {
       showToast(message, true);
     }
   });
+
+  const tariffCustomerSelect = document.getElementById("tariffCustomerSelect");
+  if (tariffCustomerSelect && !tariffCustomerSelect.dataset.modeSyncBound) {
+    tariffCustomerSelect.addEventListener("change", () => {
+      syncTariffCarrierModes(tariffCustomerSelect.value);
+    });
+    tariffCustomerSelect.dataset.modeSyncBound = "true";
+  }
 
   syncCarrierControls();
 }
@@ -268,6 +284,7 @@ async function refreshAll(options = {}) {
     syncCarrierControls();
     if (isCustomerUser()) {
       autofillPickupFromCustomer(state.user?.customerId, true);
+      syncCarrierControls();
     }
 
     if (!options.keepQuoteResults && !state.currentQuote) {
@@ -326,6 +343,7 @@ function setView(name) {
   if (name === "quote" && isCustomerUser() && !state.pendingQuoteReentry) {
     window.requestAnimationFrame(() => {
       autofillPickupFromCustomer(state.user?.customerId, true);
+      syncCarrierControls();
     });
   }
 }
@@ -386,6 +404,7 @@ function applyPermissions() {
   if (quoteCustomerSelect && !quoteCustomerSelect.dataset.autofillBound) {
     quoteCustomerSelect.addEventListener("change", () => {
       autofillPickupFromCustomer(quoteCustomerSelect.value, true);
+      syncCarrierControls();
     });
     quoteCustomerSelect.dataset.autofillBound = "true";
   }
@@ -1086,11 +1105,12 @@ function freightSummary(values) {
 
 function quoteRow(quote, options = {}) {
   const showActions = options.showActions !== false;
+  const carrierModes = quoteCarrierModesList(quote);
   return `
     <article class="row-item">
       <div>
         <strong>${escapeHtml(quote.customerName)}</strong>
-        <small>${escapeHtml(quote.carrier)} · ${escapeHtml(quote.status)}</small>
+        <small>${escapeHtml(carrierModeListLabel(carrierModes, false) || quote.carrier || "")} · ${escapeHtml(quote.status)}</small>
         <div class="meta-line">
           <span class="pill">${escapeHtml(quote.carrierQuoteId)}</span>
           <span class="pill">${formatDate(quote.createdAt)}</span>
@@ -1109,7 +1129,7 @@ function quoteRow(quote, options = {}) {
 function shipmentRow(shipment, options = {}) {
   const showActions = options.showActions !== false;
   const priceLabel = customerPriceLabel();
-  const carrierLabel = shipment.carrierName || carrierDisplayName(shipment.provider || shipment.carrier || "", shipment.carrier || "");
+  const carrierLabel = shipmentCarrierLabel(shipment);
   return `
     <article class="row-item">
       <div>
@@ -1132,6 +1152,10 @@ function shipmentRow(shipment, options = {}) {
       ` : ""}
     </article>
   `;
+}
+
+function shipmentCarrierLabel(shipment) {
+  return shipment?.carrierName || carrierDisplayName(shipment?.provider || shipment?.carrier || "", shipment?.carrier || "");
 }
 
 function invoiceRow(invoice, options = {}) {
@@ -1191,6 +1215,7 @@ function trackingTimelineHtml(events) {
 
 function quoteDetailsHtml(quote) {
   const customerView = isCustomerUser();
+  const quoteCarrierModes = quoteCarrierModesList(quote);
   const rateCards = Array.isArray(quote.rates) && quote.rates.length
     ? quote.rates
         .map(
@@ -1200,11 +1225,12 @@ function quoteDetailsHtml(quote) {
                 <div class="rate-title-row">
                   <strong>${escapeHtml(carrierNameLabel(rate, quote, customerView))}</strong>
                   <span class="service-badge">${escapeHtml(formatRateService(rate?.service))}</span>
-                  <span class="carrier-badge">${escapeHtml(carrierBadgeLabel(rate.provider, quote.carrierMode, customerView))}</span>
+                  <span class="carrier-badge">${escapeHtml(carrierBadgeLabel(rate.provider, rate.carrierSource || quote.carrierMode, customerView))}</span>
                 </div>
                 <div class="rate-meta-row">
+                  ${customerView ? "" : `<span class="pill">${escapeHtml(rate.carrierSource ? carrierModeSummaryLabel(rate.carrierSource, false) : "Carrier")}</span>`}
                   ${customerView ? "" : `<span class="pill">${escapeHtml(rate.providerScac || "No SCAC")}</span>`}
-                  ${customerView ? "" : `<span class="pill">Offer ${escapeHtml(rate.carrierRateId || rate.id || "")}</span>`}
+                  ${customerView ? "" : `<span class="pill">Offer ${escapeHtml(rate.carrierQuoteId || rate.carrierRateId || rate.id || "")}</span>`}
                   ${rate.transitDays ? `<span class="pill">Transit ${escapeHtml(formatTransitDays(rate.transitDays))}</span>` : ""}
                   ${rate.estimatedDeliveryDate ? `<span class="pill">ETA ${escapeHtml(formatDate(rate.estimatedDeliveryDate))}</span>` : ""}
                   ${customerView
@@ -1238,11 +1264,12 @@ function quoteDetailsHtml(quote) {
         "Quote Summary",
         `
           <div class="meta-line">
-            ${customerView ? `<span class="pill">Shipment quote</span>` : `<span class="pill">${escapeHtml(quote.carrierMode)}</span>`}
+            ${customerView ? `<span class="pill">Shipment quote</span>` : `<span class="pill">${escapeHtml(carrierModeListLabel(quoteCarrierModes, false))}</span>`}
             <span class="pill">${escapeHtml(quote.status)}</span>
             ${customerView ? "" : `<span class="pill">${escapeHtml(quote.carrierQuoteId)}</span>`}
           </div>
           ${carrierNotice}
+          ${quoteCarrierModes.length ? `<p><strong>Carrier modes:</strong> ${escapeHtml(carrierModeListLabel(quoteCarrierModes, customerView))}</p>` : ""}
           <p><strong>Reference / PO:</strong> ${escapeHtml(quote.referenceNumber || "")}</p>
           ${customerView ? "" : `<p><strong>Tariff:</strong> ${escapeHtml(quote.tariffRule?.ruleType || "n/a")} ${quote.tariffRule?.ruleType === "fixed" ? `· ${money.format(Number(quote.tariffRule?.fixedAmount || 0))}` : `· ${Number(quote.tariffRule?.markupPercentage || 0)}%`}</p>`}
           <p><strong>Pickup:</strong> ${escapeHtml(quote.pickup?.name || "")}, ${escapeHtml(quote.pickup?.address?.street || "")}, ${escapeHtml(quote.pickup?.address?.city || "")}, ${escapeHtml(quote.pickup?.address?.state || "")}</p>
@@ -1269,11 +1296,11 @@ function bookingConfirmationHtml(quote, rate) {
       <div class="confirmation-grid">
         <div>
           <small>Carrier</small>
-          <strong>${escapeHtml(carrierBadgeLabel(rate.provider, quote.carrierMode, customerView))}</strong>
+          <strong>${escapeHtml(carrierNameLabel(rate, quote, customerView))}</strong>
         </div>
         <div>
           <small>Service</small>
-          <strong>${escapeHtml(rateHeading(rate, quote, customerView))}</strong>
+          <strong>${escapeHtml(formatRateService(rate?.service))}</strong>
         </div>
         <div>
           <small>Reference / PO</small>
@@ -1313,7 +1340,7 @@ function shipmentDetailsHtml(shipment, events = []) {
         `
           <div class="meta-line">
             <span class="pill">${escapeHtml(shipment.status)}</span>
-            <span class="pill">${escapeHtml(shipment.provider)}</span>
+            <span class="pill">${escapeHtml(shipmentCarrierLabel(shipment))}</span>
             <span class="pill">${escapeHtml(shipment.confirmationNumber)}</span>
           </div>
           <p><strong>Reference / PO:</strong> ${escapeHtml(shipment.referenceNumber || "")}</p>
@@ -1325,7 +1352,7 @@ function shipmentDetailsHtml(shipment, events = []) {
             <button class="secondary-action" type="button" data-track-shipment="${escapeHtml(shipment.id)}">Refresh Tracking</button>
           </div>
         `
-      )}
+      )} 
       ${detailSection("Tracking Timeline", trackingTimelineHtml(events))}
     </div>
   `;
@@ -1339,7 +1366,7 @@ function trackingSummaryHtml(shipment, latestEvent, eventCount) {
     <div class="tracking-summary">
       <div class="meta-line">
         <span class="pill">${escapeHtml(shipment.status)}</span>
-        <span class="pill">${escapeHtml(shipment.provider)}</span>
+        <span class="pill">${escapeHtml(shipmentCarrierLabel(shipment))}</span>
         <span class="pill">${escapeHtml(shipment.confirmationNumber)}</span>
       </div>
       <p><strong>Reference / PO:</strong> ${escapeHtml(shipment.referenceNumber || "")}</p>
@@ -1363,7 +1390,7 @@ function shipmentDocumentsHtml(shipment, documents = [], notice = "") {
             <article class="row-item document-row">
               <div>
                 <strong>${escapeHtml(document.label || "Document")}</strong>
-                <small>${escapeHtml(document.type || "Document")} · ${escapeHtml(document.source || shipment.provider || "")}</small>
+                <small>${escapeHtml(document.type || "Document")} · ${escapeHtml(document.source || shipmentCarrierLabel(shipment) || "")}</small>
                 <div class="meta-line">
                   <span class="pill">${escapeHtml(document.id || "")}</span>
                 </div>
@@ -1383,7 +1410,7 @@ function shipmentDocumentsHtml(shipment, documents = [], notice = "") {
         heading,
         `
           <div class="meta-line">
-            <span class="pill">${escapeHtml(shipment.provider)}</span>
+            <span class="pill">${escapeHtml(shipmentCarrierLabel(shipment))}</span>
             <span class="pill">${escapeHtml(shipment.confirmationNumber)}</span>
             <span class="pill">${escapeHtml(shipment.referenceNumber || "")}</span>
           </div>
@@ -1458,6 +1485,89 @@ function carrierDisplayName(provider, carrierMode = "") {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+function carrierModeListLabel(modes, customerView = false) {
+  const normalizedModes = Array.isArray(modes) ? modes.filter(Boolean) : normalizeAllowedCarrierModes(modes);
+  if (normalizedModes.length === 0) {
+    return "";
+  }
+
+  return normalizeAllowedCarrierModes(normalizedModes)
+    .map((mode) => carrierModeSummaryLabel(mode, customerView))
+    .join(", ");
+}
+
+function carrierModeSummaryLabel(mode, customerView = false) {
+  const normalized = String(mode || "").trim().toLowerCase();
+  if (customerView) {
+    if (normalized === "mothershipsandbox") {
+      return "M";
+    }
+    if (normalized === "speedshipltl") {
+      return "SS";
+    }
+    if (normalized === "demo") {
+      return "D";
+    }
+  }
+
+  switch (normalized) {
+    case "mothershipsandbox":
+      return "Mothership sandbox";
+    case "speedshipltl":
+      return "SpeedShip LTL";
+    case "demo":
+      return "Demo rates";
+    default:
+      return carrierDisplayName(mode);
+  }
+}
+
+function quoteCarrierModesList(quote) {
+  const directModes = Array.isArray(quote?.carrierModes)
+    ? quote.carrierModes
+        .map((mode) => String(mode || "").trim())
+        .filter((mode) => ["mothershipSandbox", "speedshipLtl", "demo"].includes(mode))
+    : [];
+  if (directModes.length > 0) {
+    return directModes;
+  }
+
+  const legacyMode = String(quote?.carrierMode || "").trim();
+  if (!legacyMode || legacyMode === "multiCarrier" || !["mothershipSandbox", "speedshipLtl", "demo"].includes(legacyMode)) {
+    return [];
+  }
+
+  return [legacyMode];
+}
+
+function normalizeAllowedCarrierModes(values) {
+  const list = Array.isArray(values)
+    ? values
+    : typeof values === "string"
+      ? values.split(/[,\s]+/).filter(Boolean)
+      : [];
+  const normalized = [];
+
+  for (const entry of list) {
+    const mode = String(entry || "").trim();
+    if (!mode) {
+      continue;
+    }
+    if (!["mothershipSandbox", "speedshipLtl", "demo"].includes(mode)) {
+      continue;
+    }
+    if (!normalized.includes(mode)) {
+      normalized.push(mode);
+    }
+  }
+
+  if (normalized.length === 0) {
+    normalized.push("mothershipSandbox");
+  }
+
+  return normalized;
+}
+
 function carrierBadgeLabel(provider, carrierMode = "", customerView = false) {
   if (!customerView) {
     return carrierDisplayName(provider, carrierMode);
@@ -1491,20 +1601,11 @@ function carrierNameLabel(rate, quote, customerView = false) {
     return explicitName;
   }
 
-  return carrierDisplayName(rate?.provider || quote?.carrierMode || "", quote?.carrierMode || "");
+  return carrierDisplayName(rate?.provider || quote?.carrierMode || "", rate?.carrierSource || quote?.carrierMode || "");
 }
 
 function rateHeading(rate, quote, customerView = false) {
-  const provider = rate?.provider || quote?.carrierMode || "";
-  const providerMode = String(quote?.carrierMode || "").trim().toLowerCase();
-  const providerNormalized = String(rate?.provider || "").trim().toLowerCase();
-  const service = String(rate?.service || "").trim().toLowerCase();
-
-  if (customerView && (providerNormalized.includes("mothership") || providerMode === "mothershipsandbox")) {
-    return carrierNameLabel(rate, quote, customerView);
-  }
-
-  return `${carrierDisplayName(provider, quote?.carrierMode)} · ${formatRateService(rate?.service)}`;
+  return `${carrierNameLabel(rate, quote, customerView)} · ${formatRateService(rate?.service)}`;
 }
 
 function formatRateService(service) {
@@ -1622,22 +1723,31 @@ function clearQuoteFormErrors(form) {
 }
 
 function syncCarrierControls() {
-  const carrierModeSelect = document.querySelector("[name='carrierMode']");
   const hint = document.getElementById("carrierModeHint");
-  if (!carrierModeSelect || !hint) {
+  const quoteCustomerSelect = document.getElementById("quoteCustomerSelect");
+  if (!hint || !quoteCustomerSelect) {
     return;
   }
 
-  const speedshipEnabled = carrierModeSelect.value === "speedshipLtl";
-  const sandboxEnabled = carrierModeSelect.value === "mothershipSandbox";
-  const demoEnabled = carrierModeSelect.value === "demo";
-  hint.textContent = speedshipEnabled
-    ? "SpeedShip LTL is selected. Click a rate below to create the shipment."
-    : sandboxEnabled
-      ? "Mothership sandbox is selected. Click a rate below to purchase it in sandbox."
-      : demoEnabled
-        ? "Demo rates create local test bookings. Click a rate below to create the shipment."
-        : "Choose a carrier mode to continue.";
+  const customer = state.customers.find((item) => item.id === quoteCustomerSelect.value) || null;
+  const allowedModes = normalizeAllowedCarrierModes(customer?.allowedCarrierModes || []);
+  if (!customer) {
+    hint.textContent = "Select a customer to see the carrier modes assigned by admin.";
+    return;
+  }
+
+  const label = carrierModeListLabel(allowedModes, isCustomerUser());
+  hint.textContent = isCustomerUser()
+    ? `Your quote uses the carrier modes assigned to your account: ${label}.`
+    : `Assigned carrier modes for ${customer.companyName}: ${label}.`;
+}
+
+function syncTariffCarrierModes(customerId) {
+  const customer = state.customers.find((item) => item.id === customerId) || null;
+  const selectedModes = normalizeAllowedCarrierModes(customer?.allowedCarrierModes || []);
+  document.querySelectorAll("#tariffForm input[name='allowedCarrierModes']").forEach((checkbox) => {
+    checkbox.checked = selectedModes.includes(checkbox.value);
+  });
 }
 
 function renderCustomerOptions() {
@@ -1649,6 +1759,7 @@ function renderCustomerOptions() {
   const quoteSelect = document.getElementById("quoteCustomerSelect");
   if (tariffSelect) {
     tariffSelect.innerHTML = options;
+    syncTariffCarrierModes(tariffSelect.value || state.customers[0]?.id || "");
   }
   if (quoteSelect) {
     quoteSelect.innerHTML = options;
@@ -1659,6 +1770,7 @@ function renderCustomerOptions() {
       autofillPickupFromCustomer(quoteSelect.value, true);
     }
   }
+  syncCarrierControls();
 }
 
 function renderCustomers() {
@@ -1672,6 +1784,7 @@ function renderCustomers() {
   list.innerHTML = state.customers
     .map((customer) => {
       const tariff = state.tariffs.find((rule) => rule.customerId === customer.id);
+      const allowedModes = Array.isArray(customer.allowedCarrierModes) ? customer.allowedCarrierModes : [];
       return `
         <article class="row-item" data-customer-id="${escapeHtml(customer.id)}">
           <div>
@@ -1680,6 +1793,9 @@ function renderCustomers() {
             <div class="meta-line">
               ${(customer.companyStreet || customer.companyCity || customer.companyState || customer.companyZip)
                 ? `<span class="pill">${escapeHtml([customer.companyStreet, customer.companyCity, customer.companyState, customer.companyZip].filter(Boolean).join(", "))}</span>`
+                : ""}
+              ${allowedModes.length > 0
+                ? `<span class="pill">${escapeHtml(carrierModeListLabel(allowedModes, false))}</span>`
                 : ""}
               <span class="pill">${escapeHtml(tariff?.ruleType || "no tariff")}</span>
               <span class="pill">${Number(tariff?.markupPercentage || 0)}% markup</span>
@@ -1754,21 +1870,21 @@ function renderQuoteResults(quote) {
   list.classList.toggle("compare-grid", Array.isArray(quote.rates) && quote.rates.length > 1);
   const customerView = isCustomerUser();
   const priceLabel = customerPriceLabel();
-  const carrierLabel = customerView && quote.carrierMode === "mothershipSandbox"
-    ? "Carrier"
-    : quote.carrierMode === "speedshipLtl"
-      ? "SpeedShip"
-      : quote.carrierMode === "mothershipSandbox"
-        ? "Mothership"
-        : "Carrier";
+  const quoteCarrierModes = quoteCarrierModesList(quote);
+  const carrierLabel = quoteCarrierModes.length > 1
+    ? "Carriers"
+    : carrierModeSummaryLabel(quoteCarrierModes[0], customerView);
   if (!Array.isArray(quote.rates) || quote.rates.length === 0) {
-    const notice = quote.carrierMode === "speedshipLtl"
-      ? quote.carrierMessage || "SpeedShip sandbox connection succeeded, but this lane returned no matching rates."
-      : "No rates were returned for this quote.";
+    const notice = quote.carrierMessage || "Carrier returned no rates for this lane.";
     list.innerHTML = `
       <div class="quote-status notice-state success-state">
-        <strong>${escapeHtml(carrierLabel)} connection succeeded</strong>
+        <strong>${escapeHtml(quoteCarrierModes.length > 1 ? "Carrier request completed" : `${carrierLabel} connection succeeded`)}</strong>
         <p>${escapeHtml(notice)}</p>
+        <div class="meta-line">
+          ${quoteCarrierModes.length
+            ? quoteCarrierModes.map((mode) => `<span class="pill">${escapeHtml(carrierModeSummaryLabel(mode, customerView))}</span>`).join("")
+            : ""}
+        </div>
         ${customerView ? "" : (quote.carrierQuoteId ? `<span class="pill">${escapeHtml(quote.carrierQuoteId)}</span>` : "")}
       </div>
     `;
@@ -1781,9 +1897,10 @@ function renderQuoteResults(quote) {
           <div class="rate-title-row">
             <strong>${escapeHtml(carrierNameLabel(rate, quote, customerView))}</strong>
             <span class="service-badge">${escapeHtml(formatRateService(rate?.service))}</span>
-            <span class="carrier-badge">${escapeHtml(carrierBadgeLabel(rate.provider, quote.carrierMode, customerView))}</span>
+            <span class="carrier-badge">${escapeHtml(carrierBadgeLabel(rate.provider, rate.carrierSource || quote.carrierMode, customerView))}</span>
           </div>
           <div class="rate-meta-row">
+            ${customerView ? "" : `<span class="pill">${escapeHtml(rate.carrierSource ? carrierModeSummaryLabel(rate.carrierSource, false) : "Carrier")}</span>`}
             ${customerView ? "" : `<span class="pill">Quote ${escapeHtml(quote.carrierQuoteId)}</span>`}
             ${customerView ? "" : `<span class="pill">Rate ${escapeHtml(rate.carrierRateId || rate.id)}</span>`}
             ${customerView ? "" : `<span class="pill">${escapeHtml(rate.providerScac || "No SCAC")}</span>`}
@@ -1818,12 +1935,13 @@ function renderQuoteResults(quote) {
 
 async function finalizeBooking(quoteId, rateId) {
   const quote = state.currentQuote || state.quotes.find((item) => item.id === quoteId);
+  const rate = quote && Array.isArray(quote.rates) ? quote.rates.find((item) => item.id === rateId) : null;
   const response = await api("/api/shipments", {
     method: "POST",
     body: {
       quoteId,
       rateId,
-      bookWithCarrier: Boolean(quote?.carrierMode === "mothershipSandbox")
+      bookWithCarrier: Boolean(rate?.carrierSource === "mothershipSandbox")
     }
   });
 
@@ -1864,7 +1982,6 @@ function quotePayload(form) {
   const deliveryPhone = normalizePhoneNumber(String(form.get("deliveryPhone") || "").trim());
   return {
     customerId,
-    carrierMode: form.get("carrierMode"),
     referenceNumber: form.get("referenceNumber"),
     pickupReadyDate: {
       date: form.get("pickupDate"),
@@ -1934,7 +2051,6 @@ function populateQuoteFormFromQuote(quote) {
   };
 
   setValue("customerId", quote.customerId || "");
-  setValue("carrierMode", quote.carrierMode || "demo");
   setValue("referenceNumber", "");
   setValue("pickupDate", "");
   setValue("pickupTime", "");
