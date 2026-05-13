@@ -652,7 +652,7 @@ async function openQuoteDetails(quoteId) {
     return;
   }
 
-  openModal(isCustomerUser() ? "Quote Details" : `Quote ${quote.carrierQuoteId}`, quoteDetailsHtml(quote));
+  openModal("Quote Details", quoteDetailsHtml(quote));
 }
 
 function reenterQuote(quoteId) {
@@ -1394,14 +1394,11 @@ function suggestFreightClass(values) {
 
 function quoteRow(quote, options = {}) {
   const showActions = options.showActions !== false;
-  const carrierModes = quoteCarrierModesList(quote);
   return `
     <article class="row-item">
       <div>
         <strong>${escapeHtml(quote.customerName)}</strong>
-        <small>${escapeHtml(carrierModeListLabel(carrierModes, false) || quote.carrier || "")} · ${escapeHtml(quote.status)}</small>
         <div class="meta-line">
-          <span class="pill">${escapeHtml(quote.carrierQuoteId)}</span>
           <span class="pill">${formatDate(quote.createdAt)}</span>
           <span class="pill">${escapeHtml(quote.pickup?.address?.city || "")} → ${escapeHtml(quote.delivery?.address?.city || "")}</span>
         </div>
@@ -1564,14 +1561,8 @@ function quoteDetailsHtml(quote) {
       ${detailSection(
         "Quote Summary",
         `
-          <div class="meta-line">
-            ${customerView ? `<span class="pill">Shipment quote</span>` : `<span class="pill">${escapeHtml(carrierModeListLabel(quoteCarrierModes, false))}</span>`}
-            <span class="pill">${escapeHtml(quote.status)}</span>
-            ${customerView ? "" : `<span class="pill">${escapeHtml(quote.carrierQuoteId)}</span>`}
-          </div>
           ${carrierNotice}
           ${bookingNotice}
-          ${quoteCarrierModes.length ? `<p><strong>Carrier modes:</strong> ${escapeHtml(carrierModeListLabel(quoteCarrierModes, customerView))}</p>` : ""}
           <p><strong>Reference / PO:</strong> ${escapeHtml(quote.referenceNumber || "")}</p>
           ${customerView ? "" : `<p><strong>Tariff:</strong> ${escapeHtml(quote.tariffRule?.ruleType || "n/a")} ${quote.tariffRule?.ruleType === "fixed" ? `· ${money.format(Number(quote.tariffRule?.fixedAmount || 0))}` : `· ${Number(quote.tariffRule?.markupPercentage || 0)}%`}</p>`}
           <p><strong>Pickup:</strong> ${escapeHtml(quote.pickup?.name || "")}, ${escapeHtml(quote.pickup?.address?.street || "")}, ${escapeHtml(quote.pickup?.address?.city || "")}, ${escapeHtml(quote.pickup?.address?.state || "")}</p>
@@ -2257,12 +2248,6 @@ function renderQuoteResults(quote) {
       <div class="quote-status notice-state success-state">
         <strong>${escapeHtml(quoteCarrierModes.length > 1 ? "Carrier request completed" : `${carrierLabel} connection succeeded`)}</strong>
         <p>${escapeHtml(notice)}</p>
-        <div class="meta-line">
-          ${quoteCarrierModes.length
-            ? quoteCarrierModes.map((mode) => `<span class="pill">${escapeHtml(carrierModeSummaryLabel(mode, customerView))}</span>`).join("")
-            : ""}
-        </div>
-        ${customerView ? "" : (quote.carrierQuoteId ? `<span class="pill">${escapeHtml(quote.carrierQuoteId)}</span>` : "")}
       </div>
     `;
     return;
@@ -2280,10 +2265,6 @@ function renderQuoteResults(quote) {
             <span class="carrier-badge">${escapeHtml(carrierBadgeLabel(rate.provider, rate.carrierSource || quote.carrierMode, customerView))}</span>
           </div>
           <div class="rate-meta-row">
-            ${customerView ? "" : `<span class="pill">${escapeHtml(rate.carrierSource ? carrierModeSummaryLabel(rate.carrierSource, false) : "Carrier")}</span>`}
-            ${customerView ? "" : `<span class="pill">Quote ${escapeHtml(quote.carrierQuoteId)}</span>`}
-            ${customerView ? "" : `<span class="pill">Rate ${escapeHtml(rate.carrierRateId || rate.id)}</span>`}
-            ${customerView ? "" : `<span class="pill">${escapeHtml(rate.providerScac || "No SCAC")}</span>`}
             ${hasDisplayValue(rate.transitDays) ? `<span class="pill">Transit ${escapeHtml(formatTransitDays(rate.transitDays))}</span>` : ""}
             ${hasDisplayValue(rate.estimatedDeliveryDate) ? `<span class="pill">ETA ${escapeHtml(formatDate(rate.estimatedDeliveryDate))}</span>` : ""}
             ${customerView ? "" : `<span class="pill">Markup ${money.format(rate.markup)}</span>`}
