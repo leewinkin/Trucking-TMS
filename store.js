@@ -74,8 +74,8 @@ async function createPostgresStore(dbUrl) {
         await client.query("BEGIN");
         const allowedCarrierModes = normalizeAllowedCarrierModes(input.allowedCarrierModes);
         const customerResult = await client.query(
-          `INSERT INTO customers (id, company_name, billing_email, payment_terms, company_phone, company_open_time, company_close_time, company_street, company_city, company_state, company_zip, allowed_carrier_modes, status, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14)
+          `INSERT INTO customers (id, company_name, billing_email, payment_terms, company_phone, company_open_time, company_close_time, company_street, company_city, company_state, company_zip, allowed_carrier_modes, allowed_booking, status, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $15)
            RETURNING *`,
           [
             createId("cust"),
@@ -90,6 +90,7 @@ async function createPostgresStore(dbUrl) {
             String(input.companyState || "").trim().toUpperCase(),
             String(input.companyZip || "").trim(),
             JSON.stringify(allowedCarrierModes),
+            normalizeAllowedBooking(input.allowedBooking, true),
             "active",
             nowIso()
           ]
@@ -143,6 +144,9 @@ async function createPostgresStore(dbUrl) {
         const allowedCarrierModes = Object.prototype.hasOwnProperty.call(input, "allowedCarrierModes")
           ? normalizeAllowedCarrierModes(input.allowedCarrierModes)
           : null;
+        const allowedBooking = Object.prototype.hasOwnProperty.call(input, "allowedBooking")
+          ? normalizeAllowedBooking(input.allowedBooking)
+          : null;
         const customerResult = await client.query(
           `UPDATE customers
            SET company_name = COALESCE($2, company_name),
@@ -156,7 +160,8 @@ async function createPostgresStore(dbUrl) {
                company_state = COALESCE($10, company_state),
                company_zip = COALESCE($11, company_zip),
                allowed_carrier_modes = COALESCE($12::jsonb, allowed_carrier_modes),
-               status = COALESCE($13, status)
+               allowed_booking = COALESCE($13::boolean, allowed_booking),
+               status = COALESCE($14, status)
            WHERE id = $1
            RETURNING *`,
           [
@@ -172,6 +177,7 @@ async function createPostgresStore(dbUrl) {
             normalizeNullableString(input.companyState),
             normalizeNullableString(input.companyZip),
             allowedCarrierModes ? JSON.stringify(allowedCarrierModes) : null,
+            allowedBooking,
             normalizeNullableString(input.status)
           ]
         );
@@ -218,6 +224,13 @@ async function createPostgresStore(dbUrl) {
           await client.query("UPDATE customers SET allowed_carrier_modes = $2 WHERE id = $1", [
             id,
             JSON.stringify(normalizeAllowedCarrierModes(input.allowedCarrierModes))
+          ]);
+        }
+
+        if (Object.prototype.hasOwnProperty.call(input, "allowedBooking")) {
+          await client.query("UPDATE customers SET allowed_booking = $2 WHERE id = $1", [
+            id,
+            normalizeAllowedBooking(input.allowedBooking)
           ]);
         }
 
@@ -295,6 +308,18 @@ async function createPostgresStore(dbUrl) {
             nowIso()
           ]
         );
+        if (Object.prototype.hasOwnProperty.call(input, "allowedCarrierModes")) {
+          await client.query("UPDATE customers SET allowed_carrier_modes = $2 WHERE id = $1", [
+            input.customerId,
+            JSON.stringify(normalizeAllowedCarrierModes(input.allowedCarrierModes))
+          ]);
+        }
+        if (Object.prototype.hasOwnProperty.call(input, "allowedBooking")) {
+          await client.query("UPDATE customers SET allowed_booking = $2 WHERE id = $1", [
+            input.customerId,
+            normalizeAllowedBooking(input.allowedBooking)
+          ]);
+        }
         await client.query("COMMIT");
         return mapTariffRuleRow(result.rows[0]);
       } catch (error) {
@@ -526,6 +551,7 @@ async function ensureSchema(pool) {
       company_state text NOT NULL DEFAULT '',
       company_zip text NOT NULL DEFAULT '',
       allowed_carrier_modes jsonb NOT NULL DEFAULT '["mothershipSandbox"]'::jsonb,
+      allowed_booking boolean NOT NULL DEFAULT true,
       status text NOT NULL DEFAULT 'active',
       created_at timestamptz NOT NULL DEFAULT now()
     )`,
@@ -537,6 +563,7 @@ async function ensureSchema(pool) {
     "ALTER TABLE customers ADD COLUMN IF NOT EXISTS company_state text NOT NULL DEFAULT ''",
     "ALTER TABLE customers ADD COLUMN IF NOT EXISTS company_zip text NOT NULL DEFAULT ''",
     "ALTER TABLE customers ADD COLUMN IF NOT EXISTS allowed_carrier_modes jsonb NOT NULL DEFAULT '[\"mothershipSandbox\"]'::jsonb",
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS allowed_booking boolean NOT NULL DEFAULT true",
     `CREATE TABLE IF NOT EXISTS tariff_rules (
       id text PRIMARY KEY,
       customer_id text NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
@@ -777,6 +804,7 @@ function createJsonStore(filePath) {
         companyState: String(input.companyState || "").trim().toUpperCase(),
         companyZip: String(input.companyZip || "").trim(),
         allowedCarrierModes: normalizeAllowedCarrierModes(input.allowedCarrierModes),
+        allowedBooking: normalizeAllowedBooking(input.allowedBooking, true),
         status: "active",
         createdAt: nowIso()
       };
@@ -839,6 +867,9 @@ function createJsonStore(filePath) {
       }
       if (Object.prototype.hasOwnProperty.call(input, "allowedCarrierModes")) {
         customer.allowedCarrierModes = normalizeAllowedCarrierModes(input.allowedCarrierModes);
+      }
+      if (Object.prototype.hasOwnProperty.call(input, "allowedBooking")) {
+        customer.allowedBooking = normalizeAllowedBooking(input.allowedBooking);
       }
       if (Object.prototype.hasOwnProperty.call(input, "status") && String(input.status || "").trim()) {
         customer.status = String(input.status).trim();
@@ -956,6 +987,9 @@ function createJsonStore(filePath) {
       db.tariffRules.push(tariffRule);
       if (Object.prototype.hasOwnProperty.call(input, "allowedCarrierModes")) {
         customer.allowedCarrierModes = normalizeAllowedCarrierModes(input.allowedCarrierModes);
+      }
+      if (Object.prototype.hasOwnProperty.call(input, "allowedBooking")) {
+        customer.allowedBooking = normalizeAllowedBooking(input.allowedBooking);
       }
       await writeJsonDb(filePath, db);
       return tariffRule;
@@ -1128,6 +1162,7 @@ function createSeedDb() {
         companyState: "",
         companyZip: "",
         allowedCarrierModes: ["mothershipSandbox"],
+        allowedBooking: true,
         status: "active",
         createdAt: now
       }
@@ -1189,6 +1224,8 @@ function normalizeCarrierMode(value) {
     mothershipsandbox: "mothershipSandbox",
     speedship: "speedshipLtl",
     speedshipltl: "speedshipLtl",
+    priority1: "priority1Ltl",
+    priority1ltl: "priority1Ltl",
     demo: "demo",
     "mothership-demo": "demo"
   };
@@ -1206,7 +1243,7 @@ function normalizeAllowedCarrierModes(value, fallback = ["mothershipSandbox"]) {
 
   for (const entry of list) {
     const mode = normalizeCarrierMode(entry);
-    if (mode === "demo" || mode === "mothershipSandbox" || mode === "speedshipLtl") {
+    if (mode === "demo" || mode === "mothershipSandbox" || mode === "speedshipLtl" || mode === "priority1Ltl") {
       if (!normalized.includes(mode)) {
         normalized.push(mode);
       }
@@ -1214,6 +1251,26 @@ function normalizeAllowedCarrierModes(value, fallback = ["mothershipSandbox"]) {
   }
 
   return normalized.length > 0 ? normalized : fallback;
+}
+
+function normalizeAllowedBooking(value, fallback = true) {
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+  const normalized = String(value).trim().toLowerCase();
+  if (["false", "0", "no", "off", "disabled"].includes(normalized)) {
+    return false;
+  }
+  if (["true", "1", "yes", "on", "enabled"].includes(normalized)) {
+    return true;
+  }
+  return fallback;
 }
 
 function toMoney(value) {
@@ -1246,6 +1303,7 @@ function mapCustomerRow(row) {
     companyState: row.company_state || "",
     companyZip: row.company_zip || "",
     allowedCarrierModes: normalizeAllowedCarrierModes(row.allowed_carrier_modes),
+    allowedBooking: row.allowed_booking !== false,
     status: row.status,
     portalEmail: row.portal_email || null,
     createdAt: row.created_at
@@ -1394,7 +1452,8 @@ function normalizeJsonDb(db) {
 function normalizeCustomerRecord(customer) {
   return {
     ...customer,
-    allowedCarrierModes: normalizeAllowedCarrierModes(customer?.allowedCarrierModes)
+    allowedCarrierModes: normalizeAllowedCarrierModes(customer?.allowedCarrierModes),
+    allowedBooking: normalizeAllowedBooking(customer?.allowedBooking, true)
   };
 }
 

@@ -12,17 +12,24 @@ const state = {
   shipments: [],
   invoices: [],
   currentQuote: null,
+  quoteLoading: false,
+  quoteResultsLimit: 12,
+  freightSuggestionTimer: null,
+  freightSuggestionRequestToken: 0,
   carrierModeTouched: false,
   pendingQuoteReentry: null,
   pendingBooking: null,
   modal: null
 };
 
+const zipLookupTimers = new WeakMap();
+const zipLookupTokens = new WeakMap();
+
 const viewMeta = {
   dashboard: () =>
     ["Dashboard", isStaffUser() ? "Watch quote activity, shipment status, and invoice drafts." : "Track your quotes, shipments, and invoices."],
   customers: ["Customers", "Manage customer accounts and tariff rules."],
-  quote: ["New Quote", "Create a shipment quote and apply customer-specific markup."],
+  quote: ["New Quote", ""],
   shipments: ["Shipments", "Review local bookings and carrier shipment references."],
   invoices: ["Invoices", "See draft invoices created from booked shipments."]
 };
@@ -60,6 +67,12 @@ function wireNavigation() {
       return;
     }
 
+    const loadMoreButton = event.target.closest("[data-load-more-rates]");
+    if (loadMoreButton) {
+      loadMoreQuoteRates();
+      return;
+    }
+
     const reenterButton = event.target.closest("[data-reenter-quote]");
     if (reenterButton) {
       reenterQuote(reenterButton.dataset.reenterQuote);
@@ -69,6 +82,12 @@ function wireNavigation() {
     const invoiceButton = event.target.closest("[data-view-invoice]");
     if (invoiceButton) {
       openInvoiceDetails(invoiceButton.dataset.viewInvoice);
+      return;
+    }
+
+    const freightSuggestionButton = event.target.closest("[data-apply-freight-suggestion]");
+    if (freightSuggestionButton) {
+      applySuggestedFreightClass();
       return;
     }
 
@@ -179,7 +198,8 @@ function wireForms() {
         ruleType: form.get("ruleType"),
         fixedAmount: form.get("fixedAmount"),
         markupPercentage: form.get("markupPercentage"),
-        allowedCarrierModes
+        allowedCarrierModes,
+        allowedBooking: form.has("allowedBooking")
       }
     });
     showToast("Tariff saved.");
@@ -187,8 +207,14 @@ function wireForms() {
   });
 
   const quoteForm = document.getElementById("quoteForm");
-  quoteForm.addEventListener("input", () => clearQuoteFormErrors(quoteForm));
-  quoteForm.addEventListener("change", () => clearQuoteFormErrors(quoteForm));
+  quoteForm.addEventListener("input", () => {
+    clearQuoteFormErrors(quoteForm);
+    updateFreightClassSuggestion();
+  });
+  quoteForm.addEventListener("change", () => {
+    clearQuoteFormErrors(quoteForm);
+    updateFreightClassSuggestion();
+  });
   quoteForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (!validateQuoteForm(quoteForm)) {
@@ -197,6 +223,9 @@ function wireForms() {
 
     const formError = document.getElementById("quoteFormError");
     try {
+      state.quoteLoading = true;
+      state.quoteResultsLimit = 12;
+      renderQuoteResultsLoading();
       const body = quotePayload(new FormData(event.currentTarget));
       const response = await api("/api/quotes", {
         method: "POST",
@@ -207,6 +236,7 @@ function wireForms() {
       renderQuoteResults(response.quote);
       await refreshAll({ keepQuoteResults: true });
     } catch (error) {
+      state.quoteLoading = false;
       const noRates = error?.code === "NO_RATES_FOUND";
       const message = noRates
         ? "Carrier returned no rates for this lane."
@@ -221,6 +251,8 @@ function wireForms() {
         results.textContent = message;
       }
       showToast(message, true);
+    } finally {
+      state.quoteLoading = false;
     }
   });
 
@@ -228,11 +260,14 @@ function wireForms() {
   if (tariffCustomerSelect && !tariffCustomerSelect.dataset.modeSyncBound) {
     tariffCustomerSelect.addEventListener("change", () => {
       syncTariffCarrierModes(tariffCustomerSelect.value);
+      syncTariffBookingPermission(tariffCustomerSelect.value);
     });
     tariffCustomerSelect.dataset.modeSyncBound = "true";
   }
 
   syncCarrierControls();
+  updateFreightClassSuggestion();
+  wireZipAutofill();
 }
 
 async function bootApp() {
@@ -390,9 +425,9 @@ function applyPermissions() {
   if (invoiceMetricLabel) {
     invoiceMetricLabel.textContent = isStaff ? "Draft invoices" : "My Invoices";
   }
-  const quoteCustomerField = document.getElementById("quoteCustomerField");
-  if (quoteCustomerField) {
-    quoteCustomerField.classList.toggle("hidden", isCustomer);
+  const quoteMetaPanel = document.getElementById("quoteMetaPanel");
+  if (quoteMetaPanel) {
+    quoteMetaPanel.classList.toggle("hidden", isCustomer);
   }
   const quoteCustomerSelect = document.getElementById("quoteCustomerSelect");
   if (quoteCustomerSelect && isCustomer) {
@@ -427,6 +462,18 @@ function customerPriceLabel() {
   return isCustomerUser() ? "Cost" : "Sell price";
 }
 
+function hasDisplayValue(value) {
+  return value !== null && value !== undefined && String(value).trim() !== "";
+}
+
+function customerBookingAllowed(customerId = state.user?.customerId) {
+  if (!isCustomerUser()) {
+    return true;
+  }
+  const customer = state.customers.find((item) => item.id === customerId) || null;
+  return Boolean(customer) && customer.allowedBooking !== false;
+}
+
 function renderHealth() {
   const dot = document.getElementById("statusDot");
   const healthText = document.getElementById("healthText");
@@ -440,18 +487,7 @@ function renderHealth() {
     loginDot.classList.toggle("ready", Boolean(state.health?.ok));
   }
 
-  const configuredCarriers = [];
-  if (state.health?.speedshipConfigured) {
-    configuredCarriers.push("SpeedShip LTL");
-  }
-  if (state.health?.mothershipConfigured) {
-    configuredCarriers.push("Mothership");
-  }
-
-  const message =
-    configuredCarriers.length > 0
-      ? `Server ready, ${configuredCarriers.join(" and ")} configured`
-      : "Server ready, demo mode";
+  const message = state.health?.ok ? "Server ready" : "Checking server";
   if (healthText) {
     healthText.textContent = state.user
       ? message
@@ -648,6 +684,11 @@ function openBookingConfirmation(quoteId, rateId) {
     return;
   }
 
+  if (isCustomerUser() && !customerBookingAllowed(quote.customerId)) {
+    showToast("Shipment booking is disabled for this account.", true);
+    return;
+  }
+
   const rate = Array.isArray(quote.rates) ? quote.rates.find((item) => item.id === rateId) : null;
   if (!rate) {
     return;
@@ -671,6 +712,12 @@ async function confirmPendingBooking() {
   const quote = state.currentQuote || state.quotes.find((item) => item.id === pending.quoteId);
   if (!quote) {
     cancelPendingBooking();
+    return;
+  }
+
+  if (isCustomerUser() && !customerBookingAllowed(quote.customerId)) {
+    cancelPendingBooking();
+    showToast("Shipment booking is disabled for this account.", true);
     return;
   }
 
@@ -800,6 +847,8 @@ function openCustomerEditor(customerId) {
   if (closeTimeField) {
     closeTimeField.value = customer.companyCloseTime || "";
   }
+  wireZipAutofill();
+  triggerZipAutofillField("companyZip", document.getElementById("customerEditForm"));
 
   document.getElementById("customerEditForm").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -886,6 +935,7 @@ function customerSummaryHtml() {
                     : ""}
                   ${customer.companyPhone ? `<span class="pill">${escapeHtml(customer.companyPhone)}</span>` : ""}
                   ${customerHoursRange(customer) ? `<span class="pill">${escapeHtml(customerHoursRange(customer))}</span>` : ""}
+                  <span class="pill">${customer.allowedBooking === false ? "Booking disabled" : "Booking enabled"}</span>
                   <span class="pill">${escapeHtml(tariff?.ruleType || "no tariff")}</span>
                   <span class="pill">${money.format(Number(tariff?.fixedAmount || 0))} fixed</span>
                   <span class="pill">${Number(tariff?.markupPercentage || 0)}% markup</span>
@@ -1019,6 +1069,8 @@ function autofillPickupFromCustomer(customerId, force = false) {
       input.value = value;
     }
   });
+
+  triggerZipAutofillField("pickupZip");
 }
 
 function customerHoursRange(customer) {
@@ -1103,6 +1155,243 @@ function freightSummary(values) {
   return `${pieces} · ${classText} · ${weightText} · ${sizeText}`;
 }
 
+function updateFreightClassSuggestion() {
+  const form = document.getElementById("quoteForm");
+  const suggestion = document.getElementById("freightClassSuggestion");
+  const button = document.querySelector("[data-apply-freight-suggestion]");
+  if (!form || !suggestion) {
+    return;
+  }
+
+  if (state.freightSuggestionTimer) {
+    clearTimeout(state.freightSuggestionTimer);
+  }
+
+  const values = new FormData(form);
+  const suggestionValue = suggestFreightClass(values);
+  if (!suggestionValue) {
+    suggestion.textContent = "Suggested freight class: enter quantity, weight, and dimensions to calculate one.";
+    suggestion.dataset.value = "";
+    suggestion.dataset.source = "";
+    suggestion.dataset.accepted = "false";
+    if (button) {
+      button.disabled = true;
+    }
+    state.freightSuggestionRequestToken += 1;
+    return;
+  }
+
+  suggestion.textContent = "Suggested freight class: calculating...";
+  suggestion.dataset.value = "";
+  suggestion.dataset.source = "";
+  suggestion.dataset.accepted = "false";
+  if (button) {
+    button.disabled = true;
+  }
+
+  const requestToken = ++state.freightSuggestionRequestToken;
+  const payload = {
+    quantity: Number(values.get("quantity") || 0),
+    weight: Number(values.get("weight") || 0),
+    length: Number(values.get("length") || 0),
+    width: Number(values.get("width") || 0),
+    height: Number(values.get("height") || 0),
+    customerId: getQuoteSuggestionCustomerId(form)
+  };
+
+  state.freightSuggestionTimer = setTimeout(async () => {
+    try {
+      const response = await api("/api/freight-class-suggestion", {
+        method: "POST",
+        body: payload
+      });
+      if (requestToken !== state.freightSuggestionRequestToken) {
+        return;
+      }
+
+      const appliedValue = String(response.suggestedClass || suggestionValue || "").trim();
+      if (!appliedValue) {
+        suggestion.textContent = "Suggested freight class: enter quantity, weight, and dimensions to calculate one.";
+        suggestion.dataset.value = "";
+        suggestion.dataset.source = "";
+        suggestion.dataset.accepted = "false";
+        if (button) {
+          button.disabled = true;
+        }
+        return;
+      }
+
+      suggestion.dataset.value = appliedValue;
+      suggestion.dataset.source = String(response.source || "local");
+      suggestion.dataset.accepted = "false";
+      suggestion.textContent = `Suggested freight class: ${appliedValue}`;
+      if (button) {
+        button.disabled = false;
+      }
+    } catch {
+      if (requestToken !== state.freightSuggestionRequestToken) {
+        return;
+      }
+      suggestion.dataset.value = suggestionValue;
+      suggestion.dataset.source = "local";
+      suggestion.dataset.accepted = "false";
+      suggestion.textContent = `Suggested freight class: ${suggestionValue}`;
+      if (button) {
+        button.disabled = false;
+      }
+    }
+  }, 300);
+}
+
+function wireZipAutofill() {
+  document.querySelectorAll("[data-zip-autofill]").forEach((input) => {
+    if (input.dataset.zipAutofillBound === "true") {
+      return;
+    }
+
+    const prefix = String(input.dataset.zipAutofill || "").trim();
+    if (!prefix) {
+      return;
+    }
+
+    const scheduleLookup = (immediate = false) => {
+      const form = input.closest("form");
+      if (!form) {
+        return;
+      }
+
+      if (zipLookupTimers.has(input)) {
+        clearTimeout(zipLookupTimers.get(input));
+      }
+
+      const normalizedZip = normalizeZipLookupValue(input.value);
+      if (!normalizedZip) {
+        fillZipTargets(form, prefix, "", "");
+        zipLookupTokens.set(input, (zipLookupTokens.get(input) || 0) + 1);
+        return;
+      }
+
+      const runLookup = async () => {
+        const token = (zipLookupTokens.get(input) || 0) + 1;
+        zipLookupTokens.set(input, token);
+        try {
+          const response = await api(`/api/zip-lookup?zip=${encodeURIComponent(normalizedZip)}`, { public: true });
+          if (zipLookupTokens.get(input) !== token) {
+            return;
+          }
+          fillZipTargets(form, prefix, response.city || "", response.state || "");
+        } catch {
+          if (zipLookupTokens.get(input) !== token) {
+            return;
+          }
+        }
+      };
+
+      const timer = setTimeout(runLookup, immediate ? 0 : 300);
+      zipLookupTimers.set(input, timer);
+    };
+
+    input.addEventListener("input", () => scheduleLookup(false));
+    input.addEventListener("change", () => scheduleLookup(true));
+    input.addEventListener("blur", () => scheduleLookup(true));
+    input.dataset.zipAutofillBound = "true";
+
+    if (normalizeZipLookupValue(input.value)) {
+      scheduleLookup(true);
+    }
+  });
+}
+
+function fillZipTargets(form, prefix, city, stateValue) {
+  const cityControl = form.querySelector(`[name='${prefix}City']`);
+  const stateControl = form.querySelector(`[name='${prefix}State']`);
+  if (cityControl) {
+    cityControl.value = city || "";
+  }
+  if (stateControl) {
+    stateControl.value = String(stateValue || "").toUpperCase();
+  }
+}
+
+function normalizeZipLookupValue(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (digits.length < 5) {
+    return "";
+  }
+  return digits.slice(0, 5);
+}
+
+function applySuggestedFreightClass() {
+  const form = document.getElementById("quoteForm");
+  const suggestion = document.getElementById("freightClassSuggestion");
+  if (!form || !suggestion) {
+    return;
+  }
+
+  const value = String(suggestion.dataset.value || "").trim();
+  if (!value) {
+    return;
+  }
+
+  const control = form.querySelector("[name='freightClass']");
+  if (control) {
+    control.value = value;
+    control.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  suggestion.dataset.accepted = "true";
+}
+
+function getQuoteSuggestionCustomerId(form) {
+  const selected = String(form.querySelector("[name='customerId']")?.value || "").trim();
+  if (selected) {
+    return selected;
+  }
+  return isCustomerUser() ? String(state.user?.customerId || "").trim() : "";
+}
+
+function suggestFreightClass(values) {
+  const quantity = Number(values.get("quantity") || 0);
+  const weight = Number(values.get("weight") || 0);
+  const length = Number(values.get("length") || 0);
+  const width = Number(values.get("width") || 0);
+  const height = Number(values.get("height") || 0);
+
+  if (!quantity || !weight || !length || !width || !height) {
+    return "";
+  }
+
+  const totalWeight = quantity * weight;
+  const cubicFeet = (quantity * length * width * height) / 1728;
+  if (!cubicFeet || !Number.isFinite(cubicFeet)) {
+    return "";
+  }
+
+  const density = totalWeight / cubicFeet;
+  const densityBands = [
+    { min: 50, classValue: "50" },
+    { min: 35, classValue: "55" },
+    { min: 30, classValue: "60" },
+    { min: 22.5, classValue: "65" },
+    { min: 15, classValue: "70" },
+    { min: 13.5, classValue: "77.5" },
+    { min: 12, classValue: "85" },
+    { min: 10.5, classValue: "92.5" },
+    { min: 9, classValue: "100" },
+    { min: 8, classValue: "110" },
+    { min: 7, classValue: "125" },
+    { min: 6, classValue: "150" },
+    { min: 5, classValue: "175" },
+    { min: 4, classValue: "200" },
+    { min: 3, classValue: "250" },
+    { min: 2, classValue: "300" },
+    { min: 1, classValue: "400" },
+    { min: 0, classValue: "500" }
+  ];
+
+  const matched = densityBands.find((band) => density >= band.min);
+  return matched?.classValue || "";
+}
+
 function quoteRow(quote, options = {}) {
   const showActions = options.showActions !== false;
   const carrierModes = quoteCarrierModesList(quote);
@@ -1155,7 +1444,15 @@ function shipmentRow(shipment, options = {}) {
 }
 
 function shipmentCarrierLabel(shipment) {
-  return shipment?.carrierName || carrierDisplayName(shipment?.provider || shipment?.carrier || "", shipment?.carrier || "");
+  const customerView = isCustomerUser();
+  const explicitName = String(shipment?.carrierName || "").trim();
+  if (explicitName) {
+    if (customerView && explicitName.toLowerCase().includes("mothership")) {
+      return "Self-owned Truck";
+    }
+    return explicitName;
+  }
+  return carrierDisplayName(shipment?.provider || shipment?.carrier || "", shipment?.carrier || "", customerView);
 }
 
 function invoiceRow(invoice, options = {}) {
@@ -1215,9 +1512,11 @@ function trackingTimelineHtml(events) {
 
 function quoteDetailsHtml(quote) {
   const customerView = isCustomerUser();
+  const bookingAllowed = customerView ? customerBookingAllowed(quote.customerId) : true;
   const quoteCarrierModes = quoteCarrierModesList(quote);
-  const rateCards = Array.isArray(quote.rates) && quote.rates.length
-    ? quote.rates
+  const sortedRates = sortedQuoteRates(quote);
+  const rateCards = sortedRates.length
+    ? sortedRates
         .map(
           (rate) => `
             <article class="rate-item compact-rate quote-rate-card">
@@ -1231,15 +1530,9 @@ function quoteDetailsHtml(quote) {
                   ${customerView ? "" : `<span class="pill">${escapeHtml(rate.carrierSource ? carrierModeSummaryLabel(rate.carrierSource, false) : "Carrier")}</span>`}
                   ${customerView ? "" : `<span class="pill">${escapeHtml(rate.providerScac || "No SCAC")}</span>`}
                   ${customerView ? "" : `<span class="pill">Offer ${escapeHtml(rate.carrierQuoteId || rate.carrierRateId || rate.id || "")}</span>`}
-                  ${rate.transitDays ? `<span class="pill">Transit ${escapeHtml(formatTransitDays(rate.transitDays))}</span>` : ""}
-                  ${rate.estimatedDeliveryDate ? `<span class="pill">ETA ${escapeHtml(formatDate(rate.estimatedDeliveryDate))}</span>` : ""}
-                  ${customerView
-                    ? `<span class="pill">Cost ${money.format(rate.sellPrice)}</span>`
-                    : `
-                      <span class="pill">Cost ${money.format(rate.carrierCost)}</span>
-                      <span class="pill">Markup ${money.format(rate.markup)}</span>
-                      <span class="pill">Sell ${money.format(rate.sellPrice)}</span>
-                    `}
+                  ${hasDisplayValue(rate.transitDays) ? `<span class="pill">Transit ${escapeHtml(formatTransitDays(rate.transitDays))}</span>` : ""}
+                  ${hasDisplayValue(rate.estimatedDeliveryDate) ? `<span class="pill">ETA ${escapeHtml(formatDate(rate.estimatedDeliveryDate))}</span>` : ""}
+                  ${customerView ? "" : `<span class="pill">Markup ${money.format(rate.markup)}</span>`}
                 </div>
               </div>
             </article>
@@ -1252,6 +1545,14 @@ function quoteDetailsHtml(quote) {
       <div class="quote-status notice-state success-state">
         <strong>Carrier response</strong>
         <p>${escapeHtml(quote.carrierMessage)}</p>
+      </div>
+    `
+    : "";
+  const bookingNotice = customerView && !bookingAllowed
+    ? `
+      <div class="quote-status notice-state">
+        <strong>Booking disabled</strong>
+        <p>Your admin has not enabled shipment booking for this account.</p>
       </div>
     `
     : "";
@@ -1269,6 +1570,7 @@ function quoteDetailsHtml(quote) {
             ${customerView ? "" : `<span class="pill">${escapeHtml(quote.carrierQuoteId)}</span>`}
           </div>
           ${carrierNotice}
+          ${bookingNotice}
           ${quoteCarrierModes.length ? `<p><strong>Carrier modes:</strong> ${escapeHtml(carrierModeListLabel(quoteCarrierModes, customerView))}</p>` : ""}
           <p><strong>Reference / PO:</strong> ${escapeHtml(quote.referenceNumber || "")}</p>
           ${customerView ? "" : `<p><strong>Tariff:</strong> ${escapeHtml(quote.tariffRule?.ruleType || "n/a")} ${quote.tariffRule?.ruleType === "fixed" ? `· ${money.format(Number(quote.tariffRule?.fixedAmount || 0))}` : `· ${Number(quote.tariffRule?.markupPercentage || 0)}%`}</p>`}
@@ -1448,7 +1750,7 @@ function invoiceDetailsHtml(invoice, shipment) {
   `;
 }
 
-function carrierDisplayName(provider, carrierMode = "") {
+function carrierDisplayName(provider, carrierMode = "", customerView = false) {
   const normalized = String(provider || "").trim().toLowerCase();
   const mode = String(carrierMode || "").trim().toLowerCase();
   const knownNames = {
@@ -1474,8 +1776,11 @@ function carrierDisplayName(provider, carrierMode = "") {
   if (normalized.includes("speedship") || mode === "speedshipltl") {
     return "SpeedShip";
   }
+  if (normalized.includes("priority1") || mode === "priority1ltl") {
+    return "Priority1";
+  }
   if (normalized.includes("mothership")) {
-    return "Mothership";
+    return customerView ? "Self-owned Truck" : "Mothership";
   }
   if (!provider) {
     return "Carrier";
@@ -1505,6 +1810,9 @@ function carrierModeSummaryLabel(mode, customerView = false) {
     if (normalized === "speedshipltl") {
       return "SS";
     }
+    if (normalized === "priority1ltl") {
+      return "P";
+    }
     if (normalized === "demo") {
       return "D";
     }
@@ -1515,6 +1823,8 @@ function carrierModeSummaryLabel(mode, customerView = false) {
       return "Mothership sandbox";
     case "speedshipltl":
       return "SpeedShip LTL";
+    case "priority1ltl":
+      return "Priority1 LTL";
     case "demo":
       return "Demo rates";
     default:
@@ -1526,18 +1836,32 @@ function quoteCarrierModesList(quote) {
   const directModes = Array.isArray(quote?.carrierModes)
     ? quote.carrierModes
         .map((mode) => String(mode || "").trim())
-        .filter((mode) => ["mothershipSandbox", "speedshipLtl", "demo"].includes(mode))
+        .filter((mode) => ["mothershipSandbox", "speedshipLtl", "priority1Ltl", "demo"].includes(mode))
     : [];
   if (directModes.length > 0) {
     return directModes;
   }
 
   const legacyMode = String(quote?.carrierMode || "").trim();
-  if (!legacyMode || legacyMode === "multiCarrier" || !["mothershipSandbox", "speedshipLtl", "demo"].includes(legacyMode)) {
+  if (!legacyMode || legacyMode === "multiCarrier" || !["mothershipSandbox", "speedshipLtl", "priority1Ltl", "demo"].includes(legacyMode)) {
     return [];
   }
 
   return [legacyMode];
+}
+
+function sortedQuoteRates(quote) {
+  const rates = Array.isArray(quote?.rates) ? [...quote.rates] : [];
+  return rates.sort((left, right) => {
+    const leftPrice = Number(left?.sellPrice ?? left?.carrierCost ?? Number.POSITIVE_INFINITY);
+    const rightPrice = Number(right?.sellPrice ?? right?.carrierCost ?? Number.POSITIVE_INFINITY);
+    if (leftPrice !== rightPrice) {
+      return leftPrice - rightPrice;
+    }
+    const leftLabel = carrierNameLabel(left, quote, isCustomerUser());
+    const rightLabel = carrierNameLabel(right, quote, isCustomerUser());
+    return leftLabel.localeCompare(rightLabel);
+  });
 }
 
 function normalizeAllowedCarrierModes(values) {
@@ -1553,7 +1877,7 @@ function normalizeAllowedCarrierModes(values) {
     if (!mode) {
       continue;
     }
-    if (!["mothershipSandbox", "speedshipLtl", "demo"].includes(mode)) {
+    if (!["mothershipSandbox", "speedshipLtl", "priority1Ltl", "demo"].includes(mode)) {
       continue;
     }
     if (!normalized.includes(mode)) {
@@ -1570,13 +1894,16 @@ function normalizeAllowedCarrierModes(values) {
 
 function carrierBadgeLabel(provider, carrierMode = "", customerView = false) {
   if (!customerView) {
-    return carrierDisplayName(provider, carrierMode);
+    return carrierDisplayName(provider, carrierMode, false);
   }
 
   const normalized = String(provider || "").trim().toLowerCase();
   const mode = String(carrierMode || "").trim().toLowerCase();
   if (normalized.includes("speedship") || mode === "speedshipltl") {
     return "SS";
+  }
+  if (normalized.includes("priority1") || mode === "priority1ltl") {
+    return "P";
   }
   if (normalized.includes("mothership") || mode === "mothershipsandbox") {
     return "M";
@@ -1598,14 +1925,21 @@ function carrierBadgeLabel(provider, carrierMode = "", customerView = false) {
 function carrierNameLabel(rate, quote, customerView = false) {
   const explicitName = String(rate?.carrierName || "").trim();
   if (explicitName) {
+    if (customerView && explicitName.toLowerCase().includes("mothership")) {
+      return "Self-owned Truck";
+    }
     return explicitName;
   }
 
-  return carrierDisplayName(rate?.provider || quote?.carrierMode || "", rate?.carrierSource || quote?.carrierMode || "");
+  return carrierDisplayName(
+    rate?.provider || quote?.carrierMode || "",
+    rate?.carrierSource || quote?.carrierMode || "",
+    customerView
+  );
 }
 
 function rateHeading(rate, quote, customerView = false) {
-  return `${carrierNameLabel(rate, quote, customerView)} · ${formatRateService(rate?.service)}`;
+  return `${carrierNameLabel(rate, quote, customerView)} - ${formatRateService(rate?.service)}`;
 }
 
 function formatRateService(service) {
@@ -1655,6 +1989,8 @@ function validateQuoteForm(form) {
 
   const controls = Array.from(form.querySelectorAll("input, select, textarea")).filter((control) => !control.disabled);
   const invalidControls = [];
+  const freightSuggestion = document.getElementById("freightClassSuggestion");
+  const freightClassControl = form.querySelector("[name='freightClass']");
 
   controls.forEach((control) => {
     const value = String(control.value || "").trim();
@@ -1675,6 +2011,23 @@ function validateQuoteForm(form) {
     }
   });
 
+  const suggestionValue = String(freightSuggestion?.dataset.value || "").trim();
+  const freightClassValue = String(freightClassControl?.value || "").trim();
+  if (suggestionValue && freightClassValue !== suggestionValue) {
+    if (freightClassControl) {
+      freightClassControl.setCustomValidity("Please click Use suggestion to apply the freight class before getting rates.");
+      freightClassControl.classList.add("field-invalid");
+      freightClassControl.setAttribute("aria-invalid", "true");
+      const label = freightClassControl.closest("label");
+      if (label) {
+        label.classList.add("field-invalid");
+      }
+      if (!invalidControls.includes(freightClassControl)) {
+        invalidControls.push(freightClassControl);
+      }
+    }
+  }
+
   if (invalidControls.length === 0) {
     if (error) {
       error.textContent = "";
@@ -1693,9 +2046,14 @@ function validateQuoteForm(form) {
 
   if (error) {
     const phoneInvalid = invalidControls.some((control) => control.name === "pickupPhone" || control.name === "deliveryPhone");
-    error.textContent = phoneInvalid
-      ? "Phone numbers must be 10 digits and the highlighted fields must be completed before getting rates."
-      : "Please fill in the highlighted required fields before getting rates.";
+    const freightSuggestionMissing = Boolean(suggestionValue && freightClassValue !== suggestionValue);
+    if (freightSuggestionMissing) {
+      error.textContent = "Please click Use suggestion to apply the freight class before getting rates.";
+    } else {
+      error.textContent = phoneInvalid
+        ? "Phone numbers must be 10 digits and the highlighted fields must be completed before getting rates."
+        : "Please fill in the highlighted required fields before getting rates.";
+    }
   }
 
   invalidControls[0].focus();
@@ -1750,6 +2108,15 @@ function syncTariffCarrierModes(customerId) {
   });
 }
 
+function syncTariffBookingPermission(customerId) {
+  const customer = state.customers.find((item) => item.id === customerId) || null;
+  const bookingAllowed = customer?.allowedBooking !== false;
+  const checkbox = document.querySelector("#tariffForm input[name='allowedBooking']");
+  if (checkbox) {
+    checkbox.checked = bookingAllowed;
+  }
+}
+
 function renderCustomerOptions() {
   const options = state.customers
     .map((customer) => `<option value="${escapeHtml(customer.id)}">${escapeHtml(customer.companyName)}</option>`)
@@ -1760,6 +2127,7 @@ function renderCustomerOptions() {
   if (tariffSelect) {
     tariffSelect.innerHTML = options;
     syncTariffCarrierModes(tariffSelect.value || state.customers[0]?.id || "");
+    syncTariffBookingPermission(tariffSelect.value || state.customers[0]?.id || "");
   }
   if (quoteSelect) {
     quoteSelect.innerHTML = options;
@@ -1771,6 +2139,7 @@ function renderCustomerOptions() {
     }
   }
   syncCarrierControls();
+  updateFreightClassSuggestion();
 }
 
 function renderCustomers() {
@@ -1797,6 +2166,7 @@ function renderCustomers() {
               ${allowedModes.length > 0
                 ? `<span class="pill">${escapeHtml(carrierModeListLabel(allowedModes, false))}</span>`
                 : ""}
+              <span class="pill">${customer.allowedBooking === false ? "Booking disabled" : "Booking enabled"}</span>
               <span class="pill">${escapeHtml(tariff?.ruleType || "no tariff")}</span>
               <span class="pill">${Number(tariff?.markupPercentage || 0)}% markup</span>
               <span class="pill">${money.format(Number(tariff?.fixedAmount || 0))} fixed</span>
@@ -1866,15 +2236,22 @@ function renderDashboard() {
 
 function renderQuoteResults(quote) {
   const list = document.getElementById("quoteResults");
+  if (!list) {
+    return;
+  }
+  const totalRates = Array.isArray(quote.rates) ? quote.rates.length : 0;
+  const visibleCount = Math.min(state.quoteResultsLimit || 12, totalRates || 0);
   list.classList.remove("empty-state");
-  list.classList.toggle("compare-grid", Array.isArray(quote.rates) && quote.rates.length > 1);
+  list.classList.toggle("compare-grid", visibleCount > 1);
   const customerView = isCustomerUser();
+  const bookingAllowed = !customerView || customerBookingAllowed(quote.customerId);
   const priceLabel = customerPriceLabel();
   const quoteCarrierModes = quoteCarrierModesList(quote);
   const carrierLabel = quoteCarrierModes.length > 1
     ? "Carriers"
     : carrierModeSummaryLabel(quoteCarrierModes[0], customerView);
-  if (!Array.isArray(quote.rates) || quote.rates.length === 0) {
+  const sortedRates = sortedQuoteRates(quote);
+  if (!Array.isArray(sortedRates) || sortedRates.length === 0) {
     const notice = quote.carrierMessage || "Carrier returned no rates for this lane.";
     list.innerHTML = `
       <div class="quote-status notice-state success-state">
@@ -1890,7 +2267,10 @@ function renderQuoteResults(quote) {
     `;
     return;
   }
-  list.innerHTML = quote.rates
+  const visibleRates = sortedRates.slice(0, visibleCount || sortedRates.length);
+  const canLoadMore = visibleRates.length < sortedRates.length;
+  list.innerHTML = `
+    ${visibleRates
     .map((rate) => `
       <article class="rate-item quote-rate-card">
         <div class="rate-main">
@@ -1904,14 +2284,9 @@ function renderQuoteResults(quote) {
             ${customerView ? "" : `<span class="pill">Quote ${escapeHtml(quote.carrierQuoteId)}</span>`}
             ${customerView ? "" : `<span class="pill">Rate ${escapeHtml(rate.carrierRateId || rate.id)}</span>`}
             ${customerView ? "" : `<span class="pill">${escapeHtml(rate.providerScac || "No SCAC")}</span>`}
-            ${rate.transitDays ? `<span class="pill">Transit ${escapeHtml(formatTransitDays(rate.transitDays))}</span>` : ""}
-            ${rate.estimatedDeliveryDate ? `<span class="pill">ETA ${escapeHtml(formatDate(rate.estimatedDeliveryDate))}</span>` : ""}
-            ${customerView
-              ? `<span class="pill">Cost ${money.format(rate.sellPrice)}</span>`
-              : `
-                <span class="pill">Cost ${money.format(rate.carrierCost)}</span>
-                <span class="pill">Markup ${money.format(rate.markup)}</span>
-              `}
+            ${hasDisplayValue(rate.transitDays) ? `<span class="pill">Transit ${escapeHtml(formatTransitDays(rate.transitDays))}</span>` : ""}
+            ${hasDisplayValue(rate.estimatedDeliveryDate) ? `<span class="pill">ETA ${escapeHtml(formatDate(rate.estimatedDeliveryDate))}</span>` : ""}
+            ${customerView ? "" : `<span class="pill">Markup ${money.format(rate.markup)}</span>`}
           </div>
           ${Array.isArray(rate.warnings) && rate.warnings.length > 0 ? `
             <div class="rate-warning-row">
@@ -1922,19 +2297,56 @@ function renderQuoteResults(quote) {
         <div class="rate-aside">
           <small>${escapeHtml(priceLabel)}</small>
           <strong>${money.format(rate.sellPrice)}</strong>
-          <button class="primary-action rate-book-action" type="button" data-book-rate="${escapeHtml(rate.id)}">Book Shipment</button>
+          ${bookingAllowed
+            ? `<button class="primary-action rate-book-action" type="button" data-book-rate="${escapeHtml(rate.id)}">Book Shipment</button>`
+            : `<small class="helper-text booking-disabled-note">Booking disabled by admin.</small>`}
         </div>
       </article>
     `)
-    .join("");
+    .join("")}
+    ${canLoadMore ? `
+      <div class="rate-list-footer">
+        <button class="secondary-action" type="button" data-load-more-rates>Load more results</button>
+        <span class="helper-text">Showing ${visibleRates.length} of ${sortedRates.length} results</span>
+      </div>
+    ` : ""}
+  `;
 
   list.querySelectorAll("[data-book-rate]").forEach((button) => {
     button.addEventListener("click", () => openBookingConfirmation(quote.id, button.dataset.bookRate));
   });
 }
 
+function renderQuoteResultsLoading() {
+  const list = document.getElementById("quoteResults");
+  if (!list) {
+    return;
+  }
+  list.classList.remove("compare-grid");
+  list.classList.remove("empty-state");
+  list.innerHTML = `
+    <div class="quote-status loading-state">
+      <strong>Rate results are loading</strong>
+      <p>Please wait while we contact the carrier platforms.</p>
+    </div>
+  `;
+}
+
+function loadMoreQuoteRates() {
+  const quote = state.currentQuote;
+  if (!quote || !Array.isArray(quote.rates) || quote.rates.length === 0) {
+    return;
+  }
+  state.quoteResultsLimit = Math.min((state.quoteResultsLimit || 12) + 12, quote.rates.length);
+  renderQuoteResults(quote);
+}
+
 async function finalizeBooking(quoteId, rateId) {
   const quote = state.currentQuote || state.quotes.find((item) => item.id === quoteId);
+  if (isCustomerUser() && quote && !customerBookingAllowed(quote.customerId)) {
+    showToast("Shipment booking is disabled for this account.", true);
+    return;
+  }
   const rate = quote && Array.isArray(quote.rates) ? quote.rates.find((item) => item.id === rateId) : null;
   const response = await api("/api/shipments", {
     method: "POST",
@@ -2096,6 +2508,17 @@ function populateQuoteFormFromQuote(quote) {
 
   syncCarrierControls();
   clearQuoteFormErrors(form);
+  updateFreightClassSuggestion();
+  triggerZipAutofillField("pickupZip", form);
+  triggerZipAutofillField("deliveryZip", form);
+}
+
+function triggerZipAutofillField(name, root = document) {
+  const input = root.querySelector(`[name='${name}']`);
+  if (!input) {
+    return;
+  }
+  input.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
 function normalizeDeliveryAccessorials(accessorials) {

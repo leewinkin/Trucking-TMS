@@ -156,7 +156,7 @@
                 </label>
                 <label>
                   Company ZIP
-                  <input name="companyZip" placeholder="ZIP">
+                  <input name="companyZip" data-zip-autofill="company" placeholder="ZIP">
                 </label>
                 <label>
                   Open
@@ -215,10 +215,19 @@
                       <span>SpeedShip LTL</span>
                     </label>
                     <label class="checkbox-wrap">
+                      <input type="checkbox" name="allowedCarrierModes" value="priority1Ltl">
+                      <span>Priority1 LTL</span>
+                    </label>
+                    <label class="checkbox-wrap">
                       <input type="checkbox" name="allowedCarrierModes" value="demo">
                       <span>Demo rates</span>
                     </label>
                   </div>
+                  <label class="checkbox-wrap tariff-permission-toggle">
+                    <input type="checkbox" name="allowedBooking" checked>
+                    <span>Allow shipment booking for this customer</span>
+                  </label>
+                  <div class="helper-text">Uncheck this if the customer may quote but not finalize shipments.</div>
                   <div id="tariffFormError" class="form-error"></div>
                   <div class="helper-text">Quotes for this customer will pull rates from every selected carrier mode.</div>
                 </div>
@@ -230,7 +239,7 @@
 
         <section class="view" id="quoteView">
           <form id="quoteForm" class="quote-layout" novalidate>
-            <section class="panel">
+            <section class="panel" id="quoteMetaPanel">
               <div class="panel-heading">
                 <h2>Customer and Mode</h2>
               </div>
@@ -239,18 +248,6 @@
                 <label id="quoteCustomerField">
                   Customer
                   <select name="customerId" id="quoteCustomerSelect" required></select>
-                </label>
-                <label>
-                  Reference / PO number
-                  <input name="referenceNumber" required placeholder="PO-1001">
-                </label>
-                <label>
-                  Pickup date
-                  <input name="pickupDate" type="date" required>
-                </label>
-                <label>
-                  Ready time
-                  <select name="pickupTime" data-time-select required></select>
                 </label>
                 <div class="helper-text span-2">If the selected customer has an address on file, pickup will prefill from it.</div>
                 <div class="helper-text span-2" id="carrierModeHint">Rates will use the carrier modes assigned to the selected customer.</div>
@@ -263,6 +260,23 @@
                   <h2>Pickup</h2>
                 </div>
                 <div class="location-grid">
+                  <section class="location-subsection quote-details-subsection">
+                    <h3>Quote details</h3>
+                    <div class="form-grid quote-details-grid">
+                      <label>
+                        Reference / PO number
+                        <input name="referenceNumber" required placeholder="PO-1001">
+                      </label>
+                      <label>
+                        Pickup date
+                        <input name="pickupDate" type="date" required>
+                      </label>
+                      <label>
+                        Ready time
+                        <select name="pickupTime" data-time-select required></select>
+                      </label>
+                    </div>
+                  </section>
                   <section class="location-subsection">
                     <h3>Company and address</h3>
                     <div class="form-grid location-address-grid">
@@ -284,7 +298,7 @@
                       </label>
                       <label>
                         ZIP
-                        <input name="pickupZip" required placeholder="ZIP">
+                        <input name="pickupZip" data-zip-autofill="pickup" required placeholder="ZIP">
                       </label>
                     </div>
                   </section>
@@ -361,7 +375,7 @@
                       </label>
                       <label>
                         ZIP
-                        <input name="deliveryZip" required placeholder="ZIP">
+                        <input name="deliveryZip" data-zip-autofill="delivery" required placeholder="ZIP">
                       </label>
                     </div>
                   </section>
@@ -479,7 +493,12 @@
                     <input name="description" placeholder="Description" required>
                   </label>
                 </div>
-                <div class="helper-text freight-note">Total shipment weight = quantity × weight each.</div>
+              </div>
+              <div class="freight-help-row">
+                <div class="freight-suggestion">
+                  <span id="freightClassSuggestion" class="helper-text">Suggested freight class: calculate dimensions and weight.</span>
+                  <button class="secondary-action freight-suggestion-button" type="button" data-apply-freight-suggestion disabled>Use suggestion</button>
+                </div>
               </div>
               <div class="button-row">
                 <button class="primary-action" type="submit">Get Rates</button>

@@ -75,6 +75,26 @@ SPEEDSHIP_API_TOKEN=your_speedship_token
 
 The quote form now uses the LTL flow only. It sends the freight class and total freight weight to SpeedShip, then keeps booking local inside this prototype.
 
+## SpeedShip LTL Production
+
+When you are ready to switch from sandbox to live SpeedShip quoting, replace the sandbox values in `.env.local` with the production endpoints and credentials:
+
+```text
+SPEEDSHIP_API_BASE_URL=https://www.speedship.com/svc
+SPEEDSHIP_API_AUTH_URL=https://auth.wwex.com/oauth/token
+SPEEDSHIP_API_AUDIENCE=wwex-apig
+SPEEDSHIP_API_CLIENT_ID=your_speedship_client_id
+SPEEDSHIP_API_CLIENT_SECRET=your_speedship_client_secret
+```
+
+If WWEX provides a production API key for the quote flow, you can also set:
+
+```text
+SPEEDSHIP_API_KEY=your_speedship_api_key
+```
+
+Leave `SPEEDSHIP_API_TOKEN` unset unless WWEX explicitly gives you a direct bearer token. The app already supports the production OAuth flow and will start using the live endpoint after the env file is updated and the server restarts.
+
 ## Current Capabilities
 
 - Email/password login

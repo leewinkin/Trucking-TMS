@@ -32,6 +32,11 @@ const speedshipClientSecret = process.env.SPEEDSHIP_API_CLIENT_SECRET || "";
 const speedshipDirectToken = process.env.SPEEDSHIP_API_TOKEN || "";
 const speedshipApiKey = process.env.SPEEDSHIP_API_KEY || "";
 let speedshipTokenCache = null;
+const priority1BaseUrl = process.env.PRIORITY1_API_BASE_URL || "";
+const priority1ApiKey = process.env.PRIORITY1_API_KEY || "";
+const priority1QuotePath = process.env.PRIORITY1_API_QUOTE_PATH || "";
+const priority1SuggestedClassPath = process.env.PRIORITY1_API_SUGGESTED_CLASS_PATH || "/v2/ltl/quotes/suggestedclass";
+const zipLookupCache = new Map();
 
 const contentTypes = {
   ".html": "text/html; charset=utf-8",
@@ -80,8 +85,14 @@ async function handleApi(req, res, url) {
       dataStore: store.kind,
       mothershipConfigured: Boolean(process.env.MOTHERSHIP_API_TOKEN),
       speedshipConfigured: Boolean(speedshipDirectToken || (speedshipClientId && speedshipClientSecret)),
+      priority1Configured: isPriority1Configured(),
       mothershipBaseUrl
     });
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/zip-lookup") {
+    await lookupZipCode(req, res, url);
     return;
   }
 
@@ -174,6 +185,11 @@ async function handleApi(req, res, url) {
 
     const tariffRule = await store.upsertTariff(input);
     sendJson(res, 200, { tariffRule });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/freight-class-suggestion") {
+    await suggestFreightClass(req, res, currentUser);
     return;
   }
 
@@ -280,8 +296,11 @@ async function createQuote(req, res, currentUser) {
   const allowedCarrierModes = normalizeAllowedCarrierModes(customer.allowedCarrierModes);
   const mothershipRequest = buildMothershipQuoteRequest(input);
   const speedshipRequests = buildSpeedshipLtlQuoteRequests(input);
+  const priority1Request = buildPriority1QuoteRequest(input);
   const carrierRuns = await Promise.all(
-    allowedCarrierModes.map((mode) => requestCarrierQuoteForMode(mode, mothershipRequest, speedshipRequests))
+    allowedCarrierModes.map((mode) =>
+      requestCarrierQuoteForMode(mode, mothershipRequest, speedshipRequests, priority1Request)
+    )
   );
 
   const carrierQuoteId = carrierRuns.map((run) => run.carrierQuoteId).filter(Boolean).join(" | ") || createId("carrierQuote");
@@ -367,6 +386,17 @@ async function createShipment(req, res, currentUser) {
   if (currentUser.role === "customer" && quote.customerId !== currentUser.customerId) {
     sendJson(res, 403, { error: "FORBIDDEN", message: "You can only book your own quotes." });
     return;
+  }
+
+  if (currentUser.role === "customer") {
+    const bookingCustomer = await store.getCustomer(currentUser.customerId);
+    if (!bookingCustomer || bookingCustomer.allowedBooking === false) {
+      sendJson(res, 403, {
+        error: "BOOKING_DISABLED",
+        message: "Shipment booking is disabled for your account."
+      });
+      return;
+    }
   }
 
   const rate = quote.rates.find((item) => item.id === input.rateId);
@@ -1091,6 +1121,7 @@ function normalizeMothershipRates(payload) {
       rate.vendorName ||
       rate.providerName ||
       rate.primaryVendor?.name ||
+      rate.primaryVendor?.preferredName ||
       rate.carrier?.name ||
       rate.vendor?.name ||
       null,
@@ -1129,6 +1160,13 @@ function normalizeSpeedshipLtlRates(payload) {
   }
 
   return rates.map((rate, index) => {
+    const timeInTransit =
+      rate.timeInTransit ||
+      rate.shopRQShipment?.timeInTransit ||
+      rate.offeredProductList?.[0]?.shopRQShipment?.timeInTransit ||
+      rate.offeredProductList?.[0]?.timeInTransit ||
+      rate.product?.shopRQShipment?.timeInTransit ||
+      null;
     const carrierRateId = String(
       rate.offerId ||
         rate.shipmentOfferId ||
@@ -1156,20 +1194,34 @@ function normalizeSpeedshipLtlRates(payload) {
       id: carrierRateId,
       carrierRateId,
       provider: String(rate.vendorId || rate.carrierCode || rate.provider || "speedship"),
-      providerScac: rate.vendorId || rate.carrierCode || rate.timeInTransit?.scac || rate.primaryVendor?.scac || null,
-      carrierName:
-        rate.carrierName ||
-        rate.vendorName ||
-        rate.primaryVendor?.name ||
-        rate.timeInTransit?.carrierName ||
-        rate.timeInTransit?.vendorName ||
-        rate.carrierDescription ||
+      providerScac:
+        rate.vendorId ||
+        rate.carrierCode ||
+        timeInTransit?.scac ||
+        rate.primaryVendor?.scac ||
+        rate.offeredProductList?.[0]?.shopRQShipment?.timeInTransit?.scac ||
         null,
+      carrierName:
+        readNestedString(rate, [
+          ["carrierName"],
+          ["vendorName"],
+          ["primaryVendor", "preferredName"],
+          ["primaryVendor", "name"],
+          ["timeInTransit", "carrierName"],
+          ["timeInTransit", "vendorName"],
+          ["shopRQShipment", "timeInTransit", "carrierName"],
+          ["shopRQShipment", "timeInTransit", "vendorName"],
+          ["offeredProductList", 0, "shopRQShipment", "timeInTransit", "carrierName"],
+          ["offeredProductList", 0, "shopRQShipment", "timeInTransit", "vendorName"],
+          ["carrierDescription"]
+        ]) || null,
       service: String(
         rate.serviceName ||
           rate.serviceType ||
           rate.serviceLevel ||
-          rate.timeInTransit?.serviceLevel ||
+          timeInTransit?.serviceLevel ||
+          rate.shopRQShipment?.timeInTransit?.serviceLevel ||
+          rate.offeredProductList?.[0]?.shopRQShipment?.timeInTransit?.serviceLevel ||
           rate.vendorName ||
           rate.mode ||
           rate.name ||
@@ -1177,8 +1229,20 @@ function normalizeSpeedshipLtlRates(payload) {
       ),
       carrierCost,
       estimatedPickupDate: rate.estimatedPickupDate || rate.pickupDate || null,
-      estimatedDeliveryDate: rate.estimatedDeliveryDate || rate.deliveryDate || rate.timeInTransit?.estimatedDeliveryDate || null,
-      transitDays: rate.transitDays || rate.transitTime || rate.timeInTransit?.transitDays || null,
+      estimatedDeliveryDate:
+        rate.estimatedDeliveryDate ||
+        rate.deliveryDate ||
+        timeInTransit?.estimatedDeliveryDate ||
+        rate.shopRQShipment?.timeInTransit?.estimatedDeliveryDate ||
+        rate.offeredProductList?.[0]?.shopRQShipment?.timeInTransit?.estimatedDeliveryDate ||
+        null,
+      transitDays:
+        rate.transitDays ||
+        rate.transitTime ||
+        timeInTransit?.transitDays ||
+        rate.shopRQShipment?.timeInTransit?.transitDays ||
+        rate.offeredProductList?.[0]?.shopRQShipment?.timeInTransit?.transitDays ||
+        null,
       warnings: Array.isArray(rate.warnings) ? rate.warnings : Array.isArray(rate.messages) ? rate.messages : []
     };
   });
@@ -1298,7 +1362,7 @@ function getSpeedshipProductTransactionId(shipment, quote) {
 }
 
 function normalizeCarrierMode(value) {
-  if (value === "mothershipSandbox" || value === "speedshipLtl") {
+  if (value === "mothershipSandbox" || value === "speedshipLtl" || value === "priority1Ltl") {
     return value;
   }
   return "demo";
@@ -1314,7 +1378,7 @@ function normalizeAllowedCarrierModes(values, fallback = ["mothershipSandbox"]) 
 
   for (const entry of list) {
     const mode = normalizeCarrierMode(entry);
-    if ((mode === "mothershipSandbox" || mode === "speedshipLtl" || mode === "demo") && !normalized.includes(mode)) {
+    if ((mode === "mothershipSandbox" || mode === "speedshipLtl" || mode === "priority1Ltl" || mode === "demo") && !normalized.includes(mode)) {
       normalized.push(mode);
     }
   }
@@ -1328,13 +1392,15 @@ function carrierModeDisplayName(mode) {
       return "Mothership sandbox";
     case "speedshipLtl":
       return "SpeedShip LTL";
+    case "priority1Ltl":
+      return "Priority1 LTL";
     case "demo":
     default:
       return "Demo rates";
   }
 }
 
-async function requestCarrierQuoteForMode(mode, mothershipRequest, speedshipRequests) {
+async function requestCarrierQuoteForMode(mode, mothershipRequest, speedshipRequests, priority1Request) {
   const normalizedMode = normalizeCarrierMode(mode);
 
   try {
@@ -1386,6 +1452,30 @@ async function requestCarrierQuoteForMode(mode, mothershipRequest, speedshipRequ
       };
     }
 
+    if (normalizedMode === "priority1Ltl") {
+      if (!isPriority1Configured()) {
+        return {
+          mode: normalizedMode,
+          carrier: "priority1",
+          carrierQuoteId: createId("priority1Quote"),
+          rates: [],
+          carrierMessage: "Add PRIORITY1_API_BASE_URL and PRIORITY1_API_KEY to .env.local before using Priority1 LTL.",
+          rawCarrierResponse: {}
+        };
+      }
+
+      const carrierQuote = await requestPriority1Quote(priority1Request);
+      const rates = normalizePriority1Rates(carrierQuote);
+      return {
+        mode: normalizedMode,
+        carrier: "priority1",
+        carrierQuoteId: getPriority1QuoteId(carrierQuote),
+        rates,
+        carrierMessage: rates.length === 0 ? "Priority1 returned no rates for this lane." : "",
+        rawCarrierResponse: carrierQuote
+      };
+    }
+
     const carrierQuote = createDemoCarrierQuote(mothershipRequest);
     const rates = normalizeMothershipRates(carrierQuote);
     return {
@@ -1399,7 +1489,14 @@ async function requestCarrierQuoteForMode(mode, mothershipRequest, speedshipRequ
   } catch (error) {
     return {
       mode: normalizedMode,
-      carrier: normalizedMode === "speedshipLtl" ? "speedship" : normalizedMode === "mothershipSandbox" ? "mothership" : "demo",
+      carrier:
+        normalizedMode === "speedshipLtl"
+          ? "speedship"
+          : normalizedMode === "mothershipSandbox"
+            ? "mothership"
+            : normalizedMode === "priority1Ltl"
+              ? "priority1"
+              : "demo",
       carrierQuoteId: createId(`${normalizedMode}Quote`),
       rates: [],
       carrierMessage: error?.message || "Carrier request failed.",
@@ -1413,6 +1510,294 @@ async function requestCarrierQuoteForMode(mode, mothershipRequest, speedshipRequ
 
 function isSpeedshipConfigured() {
   return Boolean(speedshipDirectToken || (speedshipClientId && speedshipClientSecret));
+}
+
+function isPriority1Configured() {
+  return Boolean(priority1BaseUrl && priority1ApiKey);
+}
+
+async function suggestFreightClass(req, res, currentUser) {
+  const input = await readJson(req);
+  const customerId = currentUser.role === "customer" ? currentUser.customerId : String(input.customerId || "").trim();
+  const customer = customerId ? await store.getCustomer(customerId) : null;
+
+  if (customerId && !customer) {
+    sendJson(res, 404, { error: "CUSTOMER_NOT_FOUND", message: "Customer was not found." });
+    return;
+  }
+
+  const quantity = toPositiveNumber(input.quantity, "quantity");
+  const weight = toPositiveNumber(input.weight, "weight");
+  const length = toPositiveNumber(input.length, "length");
+  const width = toPositiveNumber(input.width, "width");
+  const height = toPositiveNumber(input.height, "height");
+  const totalWeight = quantity * weight;
+  const allowedCarrierModes = normalizeAllowedCarrierModes(customer?.allowedCarrierModes || []);
+  const canUsePriority1Suggestion = isPriority1Configured() && allowedCarrierModes.includes("priority1Ltl");
+
+  if (canUsePriority1Suggestion) {
+    try {
+      const priority1Suggestion = await requestPriority1SuggestedClass({
+        totalWeight,
+        width,
+        height,
+        length,
+        units: quantity
+      });
+      const suggestedClass = String(priority1Suggestion?.suggestedClass || priority1Suggestion?.data?.suggestedClass || "").trim();
+      if (suggestedClass) {
+        sendJson(res, 200, { suggestedClass, source: "priority1" });
+        return;
+      }
+    } catch (error) {
+      console.warn("Priority1 freight class suggestion fell back to local estimate:", error.message);
+    }
+  }
+
+  const density = totalWeight / ((quantity * length * width * height) / 1728);
+  const suggestedClass = suggestFreightClassByDensity(density);
+  sendJson(res, 200, { suggestedClass, source: "local" });
+}
+
+async function lookupZipCode(req, res, url) {
+  const zip = normalizeZipCode(url.searchParams.get("zip"));
+  if (!zip) {
+    sendJson(res, 400, { error: "VALIDATION_ERROR", message: "zip is required." });
+    return;
+  }
+
+  const cached = zipLookupCache.get(zip);
+  if (cached) {
+    sendJson(res, 200, cached);
+    return;
+  }
+
+  const response = await fetch(`https://api.zippopotam.us/us/${zip}`, {
+    method: "GET",
+    headers: {
+      Accept: "application/json"
+    }
+  });
+
+  if (!response.ok) {
+    sendJson(res, 404, { error: "ZIP_NOT_FOUND", message: "ZIP code was not found." });
+    return;
+  }
+
+  const payload = await response.json();
+  const place = Array.isArray(payload?.places) ? payload.places[0] : null;
+  if (!place) {
+    sendJson(res, 404, { error: "ZIP_NOT_FOUND", message: "ZIP code was not found." });
+    return;
+  }
+
+  const data = {
+    zip,
+    city: String(place["place name"] || "").trim(),
+    state: String(place["state abbreviation"] || "").trim(),
+    country: String(payload["country abbreviation"] || "US").trim() || "US"
+  };
+  zipLookupCache.set(zip, data);
+  sendJson(res, 200, data);
+}
+
+function buildPriority1QuoteRequest(input) {
+  const freight = normalizeFreight(input.freight);
+  const pickup = normalizeStop(input.pickup, "pickup");
+  const delivery = normalizeStop(input.delivery, "delivery");
+  const accessorialServices = buildPriority1AccessorialServices(pickup.accessorials, delivery.accessorials);
+  const pickupDate = formatPriority1PickupDate(input.pickupReadyDate);
+
+  return {
+    originZipCode: requiredString(pickup.address.zip, "pickup.address.zip"),
+    destinationZipCode: requiredString(delivery.address.zip, "delivery.address.zip"),
+    originCity: pickup.address.city || null,
+    originStateAbbreviation: pickup.address.state || null,
+    originCountryCode: "US",
+    destinationCity: delivery.address.city || null,
+    destinationStateAbbreviation: delivery.address.state || null,
+    destinationCountryCode: "US",
+    pickupDate,
+    items: freight.map((item, index) => ({
+      freightClass: String(item.freightClass || item.commodityClass || "50"),
+      packagingType: String(item.freightType || item.packagingType || "Pallet"),
+      units: toPositiveNumber(item.quantity, `freight.${index}.quantity`),
+      pieces: toPositiveNumber(item.pieces || item.quantity, `freight.${index}.pieces`),
+      totalWeight: toPositiveNumber(item.weight, `freight.${index}.weight`) * toPositiveNumber(item.quantity, `freight.${index}.quantity`),
+      length: toPositiveNumber(item.length, `freight.${index}.length`),
+      width: toPositiveNumber(item.width, `freight.${index}.width`),
+      height: toPositiveNumber(item.height, `freight.${index}.height`),
+      isStackable: false,
+      isHazardous: Boolean(pickup.accessorials.includes("hazmat") || delivery.accessorials.includes("hazmat")),
+      isUsed: false,
+      isMachinery: false,
+      nmfcItemCode: null,
+      nmfcSubCode: null,
+      description: String(item.description || "").trim() || null
+    })),
+    accessorialServices: accessorialServices.length > 0 ? accessorialServices : null,
+    apiConfiguration: null
+  };
+}
+
+function buildPriority1AccessorialServices(pickupAccessorials, deliveryAccessorials) {
+  const codes = new Set();
+  const hasPickup = (value) => pickupAccessorials.includes(value);
+  const hasDelivery = (value) => deliveryAccessorials.includes(value);
+
+  if (hasPickup("appointment") || hasDelivery("appointment")) {
+    codes.add("APPT");
+  }
+  if (hasPickup("liftgate")) {
+    codes.add("LGPU");
+  }
+  if (hasDelivery("liftgate")) {
+    codes.add("LGDEL");
+  }
+  if (hasPickup("residential")) {
+    codes.add("RESPU");
+  }
+  if (hasDelivery("residential")) {
+    codes.add("RESDEL");
+  }
+  if (hasPickup("inside")) {
+    codes.add("INPU");
+  }
+  if (hasDelivery("inside")) {
+    codes.add("INDEL");
+  }
+  if (hasPickup("limitedAccess")) {
+    codes.add("LTDPU");
+  }
+  if (hasDelivery("limitedAccess")) {
+    codes.add("LTDDEL");
+  }
+  if (hasPickup("tradeshow") || hasDelivery("tradeshow")) {
+    codes.add("TRD");
+  }
+  return Array.from(codes).map((code) => ({ code }));
+}
+
+function formatPriority1PickupDate(pickupReadyDate) {
+  const date = requiredString(pickupReadyDate?.date, "pickupReadyDate.date");
+  const time = requiredString(pickupReadyDate?.time, "pickupReadyDate.time");
+  return `${date}T${time.slice(0, 2)}:${time.slice(2)}:00`;
+}
+
+async function requestPriority1Quote(priority1Request) {
+  const response = await fetch(`${priority1BaseUrl.replace(/\/$/, "")}${priority1QuotePath || "/v2/ltl/quotes/rates"}`, {
+    method: "POST",
+    headers: {
+      "X-API-KEY": priority1ApiKey,
+      "Content-Type": "application/json",
+      Accept: "application/json"
+    },
+    body: JSON.stringify(priority1Request)
+  });
+
+  const text = await response.text();
+  let payload = {};
+  try {
+    payload = text ? JSON.parse(text) : {};
+  } catch {
+    payload = {};
+  }
+
+  if (!response.ok) {
+    throw new PublicError(response.status, payload.message || payload.title || "PRIORITY1_ERROR", payload.detail || payload.message || "Priority1 request failed.");
+  }
+
+  return payload;
+}
+
+async function requestPriority1SuggestedClass(priority1Request) {
+  const response = await fetch(`${priority1BaseUrl.replace(/\/$/, "")}${priority1SuggestedClassPath || "/v2/ltl/quotes/suggestedclass"}`, {
+    method: "POST",
+    headers: {
+      "X-API-KEY": priority1ApiKey,
+      "Content-Type": "application/json",
+      Accept: "application/json"
+    },
+    body: JSON.stringify(priority1Request)
+  });
+
+  const text = await response.text();
+  let payload = {};
+  try {
+    payload = text ? JSON.parse(text) : {};
+  } catch {
+    payload = {};
+  }
+
+  if (!response.ok) {
+    throw new PublicError(response.status, payload.message || payload.title || "PRIORITY1_ERROR", payload.detail || payload.message || "Priority1 request failed.");
+  }
+
+  return payload;
+}
+
+function normalizePriority1Rates(payload) {
+  const data = payload?.rateQuotes || payload?.data?.rateQuotes || payload?.data || payload || {};
+  const rates = Array.isArray(data.rateQuotes) ? data.rateQuotes : Array.isArray(payload?.rateQuotes) ? payload.rateQuotes : Array.isArray(payload?.data?.rateQuotes) ? payload.data.rateQuotes : [];
+  if (!Array.isArray(rates) || rates.length === 0) {
+    return [];
+  }
+
+  return rates.map((rate, index) => ({
+    id: String(rate.id || rate.carrierQuoteNumber || `priority1_${index + 1}`),
+    carrierRateId: String(rate.id || rate.carrierQuoteNumber || `priority1_${index + 1}`),
+    provider: String(rate.carrierCode || rate.carrierName || "priority1"),
+    providerScac: rate.carrierCode || null,
+    carrierName: rate.carrierName || rate.carrierCode || null,
+    service: String(rate.serviceLevelDescription || rate.serviceLevel || rate.mode || "LTL"),
+    carrierCost: toMoney(rate?.rateQuoteDetail?.total || rate.total || 0),
+    estimatedPickupDate: rate.effectiveDate || null,
+    estimatedDeliveryDate: rate.deliveryDate || null,
+    transitDays: rate.transitDays || null,
+    warnings: []
+  }));
+}
+
+function getPriority1QuoteId(payload) {
+  return String(payload?.id || payload?.rateQuoteRequestDetail?.quoteId || payload?.rateQuotes?.[0]?.carrierQuoteNumber || createId("priority1Quote"));
+}
+
+function suggestFreightClassByDensity(density) {
+  if (!Number.isFinite(density) || density <= 0) {
+    return "";
+  }
+
+  const densityBands = [
+    { min: 50, classValue: "50" },
+    { min: 35, classValue: "55" },
+    { min: 30, classValue: "60" },
+    { min: 22.5, classValue: "65" },
+    { min: 15, classValue: "70" },
+    { min: 13.5, classValue: "77.5" },
+    { min: 12, classValue: "85" },
+    { min: 10.5, classValue: "92.5" },
+    { min: 9, classValue: "100" },
+    { min: 8, classValue: "110" },
+    { min: 7, classValue: "125" },
+    { min: 6, classValue: "150" },
+    { min: 5, classValue: "175" },
+    { min: 4, classValue: "200" },
+    { min: 3, classValue: "250" },
+    { min: 2, classValue: "300" },
+    { min: 1, classValue: "400" },
+    { min: 0, classValue: "500" }
+  ];
+
+  const matched = densityBands.find((band) => density >= band.min);
+  return matched?.classValue || "";
+}
+
+function normalizeZipCode(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (digits.length < 5) {
+    return "";
+  }
+  return digits.slice(0, 5);
 }
 
 function readNestedNumber(source, paths) {
