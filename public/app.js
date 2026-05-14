@@ -1681,6 +1681,19 @@ function auditJsonBlock(value, emptyLabel = "No data recorded.") {
   return `<pre class="audit-json">${escapeHtml(JSON.stringify(value, null, 2))}</pre>`;
 }
 
+function isMothershipAuditRow(row) {
+  return normalizeCarrierMode(row?.mode) === "mothershipSandbox" || String(row?.carrier || "").toLowerCase() === "mothership";
+}
+
+function mothershipReferenceAuditMessage(quote, row) {
+  if (!isMothershipAuditRow(row)) {
+    return "";
+  }
+
+  const reference = quote?.referenceNumber ? ` TMS Reference / PO: ${quote.referenceNumber}.` : "";
+  return `<p class="audit-message">${escapeHtml(`${reference} Mothership public quote and shipment APIs do not expose a Reference / PO request field; carrier booking uses quoteId and rateId.`)}</p>`;
+}
+
 function quoteAuditHtml(quote) {
   const customerView = isCustomerUser();
   if (customerView) {
@@ -1708,6 +1721,7 @@ function quoteAuditHtml(quote) {
               </summary>
               <div class="audit-entry-body">
                 ${row.carrierMessage ? `<p class="audit-message">${escapeHtml(row.carrierMessage)}</p>` : ""}
+                ${mothershipReferenceAuditMessage(quote, row)}
                 <div class="audit-grid">
                   <div class="audit-block">
                     <strong>Outbound request</strong>
@@ -1725,6 +1739,41 @@ function quoteAuditHtml(quote) {
         .join("")}
     </div>
   `;
+}
+
+function shipmentAuditHtml(shipment) {
+  if (isCustomerUser() || !shipment?.carrierShipment) {
+    return "";
+  }
+
+  const carrierShipment = shipment.carrierShipment;
+  const request = carrierShipment.request || null;
+  const response = carrierShipment.response || carrierShipment;
+  const referenceMessage = shipment.referenceNumber
+    ? `<p class="audit-message">${escapeHtml(`TMS Reference / PO: ${shipment.referenceNumber}`)}</p>`
+    : "";
+  const mothershipMessage =
+    shipment.carrier === "mothership"
+      ? `<p class="audit-message">Mothership carrier booking request is limited to quoteId and rateId; Reference / PO remains stored in the TMS.</p>`
+      : "";
+
+  return detailSection(
+    "Shipment Audit",
+    `
+      ${referenceMessage}
+      ${mothershipMessage}
+      <div class="audit-grid">
+        <div class="audit-block">
+          <strong>Carrier booking request</strong>
+          ${auditJsonBlock(request, "No carrier booking request recorded for this shipment.")}
+        </div>
+        <div class="audit-block">
+          <strong>Carrier booking response</strong>
+          ${auditJsonBlock(response, "No carrier booking response recorded for this shipment.")}
+        </div>
+      </div>
+    `
+  );
 }
 
 function trackingTimelineHtml(events) {
@@ -1910,6 +1959,7 @@ function shipmentDetailsHtml(shipment, events = []) {
           </div>
         `
       )} 
+      ${shipmentAuditHtml(shipment)}
       ${detailSection("Tracking Timeline", trackingTimelineHtml(events))}
     </div>
   `;

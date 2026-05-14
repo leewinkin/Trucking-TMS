@@ -443,10 +443,18 @@ async function createShipment(req, res, currentUser) {
       return;
     }
 
-    carrierShipment = await requestMothershipShipment({
+    const carrierShipmentRequest = {
       quoteId: rate.carrierQuoteId || quote.carrierQuoteId,
       rateId: rate.carrierRateId || rate.id
-    });
+    };
+    const carrierShipmentResponse = await requestMothershipShipment(carrierShipmentRequest);
+    carrierShipment = {
+      request: carrierShipmentRequest,
+      response: carrierShipmentResponse,
+      tmsReferenceNumber: quote.referenceNumber,
+      referenceNote:
+        "Mothership's public Create Shipment API accepts quoteId and rateId; Reference / PO is stored in the TMS."
+    };
   }
 
   const shipment = {
@@ -1393,7 +1401,7 @@ function getCarrierQuoteId(payload) {
 }
 
 function getCarrierShipmentId(payload) {
-  const data = payload?.data || payload;
+  const data = payload?.response?.data || payload?.response || payload?.data || payload;
   return data?.id || data?.shipmentId || data?.productTransactionId || data?.shipmentOfferId || null;
 }
 

@@ -167,6 +167,13 @@ Optional fields to support later:
 - `applyAvailableCredits`
 - `declaredFreightValue`
 
+Reference / PO handling:
+
+- The TMS stores the customer-entered `referenceNumber` on the quote, shipment, and invoice records.
+- Mothership's current public `POST /quotes` documentation does not list a Reference / PO field.
+- Mothership's current public `POST /shipments` documentation lists only `quoteId` and `rateId`.
+- Until Mothership confirms an API field for customer reference data, do not send undocumented PO fields to Mothership. Keep the value in the TMS and show it in staff audit views.
+
 ## Quote Response Handling
 
 Mothership returns a quote ID and available rates. Each rate can include:
@@ -218,6 +225,8 @@ Mothership `POST /shipments` requires:
 }
 ```
 
+The app stores the outbound booking request and carrier response on the local shipment audit record. For Mothership, the audit also carries the TMS Reference / PO as local context because the documented carrier booking request does not expose a reference field.
+
 Risk: booking purchases the shipment against the organization's payment source. Keep booking behind an explicit customer confirmation screen.
 
 ## Tracking
@@ -263,4 +272,3 @@ Admin logs should keep full error details for support.
 - Customer markup must be applied server-side.
 - Tracking should be cached or webhook-driven to avoid excessive polling.
 - Raw carrier errors should be hidden from customers but visible to admins.
-
