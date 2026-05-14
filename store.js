@@ -340,8 +340,8 @@ async function createPostgresStore(dbUrl) {
     async createQuote(quote) {
       const result = await pool.query(
         `INSERT INTO quotes
-         (id, customer_id, customer_name, carrier_mode, carrier_modes, carrier, carrier_quote_id, reference_number, pickup, delivery, freight, pickup_ready_date, tariff_rule, rates, status, carrier_message, raw_carrier_response, created_at)
-         VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9::jsonb, $10::jsonb, $11::jsonb, $12::jsonb, $13::jsonb, $14::jsonb, $15, $16, $17::jsonb, $18)
+         (id, customer_id, customer_name, carrier_mode, carrier_modes, carrier, carrier_quote_id, reference_number, pickup, delivery, freight, pickup_ready_date, tariff_rule, rates, status, carrier_message, carrier_audit, raw_carrier_response, created_at)
+         VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9::jsonb, $10::jsonb, $11::jsonb, $12::jsonb, $13::jsonb, $14::jsonb, $15, $16, $17::jsonb, $18::jsonb, $19)
          RETURNING *`,
         [
           quote.id,
@@ -360,6 +360,7 @@ async function createPostgresStore(dbUrl) {
           JSON.stringify(quote.rates),
           quote.status,
           quote.carrierMessage || "",
+          JSON.stringify(quote.carrierAudit || []),
           JSON.stringify(quote.rawCarrierResponse),
           quote.createdAt
         ]
@@ -591,7 +592,7 @@ async function ensureSchema(pool) {
       expires_at timestamptz NOT NULL,
       created_at timestamptz NOT NULL DEFAULT now()
     )`,
-    `CREATE TABLE IF NOT EXISTS quotes (
+      `CREATE TABLE IF NOT EXISTS quotes (
       id text PRIMARY KEY,
       customer_id text NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
       customer_name text NOT NULL,
@@ -608,6 +609,7 @@ async function ensureSchema(pool) {
       rates jsonb NOT NULL,
       status text NOT NULL DEFAULT 'quoted',
       carrier_message text NOT NULL DEFAULT '',
+      carrier_audit jsonb NOT NULL DEFAULT '[]'::jsonb,
       raw_carrier_response jsonb NOT NULL,
       created_at timestamptz NOT NULL DEFAULT now()
     )`,
@@ -660,6 +662,7 @@ async function ensureSchema(pool) {
     "ALTER TABLE quotes ADD COLUMN IF NOT EXISTS reference_number text NOT NULL DEFAULT ''",
     "ALTER TABLE quotes ADD COLUMN IF NOT EXISTS carrier_modes jsonb NOT NULL DEFAULT '[]'::jsonb",
     "ALTER TABLE quotes ADD COLUMN IF NOT EXISTS carrier_message text NOT NULL DEFAULT ''",
+    "ALTER TABLE quotes ADD COLUMN IF NOT EXISTS carrier_audit jsonb NOT NULL DEFAULT '[]'::jsonb",
     "ALTER TABLE shipments ADD COLUMN IF NOT EXISTS reference_number text NOT NULL DEFAULT ''",
     "ALTER TABLE shipments ADD COLUMN IF NOT EXISTS carrier_name text NOT NULL DEFAULT ''",
     "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS reference_number text NOT NULL DEFAULT ''",
@@ -1226,6 +1229,9 @@ function normalizeCarrierMode(value) {
     speedshipltl: "speedshipLtl",
     priority1: "priority1Ltl",
     priority1ltl: "priority1Ltl",
+    fedex: "fedexFreight",
+    fedexfreight: "fedexFreight",
+    fedexltl: "fedexFreight",
     demo: "demo",
     "mothership-demo": "demo"
   };
@@ -1243,7 +1249,7 @@ function normalizeAllowedCarrierModes(value, fallback = ["mothershipSandbox"]) {
 
   for (const entry of list) {
     const mode = normalizeCarrierMode(entry);
-    if (mode === "demo" || mode === "mothershipSandbox" || mode === "speedshipLtl" || mode === "priority1Ltl") {
+    if (mode === "demo" || mode === "mothershipSandbox" || mode === "speedshipLtl" || mode === "priority1Ltl" || mode === "fedexFreight") {
       if (!normalized.includes(mode)) {
         normalized.push(mode);
       }
@@ -1346,6 +1352,7 @@ function mapQuoteRow(row) {
     rates: row.rates,
     status: row.status,
     carrierMessage: row.carrier_message || "",
+    carrierAudit: Array.isArray(row.carrier_audit) ? row.carrier_audit : row.carrier_audit || [],
     rawCarrierResponse: row.raw_carrier_response,
     createdAt: row.created_at
   };

@@ -219,6 +219,10 @@
                       <span>Priority1 LTL</span>
                     </label>
                     <label class="checkbox-wrap">
+                      <input type="checkbox" name="allowedCarrierModes" value="fedexFreight">
+                      <span>FedEx Freight</span>
+                    </label>
+                    <label class="checkbox-wrap">
                       <input type="checkbox" name="allowedCarrierModes" value="demo">
                       <span>Demo rates</span>
                     </label>
@@ -431,74 +435,9 @@
                 <div class="panel-heading">
                   <h2>Freight</h2>
                 </div>
-                <div class="freight-grid">
-                  <div class="form-grid freight-primary-grid">
-                    <label>
-                      Quantity
-                      <input name="quantity" type="number" min="1" placeholder="Qty" required>
-                    </label>
-                    <label>
-                      Type
-                      <select name="freightType" required>
-                        <option value="" selected disabled>Select type</option>
-                        <option>Pallet</option>
-                        <option>Box</option>
-                        <option>Crate</option>
-                      </select>
-                    </label>
-                    <label>
-                      Weight each (lbs)
-                      <input name="weight" type="number" min="1" placeholder="Weight" required>
-                    </label>
-                    <label>
-                      Freight class
-                      <select name="freightClass">
-                        <option value="" selected>Optional</option>
-                        <option value="50">50</option>
-                        <option value="55">55</option>
-                      <option value="60">60</option>
-                      <option value="65">65</option>
-                      <option value="70">70</option>
-                      <option value="77.5">77.5</option>
-                      <option value="85">85</option>
-                      <option value="92.5">92.5</option>
-                      <option value="100">100</option>
-                      <option value="110">110</option>
-                      <option value="125">125</option>
-                      <option value="150">150</option>
-                      <option value="175">175</option>
-                      <option value="200">200</option>
-                      <option value="250">250</option>
-                      <option value="300">300</option>
-                      <option value="400">400</option>
-                      <option value="500">500</option>
-                    </select>
-                  </label>
-                </div>
-                <div class="form-grid freight-secondary-grid">
-                  <label>
-                    Length (in)
-                    <input name="length" type="number" min="1" placeholder="Length" required>
-                  </label>
-                  <label>
-                    Width (in)
-                    <input name="width" type="number" min="1" placeholder="Width" required>
-                  </label>
-                  <label>
-                    Height (in)
-                    <input name="height" type="number" min="1" placeholder="Height" required>
-                  </label>
-                  <label>
-                    Description
-                    <input name="description" placeholder="Description" required>
-                  </label>
-                </div>
-              </div>
-              <div class="freight-help-row">
-                <div class="freight-suggestion">
-                  <span id="freightClassSuggestion" class="helper-text">Suggested freight class: calculate dimensions and weight.</span>
-                  <button class="secondary-action freight-suggestion-button" type="button" data-apply-freight-suggestion disabled>Use suggestion</button>
-                </div>
+              <div id="freightRows" class="freight-rows"></div>
+              <div class="freight-actions-row">
+                <button class="secondary-action" type="button" data-add-freight-row>Add Item</button>
               </div>
               <div class="button-row">
                 <button class="primary-action" type="submit">Get Rates</button>
@@ -544,6 +483,112 @@
         <div id="modalBody" class="modal-body"></div>
       </div>
     </div>
+    <template id="freightRowTemplate">
+      <section class="freight-row" data-freight-row>
+        <div class="freight-row-header">
+          <div class="freight-row-title">
+            <strong data-freight-row-title>Item 1</strong>
+            <span class="helper-text">One row equals one freight line.</span>
+          </div>
+          <button class="danger-action freight-row-remove" type="button" data-remove-freight-row>Remove</button>
+        </div>
+        <div class="form-grid freight-primary-grid">
+          <label>
+            <span class="field-label">Quantity<span class="required-mark" aria-hidden="true">*</span></span>
+            <input data-freight-field="quantity" type="number" min="1" placeholder="# of pallets" required>
+          </label>
+          <label>
+            <span class="field-label">Cargo type<span class="required-mark" aria-hidden="true">*</span></span>
+            <select data-freight-field="type" required>
+              <option value="" selected disabled>Select type</option>
+              <option>Pallet</option>
+              <option>Box</option>
+              <option>Crate</option>
+            </select>
+          </label>
+          <label>
+            Pieces per unit
+            <input data-freight-field="pieces" type="number" min="1" placeholder="# of pieces" value="1">
+          </label>
+          <label>
+            <span class="field-label">Weight each (lbs)<span class="required-mark" aria-hidden="true">*</span></span>
+            <input data-freight-field="weight" type="number" min="1" placeholder="Weight" required>
+          </label>
+        </div>
+        <div class="form-grid freight-secondary-grid">
+          <label>
+            <span class="field-label">Length (in)<span class="required-mark" aria-hidden="true">*</span></span>
+            <input data-freight-field="length" type="number" min="1" placeholder="Length" required>
+          </label>
+          <label>
+            <span class="field-label">Width (in)<span class="required-mark" aria-hidden="true">*</span></span>
+            <input data-freight-field="width" type="number" min="1" placeholder="Width" required>
+          </label>
+          <label>
+            <span class="field-label">Height (in)<span class="required-mark" aria-hidden="true">*</span></span>
+            <input data-freight-field="height" type="number" min="1" placeholder="Height" required>
+          </label>
+          <label>
+            <span class="field-label">Description<span class="required-mark" aria-hidden="true">*</span></span>
+            <input data-freight-field="description" placeholder="Description" required>
+          </label>
+        </div>
+        <div class="form-grid freight-tertiary-grid">
+          <label>
+            Freight class
+            <select data-freight-field="freightClass">
+              <option value="" selected>Optional</option>
+              <option value="50">50</option>
+              <option value="55">55</option>
+              <option value="60">60</option>
+              <option value="65">65</option>
+              <option value="70">70</option>
+              <option value="77.5">77.5</option>
+              <option value="85">85</option>
+              <option value="92.5">92.5</option>
+              <option value="100">100</option>
+              <option value="110">110</option>
+              <option value="125">125</option>
+              <option value="150">150</option>
+              <option value="175">175</option>
+              <option value="200">200</option>
+              <option value="250">250</option>
+              <option value="300">300</option>
+              <option value="400">400</option>
+              <option value="500">500</option>
+            </select>
+          </label>
+          <label>
+            NMFC
+            <input data-freight-field="nmfc" placeholder="Optional NMFC">
+          </label>
+          <div class="freight-flags">
+            <label class="checkbox-wrap">
+              <input data-freight-flag="stackable" type="checkbox">
+              <span>Stackable</span>
+            </label>
+            <label class="checkbox-wrap">
+              <input data-freight-flag="hazmat" type="checkbox">
+              <span>Hazmat</span>
+            </label>
+            <label class="checkbox-wrap">
+              <input data-freight-flag="used" type="checkbox">
+              <span>Used</span>
+            </label>
+            <label class="checkbox-wrap">
+              <input data-freight-flag="machinery" type="checkbox">
+              <span>Machinery</span>
+            </label>
+          </div>
+        </div>
+        <div class="freight-help-row">
+          <div class="freight-suggestion">
+            <span class="helper-text" data-freight-suggestion>Suggested freight class: enter quantity, weight, and dimensions to calculate one.</span>
+            <button class="secondary-action freight-suggestion-button" type="button" data-apply-freight-suggestion disabled>Use suggestion</button>
+          </div>
+        </div>
+      </section>
+    </template>
     <script src="/app.js"></script>
   </body>
 </html>

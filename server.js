@@ -36,6 +36,12 @@ const priority1BaseUrl = process.env.PRIORITY1_API_BASE_URL || "";
 const priority1ApiKey = process.env.PRIORITY1_API_KEY || "";
 const priority1QuotePath = process.env.PRIORITY1_API_QUOTE_PATH || "";
 const priority1SuggestedClassPath = process.env.PRIORITY1_API_SUGGESTED_CLASS_PATH || "/v2/ltl/quotes/suggestedclass";
+const fedexFreightBaseUrl = process.env.FEDEX_FREIGHT_BASE_URL || "https://apis-sandbox.fedex.com";
+const fedexFreightAuthUrl = process.env.FEDEX_FREIGHT_AUTH_URL || `${fedexFreightBaseUrl.replace(/\/$/, "")}/oauth/token`;
+const fedexFreightClientId = process.env.FEDEX_FREIGHT_CLIENT_ID || "";
+const fedexFreightClientSecret = process.env.FEDEX_FREIGHT_CLIENT_SECRET || "";
+const fedexFreightAccountNumber = process.env.FEDEX_FREIGHT_ACCOUNT_NUMBER || "";
+let fedexFreightTokenCache = null;
 const zipLookupCache = new Map();
 
 const contentTypes = {
@@ -86,6 +92,7 @@ async function handleApi(req, res, url) {
       mothershipConfigured: Boolean(process.env.MOTHERSHIP_API_TOKEN),
       speedshipConfigured: Boolean(speedshipDirectToken || (speedshipClientId && speedshipClientSecret)),
       priority1Configured: isPriority1Configured(),
+      fedexFreightConfigured: isFedexFreightConfigured(),
       mothershipBaseUrl
     });
     return;
@@ -297,14 +304,23 @@ async function createQuote(req, res, currentUser) {
   const mothershipRequest = buildMothershipQuoteRequest(input);
   const speedshipRequests = buildSpeedshipLtlQuoteRequests(input);
   const priority1Request = buildPriority1QuoteRequest(input);
-  const carrierRuns = await Promise.all(
-    allowedCarrierModes.map((mode) =>
-      requestCarrierQuoteForMode(mode, mothershipRequest, speedshipRequests, priority1Request)
-    )
-  );
+    const carrierRuns = await Promise.all(
+      allowedCarrierModes.map((mode) =>
+        requestCarrierQuoteForMode(mode, mothershipRequest, speedshipRequests, priority1Request)
+      )
+    );
+    const carrierAudit = carrierRuns.map((run) => ({
+      mode: run.mode,
+      carrier: run.carrier,
+      carrierQuoteId: run.carrierQuoteId,
+      carrierMessage: run.carrierMessage,
+      rateCount: Array.isArray(run.rates) ? run.rates.length : 0,
+      request: run.carrierRequest,
+      response: run.rawCarrierResponse
+    }));
 
-  const carrierQuoteId = carrierRuns.map((run) => run.carrierQuoteId).filter(Boolean).join(" | ") || createId("carrierQuote");
-  const carrierMessage = carrierRuns.map((run) => run.carrierMessage).filter(Boolean).join(" ").trim();
+    const carrierQuoteId = carrierRuns.map((run) => run.carrierQuoteId).filter(Boolean).join(" | ") || createId("carrierQuote");
+    const carrierMessage = carrierRuns.map((run) => run.carrierMessage).filter(Boolean).join(" ").trim();
   const normalizedRates = carrierRuns
     .flatMap((run) =>
       (Array.isArray(run.rates) ? run.rates : []).map((rate) => ({
@@ -336,13 +352,14 @@ async function createQuote(req, res, currentUser) {
       delivery: mothershipRequest.delivery,
       freight: mothershipRequest.freight,
       pickupReadyDate: mothershipRequest.pickupReadyDate,
-      tariffRule,
-      rates: [],
-      status: "carrier_connected_no_rates",
-      carrierMessage: carrierNotice,
-      rawCarrierResponse: carrierRuns,
-      createdAt: new Date().toISOString()
-    };
+        tariffRule,
+        rates: [],
+        status: "carrier_connected_no_rates",
+        carrierMessage: carrierNotice,
+        carrierAudit,
+        rawCarrierResponse: carrierRuns,
+        createdAt: new Date().toISOString()
+      };
 
     await store.createQuote(quote);
     sendJson(res, 201, { quote });
@@ -362,13 +379,14 @@ async function createQuote(req, res, currentUser) {
     delivery: mothershipRequest.delivery,
     freight: mothershipRequest.freight,
     pickupReadyDate: mothershipRequest.pickupReadyDate,
-    tariffRule,
-    rates: normalizedRates,
-    status: "quoted",
-    carrierMessage: carrierNotice,
-    rawCarrierResponse: carrierRuns,
-    createdAt: new Date().toISOString()
-  };
+      tariffRule,
+      rates: normalizedRates,
+      status: "quoted",
+      carrierMessage: carrierNotice,
+      carrierAudit,
+      rawCarrierResponse: carrierRuns,
+      createdAt: new Date().toISOString()
+    };
 
   await store.createQuote(quote);
   sendJson(res, 201, { quote });
@@ -436,7 +454,16 @@ async function createShipment(req, res, currentUser) {
     customerId: quote.customerId,
     customerName: quote.customerName,
     quoteId: quote.id,
-    carrier: rate.carrierSource === "speedshipLtl" ? "speedship" : rate.carrierSource === "mothershipSandbox" ? "mothership" : quote.carrier || "demo",
+    carrier:
+      rate.carrierSource === "speedshipLtl"
+        ? "speedship"
+        : rate.carrierSource === "mothershipSandbox"
+          ? "mothership"
+          : rate.carrierSource === "priority1Ltl"
+            ? "priority1"
+            : rate.carrierSource === "fedexFreight"
+              ? "fedexFreight"
+              : quote.carrier || "demo",
     carrierShipmentId: getCarrierShipmentId(carrierShipment) || createId("demoShipment"),
     confirmationNumber: getCarrierShipmentId(carrierShipment) || `LOCAL-${Date.now()}`,
     referenceNumber: quote.referenceNumber,
@@ -591,6 +618,16 @@ async function getShipmentDocuments(res, shipmentId, currentUser) {
 }
 
 function buildMothershipQuoteRequest(input) {
+  const freight = normalizeFreight(input.freight).map((item) => ({
+    quantity: item.quantity,
+    type: item.type,
+    weight: item.weight,
+    length: item.length,
+    width: item.width,
+    height: item.height,
+    description: item.description
+  }));
+
   return {
     pickup: normalizeStop(input.pickup, "pickup"),
     delivery: normalizeStop(input.delivery, "delivery"),
@@ -598,7 +635,7 @@ function buildMothershipQuoteRequest(input) {
       date: requiredString(input.pickupReadyDate?.date, "pickupReadyDate.date"),
       time: requiredString(input.pickupReadyDate?.time, "pickupReadyDate.time")
     },
-    freight: normalizeFreight(input.freight),
+    freight,
     rateResponseTimeoutMs: 25000,
     applyAvailableCredits: true
   };
@@ -623,6 +660,8 @@ function buildSpeedshipShopFlowRequest(input, freight) {
   const handlingUnitList = freight.map((item) => {
     const itemWeight = toPositiveNumber(item.weight, "freight.weight");
     const itemQuantity = toPositiveNumber(item.quantity, "freight.quantity");
+    const itemPieces = normalizePieceCount(item.pieces);
+    const freightClass = String(item.freightClass || item.commodityClass || "50");
     return {
       billedDimension: {
         length: {
@@ -642,7 +681,7 @@ function buildSpeedshipShopFlowRequest(input, freight) {
       description: item.description,
       isCOD: false,
       isMixedClass: false,
-      isStackable: false,
+      isStackable: Boolean(item.stackable),
       marksAndNumbers: null,
       packagingType: "PLT",
       quantity: itemQuantity,
@@ -655,7 +694,7 @@ function buildSpeedshipShopFlowRequest(input, freight) {
       ],
       shippedItemList: [
         {
-          commodityClass: String(item.freightClass || item.commodityClass || "50"),
+          commodityClass: freightClass,
           commodityDescription: item.description,
           commodityType: null,
           dimensions: {
@@ -674,12 +713,12 @@ function buildSpeedshipShopFlowRequest(input, freight) {
             dimensionType: "NET"
           },
           hazMatItemInfo: null,
-          isHazMat: Boolean(pickupAccessorials.has("hazmat") || deliveryAccessorials.has("hazmat")),
+          isHazMat: Boolean(item.hazmat || pickupAccessorials.has("hazmat") || deliveryAccessorials.has("hazmat")),
           name: item.description,
-          NMFCDescription: null,
-          NMFCNbr: null,
+          NMFCDescription: item.nmfc || null,
+          NMFCNbr: item.nmfc || null,
           packagingType: "PLT",
-          quantity: itemQuantity,
+          quantity: itemPieces,
           weight: {
             value: String(itemWeight),
             unit: "LB"
@@ -701,7 +740,7 @@ function buildSpeedshipShopFlowRequest(input, freight) {
     correlationId: createId("speedshipQuote"),
     request: {
       productType: "LTL",
-      shipment: {
+        shipment: {
         shipmentDate,
         originAddress: buildSpeedshipAddressStop(pickup, "SENDER"),
         destinationAddress: buildSpeedshipAddressStop(delivery, "RECEIVER"),
@@ -874,12 +913,27 @@ function normalizeFreight(freight) {
   return freight.map((item, index) => ({
     quantity: toPositiveNumber(item.quantity, `freight.${index}.quantity`),
     type: requiredString(item.type, `freight.${index}.type`),
+    pieces: normalizePieceCount(item.pieces),
     weight: toPositiveNumber(item.weight, `freight.${index}.weight`),
     length: toPositiveNumber(item.length, `freight.${index}.length`),
     width: toPositiveNumber(item.width, `freight.${index}.width`),
     height: toPositiveNumber(item.height, `freight.${index}.height`),
+    freightClass: String(item.freightClass || item.commodityClass || "").trim(),
+    nmfc: String(item.nmfc || item.nmfcCode || "").trim(),
+    stackable: Boolean(item.stackable),
+    hazmat: Boolean(item.hazmat),
+    used: Boolean(item.used),
+    machinery: Boolean(item.machinery),
     description: requiredString(item.description, `freight.${index}.description`)
   }));
+}
+
+function normalizePieceCount(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 1;
+  }
+  return parsed;
 }
 
 function totalFreightWeight(freight) {
@@ -1362,7 +1416,7 @@ function getSpeedshipProductTransactionId(shipment, quote) {
 }
 
 function normalizeCarrierMode(value) {
-  if (value === "mothershipSandbox" || value === "speedshipLtl" || value === "priority1Ltl") {
+  if (value === "mothershipSandbox" || value === "speedshipLtl" || value === "priority1Ltl" || value === "fedexFreight") {
     return value;
   }
   return "demo";
@@ -1378,7 +1432,7 @@ function normalizeAllowedCarrierModes(values, fallback = ["mothershipSandbox"]) 
 
   for (const entry of list) {
     const mode = normalizeCarrierMode(entry);
-    if ((mode === "mothershipSandbox" || mode === "speedshipLtl" || mode === "priority1Ltl" || mode === "demo") && !normalized.includes(mode)) {
+    if ((mode === "mothershipSandbox" || mode === "speedshipLtl" || mode === "priority1Ltl" || mode === "fedexFreight" || mode === "demo") && !normalized.includes(mode)) {
       normalized.push(mode);
     }
   }
@@ -1394,6 +1448,8 @@ function carrierModeDisplayName(mode) {
       return "SpeedShip LTL";
     case "priority1Ltl":
       return "Priority1 LTL";
+    case "fedexFreight":
+      return "FedEx Freight";
     case "demo":
     default:
       return "Demo rates";
@@ -1412,6 +1468,7 @@ async function requestCarrierQuoteForMode(mode, mothershipRequest, speedshipRequ
           carrierQuoteId: createId("mothershipQuote"),
           rates: [],
           carrierMessage: "Add MOTHERSHIP_API_TOKEN to .env.local before using Mothership sandbox.",
+          carrierRequest: mothershipRequest,
           rawCarrierResponse: {}
         };
       }
@@ -1424,6 +1481,7 @@ async function requestCarrierQuoteForMode(mode, mothershipRequest, speedshipRequ
         carrierQuoteId: getCarrierQuoteId(carrierQuote),
         rates,
         carrierMessage: rates.length === 0 ? "Mothership sandbox returned no rates for this lane." : "",
+        carrierRequest: mothershipRequest,
         rawCarrierResponse: carrierQuote
       };
     }
@@ -1436,6 +1494,7 @@ async function requestCarrierQuoteForMode(mode, mothershipRequest, speedshipRequ
           carrierQuoteId: createId("speedshipQuote"),
           rates: [],
           carrierMessage: "Add SpeedShip sandbox credentials to .env.local before using SpeedShip LTL.",
+          carrierRequest: speedshipRequests,
           rawCarrierResponse: {}
         };
       }
@@ -1448,6 +1507,7 @@ async function requestCarrierQuoteForMode(mode, mothershipRequest, speedshipRequ
         carrierQuoteId: getCarrierQuoteId(carrierQuote),
         rates,
         carrierMessage: rates.length === 0 ? "SpeedShip sandbox connection succeeded, but this lane returned no matching rates." : "",
+        carrierRequest: speedshipRequests,
         rawCarrierResponse: carrierQuote
       };
     }
@@ -1460,6 +1520,7 @@ async function requestCarrierQuoteForMode(mode, mothershipRequest, speedshipRequ
           carrierQuoteId: createId("priority1Quote"),
           rates: [],
           carrierMessage: "Add PRIORITY1_API_BASE_URL and PRIORITY1_API_KEY to .env.local before using Priority1 LTL.",
+          carrierRequest: priority1Request,
           rawCarrierResponse: {}
         };
       }
@@ -1472,6 +1533,34 @@ async function requestCarrierQuoteForMode(mode, mothershipRequest, speedshipRequ
         carrierQuoteId: getPriority1QuoteId(carrierQuote),
         rates,
         carrierMessage: rates.length === 0 ? "Priority1 returned no rates for this lane." : "",
+        carrierRequest: priority1Request,
+        rawCarrierResponse: carrierQuote
+      };
+    }
+
+    if (normalizedMode === "fedexFreight") {
+      if (!isFedexFreightConfigured()) {
+        return {
+          mode: normalizedMode,
+          carrier: "fedexFreight",
+          carrierQuoteId: createId("fedexFreightQuote"),
+          rates: [],
+          carrierMessage: "Add FedEx Freight credentials to .env.local before using FedEx Freight.",
+          carrierRequest: buildFedexFreightQuoteRequest(mothershipRequest),
+          rawCarrierResponse: {}
+        };
+      }
+
+      const fedexRequest = buildFedexFreightQuoteRequest(mothershipRequest);
+      const carrierQuote = await requestFedexFreightQuote(fedexRequest);
+      const rates = normalizeFedexFreightRates(carrierQuote);
+      return {
+        mode: normalizedMode,
+        carrier: "fedexFreight",
+        carrierQuoteId: getFedexFreightQuoteId(carrierQuote),
+        rates,
+        carrierMessage: rates.length === 0 ? "FedEx Freight returned no rates for this lane." : "",
+        carrierRequest: fedexRequest,
         rawCarrierResponse: carrierQuote
       };
     }
@@ -1484,6 +1573,7 @@ async function requestCarrierQuoteForMode(mode, mothershipRequest, speedshipRequ
       carrierQuoteId: getCarrierQuoteId(carrierQuote),
       rates,
       carrierMessage: "",
+      carrierRequest: mothershipRequest,
       rawCarrierResponse: carrierQuote
     };
   } catch (error) {
@@ -1496,10 +1586,20 @@ async function requestCarrierQuoteForMode(mode, mothershipRequest, speedshipRequ
             ? "mothership"
             : normalizedMode === "priority1Ltl"
               ? "priority1"
+              : normalizedMode === "fedexFreight"
+                ? "fedexFreight"
               : "demo",
       carrierQuoteId: createId(`${normalizedMode}Quote`),
       rates: [],
       carrierMessage: error?.message || "Carrier request failed.",
+      carrierRequest:
+        normalizedMode === "speedshipLtl"
+          ? speedshipRequests
+          : normalizedMode === "priority1Ltl"
+            ? priority1Request
+            : normalizedMode === "fedexFreight"
+              ? buildFedexFreightQuoteRequest(mothershipRequest)
+              : mothershipRequest,
       rawCarrierResponse: {
         error: error?.code || "CARRIER_REQUEST_FAILED",
         message: error?.message || "Carrier request failed."
@@ -1514,6 +1614,10 @@ function isSpeedshipConfigured() {
 
 function isPriority1Configured() {
   return Boolean(priority1BaseUrl && priority1ApiKey);
+}
+
+function isFedexFreightConfigured() {
+  return Boolean(fedexFreightClientId && fedexFreightClientSecret && fedexFreightAccountNumber);
 }
 
 async function suggestFreightClass(req, res, currentUser) {
@@ -1620,24 +1724,407 @@ function buildPriority1QuoteRequest(input) {
     pickupDate,
     items: freight.map((item, index) => ({
       freightClass: String(item.freightClass || item.commodityClass || "50"),
-      packagingType: String(item.freightType || item.packagingType || "Pallet"),
+      packagingType: String(item.type || item.packagingType || "Pallet"),
       units: toPositiveNumber(item.quantity, `freight.${index}.quantity`),
-      pieces: toPositiveNumber(item.pieces || item.quantity, `freight.${index}.pieces`),
+      pieces: normalizePieceCount(item.pieces),
       totalWeight: toPositiveNumber(item.weight, `freight.${index}.weight`) * toPositiveNumber(item.quantity, `freight.${index}.quantity`),
       length: toPositiveNumber(item.length, `freight.${index}.length`),
       width: toPositiveNumber(item.width, `freight.${index}.width`),
       height: toPositiveNumber(item.height, `freight.${index}.height`),
-      isStackable: false,
-      isHazardous: Boolean(pickup.accessorials.includes("hazmat") || delivery.accessorials.includes("hazmat")),
-      isUsed: false,
-      isMachinery: false,
-      nmfcItemCode: null,
+      isStackable: Boolean(item.stackable),
+      isHazardous: Boolean(item.hazmat || pickup.accessorials.includes("hazmat") || delivery.accessorials.includes("hazmat")),
+      isUsed: Boolean(item.used),
+      isMachinery: Boolean(item.machinery),
+      nmfcItemCode: item.nmfc || null,
       nmfcSubCode: null,
       description: String(item.description || "").trim() || null
     })),
     accessorialServices: accessorialServices.length > 0 ? accessorialServices : null,
     apiConfiguration: null
   };
+}
+
+function buildFedexFreightQuoteRequest(input) {
+  const freight = normalizeFreight(input.freight);
+  const pickup = normalizeStop(input.pickup, "pickup");
+  const delivery = normalizeStop(input.delivery, "delivery");
+  const totalHandlingUnits = freight.reduce(
+    (sum, item, index) => sum + toPositiveNumber(item.quantity, `freight.${index}.quantity`),
+    0
+  );
+  const shipDateStamp = requiredString(input.pickupReadyDate?.date, "pickupReadyDate.date");
+
+  return {
+    accountNumber: {
+      value: requiredString(fedexFreightAccountNumber, "FEDEX_FREIGHT_ACCOUNT_NUMBER")
+    },
+    rateRequestControlParameters: {
+      returnTransitTimes: true,
+      servicesNeededOnRateFailure: true,
+      rateSortOrder: "COMMITASCENDING"
+    },
+    freightRequestedShipment: {
+      shipper: {
+        address: buildFedexFreightAddress(pickup)
+      },
+      recipient: {
+        address: buildFedexFreightAddress(delivery)
+      },
+      preferredCurrency: "USD",
+      rateRequestType: ["ACCOUNT"],
+      shipDateStamp,
+      requestedPackageLineItems: freight.map((item, index) => {
+        const quantity = toPositiveNumber(item.quantity, `freight.${index}.quantity`);
+        const lineWeight = toPositiveNumber(item.weight, `freight.${index}.weight`) * quantity;
+        return {
+          subPackagingType: normalizeFedexFreightPackagingType(item.type || item.freightType || "Pallet"),
+          groupPackageCount: quantity,
+          weight: {
+            units: "LB",
+            value: lineWeight
+          },
+          dimensions: {
+            length: Math.round(toPositiveNumber(item.length, `freight.${index}.length`)),
+            width: Math.round(toPositiveNumber(item.width, `freight.${index}.width`)),
+            height: Math.round(toPositiveNumber(item.height, `freight.${index}.height`)),
+            units: "IN"
+          },
+          associatedFreightLineItems: [
+            {
+              id: `line-${index + 1}`
+            }
+          ]
+        };
+      }),
+      totalPackageCount: totalHandlingUnits,
+      freightShipmentDetail: {
+        role: "SHIPPER",
+        accountNumber: {
+          value: requiredString(fedexFreightAccountNumber, "FEDEX_FREIGHT_ACCOUNT_NUMBER")
+        },
+        fedExFreightBillingContactAndAddress: buildFedexFreightBillingContactAndAddress(pickup),
+        lineItem: freight.map((item, index) => {
+          const quantity = toPositiveNumber(item.quantity, `freight.${index}.quantity`);
+          const lineWeight = toPositiveNumber(item.weight, `freight.${index}.weight`) * quantity;
+          const totalPieces = quantity * normalizePieceCount(item.pieces);
+          return {
+            id: `line-${index + 1}`,
+            description: requiredString(item.description, `freight.${index}.description`),
+            freightClass: normalizeFedexFreightClass(item.freightClass || item.class || "50"),
+            handlingUnits: quantity,
+            pieces: totalPieces,
+            subPackagingType: normalizeFedexFreightPackagingType(item.type || item.freightType || "Pallet"),
+            weight: {
+              units: "LB",
+              value: lineWeight
+            },
+            dimensions: {
+              length: Math.round(toPositiveNumber(item.length, `freight.${index}.length`)),
+              width: Math.round(toPositiveNumber(item.width, `freight.${index}.width`)),
+              height: Math.round(toPositiveNumber(item.height, `freight.${index}.height`)),
+              units: "IN"
+            },
+            purchaseOrderNumber: requiredString(input.referenceNumber, "referenceNumber"),
+            nmfcCode: item.nmfc || undefined
+          };
+        }),
+        totalHandlingUnits
+      }
+    }
+  };
+}
+
+function buildFedexFreightAddress(stop) {
+  return {
+    streetLines: [stop.address.street].filter(Boolean),
+    city: stop.address.city,
+    stateOrProvinceCode: stop.address.state,
+    postalCode: stop.address.zip,
+    countryCode: "US",
+    residential: false
+  };
+}
+
+function buildFedexFreightBillingContactAndAddress(stop) {
+  const phoneNumber = normalizePhoneNumber(stop.phoneNumber || "");
+  const contact = {
+    personName: stop.name,
+    emailAddress: Array.isArray(stop.emails) ? stop.emails.find(Boolean) || "" : "",
+    phoneNumber,
+    companyName: stop.name
+  };
+
+  if (!contact.emailAddress) {
+    delete contact.emailAddress;
+  }
+  if (!contact.phoneNumber) {
+    delete contact.phoneNumber;
+  }
+
+  return {
+    contact,
+    address: {
+      streetLines: [stop.address.street].filter(Boolean),
+      city: stop.address.city,
+      stateOrProvinceCode: stop.address.state,
+      postalCode: stop.address.zip,
+      countryCode: "US",
+      residential: false
+    }
+  };
+}
+
+function normalizeFedexFreightPackagingType(value) {
+  const text = String(value || "").trim().toLowerCase();
+  const map = {
+    pallet: "PALLET",
+    skid: "SKID",
+    carton: "CARTON",
+    box: "BOX",
+    crate: "CRATE",
+    bundle: "BUNDLE",
+    drum: "DRUM",
+    bag: "BAG",
+    package: "PACKAGE",
+    pieces: "PIECES",
+    unit: "UNIT",
+    other: "OTHER"
+  };
+
+  if (map[text]) {
+    return map[text];
+  }
+
+  return "PALLET";
+}
+
+function normalizeFedexFreightClass(value) {
+  const text = String(value || "").trim().toLowerCase().replace(/class[_\s-]*/g, "").replace(/\./g, "_");
+  const map = {
+    "50": "CLASS_050",
+    "050": "CLASS_050",
+    "55": "CLASS_055",
+    "055": "CLASS_055",
+    "60": "CLASS_060",
+    "060": "CLASS_060",
+    "65": "CLASS_065",
+    "065": "CLASS_065",
+    "70": "CLASS_070",
+    "070": "CLASS_070",
+    "77.5": "CLASS_077_5",
+    "77_5": "CLASS_077_5",
+    "077_5": "CLASS_077_5",
+    "85": "CLASS_085",
+    "085": "CLASS_085",
+    "92.5": "CLASS_092_5",
+    "92_5": "CLASS_092_5",
+    "092_5": "CLASS_092_5",
+    "100": "CLASS_100",
+    "110": "CLASS_110",
+    "125": "CLASS_125",
+    "150": "CLASS_150",
+    "175": "CLASS_175",
+    "200": "CLASS_200",
+    "250": "CLASS_250",
+    "300": "CLASS_300",
+    "400": "CLASS_400",
+    "500": "CLASS_500"
+  };
+
+  return map[text] || "CLASS_050";
+}
+
+async function requestFedexFreightQuote(payload) {
+  const token = await getFedexFreightAccessToken();
+  return requestFedexFreight("/rate/v1/freight/rates/quotes", {
+    method: "POST",
+    token,
+    body: payload
+  });
+}
+
+async function requestFedexFreight(route, options) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 35000);
+
+  try {
+    const response = await fetch(`${fedexFreightBaseUrl.replace(/\/$/, "")}${route}`, {
+      method: options.method,
+      headers: {
+        Authorization: `Bearer ${options.token}`,
+        "X-locale": "en_US",
+        "Content-Type": "application/json",
+        Accept: "application/json"
+      },
+      body: options.body ? JSON.stringify(options.body) : undefined,
+      signal: controller.signal
+    });
+
+    const text = await response.text();
+    let payload = {};
+    try {
+      payload = text ? JSON.parse(text) : {};
+    } catch {
+      payload = {};
+    }
+
+    if (!response.ok) {
+      const errors = Array.isArray(payload?.errors) ? payload.errors : [];
+      const firstError = errors[0] || {};
+      throw new PublicError(
+        response.status,
+        firstError.code || payload.error || "FEDEX_FREIGHT_ERROR",
+        firstError.message || payload.message || "FedEx Freight request failed."
+      );
+    }
+
+    return payload;
+  } catch (error) {
+    if (error instanceof PublicError) {
+      throw error;
+    }
+    throw new PublicError(502, "FEDEX_FREIGHT_UNAVAILABLE", "Could not reach FedEx Freight.");
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function getFedexFreightAccessToken() {
+  if (fedexFreightTokenCache && fedexFreightTokenCache.expiresAt - Date.now() > 60_000) {
+    return fedexFreightTokenCache.token;
+  }
+
+  if (!isFedexFreightConfigured()) {
+    throw new PublicError(
+      400,
+      "FEDEX_FREIGHT_CONFIG_MISSING",
+      "Add FEDEX_FREIGHT_CLIENT_ID, FEDEX_FREIGHT_CLIENT_SECRET, and FEDEX_FREIGHT_ACCOUNT_NUMBER to .env.local before using FedEx Freight."
+    );
+  }
+
+  const body = new URLSearchParams({
+    grant_type: "client_credentials",
+    client_id: fedexFreightClientId,
+    client_secret: fedexFreightClientSecret
+  });
+
+  const response = await fetch(fedexFreightAuthUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json"
+    },
+    body
+  });
+
+  const text = await response.text();
+  let payload = {};
+  try {
+    payload = text ? JSON.parse(text) : {};
+  } catch {
+    payload = {};
+  }
+
+  if (!response.ok) {
+    throw new PublicError(
+      response.status,
+      payload.error || "FEDEX_FREIGHT_AUTH_ERROR",
+      payload.error_description || payload.message || "FedEx Freight auth failed."
+    );
+  }
+
+  const token = String(payload.access_token || "");
+  const expiresIn = Number(payload.expires_in || 3600);
+  if (!token) {
+    throw new PublicError(502, "FEDEX_FREIGHT_AUTH_ERROR", "FedEx Freight auth did not return an access token.");
+  }
+
+  fedexFreightTokenCache = {
+    token,
+    expiresAt: Date.now() + expiresIn * 1000
+  };
+
+  return token;
+}
+
+function normalizeFedexFreightRates(payload) {
+  const data = payload?.output || payload?.data || payload || {};
+  const rates = Array.isArray(data.rateReplyDetails)
+    ? data.rateReplyDetails
+    : Array.isArray(payload?.rateReplyDetails)
+      ? payload.rateReplyDetails
+      : [];
+
+  if (!Array.isArray(rates) || rates.length === 0) {
+    return [];
+  }
+
+  return rates.map((rate, index) => {
+    const shipmentDetail = Array.isArray(rate.ratedShipmentDetails) ? rate.ratedShipmentDetails[0] || {} : rate.ratedShipmentDetails || {};
+    const operationalDetail = rate.operationalDetail || {};
+    const commit = rate.commit || {};
+    const transitDays = normalizeFedexTransitDays(commit.transitDays, operationalDetail.transitTime);
+    const estimatedDeliveryDate = operationalDetail.deliveryDate || operationalDetail.commitDate || commit.dateDetail?.dayFormat || null;
+    const carrierCost = toMoney(
+      shipmentDetail.totalNetFedExCharge ??
+        shipmentDetail.totalNetCharge ??
+        shipmentDetail.totalBaseCharge ??
+        shipmentDetail.shipmentRateDetail?.totalNetCharge ??
+        shipmentDetail.shipmentRateDetail?.totalBaseCharge ??
+        0
+    );
+
+    return {
+      id: String(shipmentDetail.quoteNumber || rate.serviceType || `fedex_${index + 1}`),
+      carrierRateId: String(shipmentDetail.quoteNumber || rate.serviceType || `fedex_${index + 1}`),
+      provider: "fedexFreight",
+      providerScac: rate.serviceType || null,
+      carrierName: "FedEx Freight",
+      service: String(rate.serviceName || rate.serviceType || "FedEx Freight"),
+      carrierCost,
+      estimatedPickupDate: null,
+      estimatedDeliveryDate,
+      transitDays,
+      warnings: Array.isArray(data.alerts)
+        ? data.alerts.map((alert) => alert?.message).filter(Boolean)
+        : []
+    };
+  });
+}
+
+function normalizeFedexTransitDays(transitDays, transitTime) {
+  const description = String(transitDays?.description || "").trim();
+  if (description) {
+    const digits = Number(description.match(/\d+/)?.[0]);
+    if (Number.isFinite(digits)) {
+      return { minimum: digits, maximum: digits };
+    }
+    return description;
+  }
+
+  const code = String(transitDays?.minimumTransitTime || transitTime || "").trim().toUpperCase();
+  const mapped = {
+    ONE_DAY: 1,
+    TWO_DAYS: 2,
+    THREE_DAYS: 3,
+    FOUR_DAYS: 4,
+    FIVE_DAYS: 5,
+    SIX_DAYS: 6,
+    SEVEN_DAYS: 7
+  };
+  if (Object.prototype.hasOwnProperty.call(mapped, code)) {
+    const value = mapped[code];
+    return { minimum: value, maximum: value };
+  }
+
+  return code || "";
+}
+
+function getFedexFreightQuoteId(payload) {
+  const data = payload?.output || payload?.data || payload || {};
+  const firstRate = Array.isArray(data.rateReplyDetails) ? data.rateReplyDetails[0] : payload?.rateReplyDetails?.[0];
+  const shipmentDetail = Array.isArray(firstRate?.ratedShipmentDetails) ? firstRate.ratedShipmentDetails[0] || {} : firstRate?.ratedShipmentDetails || {};
+  return String(data.customerTransactionId || shipmentDetail.quoteNumber || createId("fedexFreightQuote"));
 }
 
 function buildPriority1AccessorialServices(pickupAccessorials, deliveryAccessorials) {

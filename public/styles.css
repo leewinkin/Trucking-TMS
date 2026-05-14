@@ -380,14 +380,66 @@ button.metric {
   grid-column: span 2;
 }
 
-.freight-grid {
+.freight-rows {
   display: grid;
-  gap: 10px;
-  padding: 14px 16px 16px;
+  gap: 14px;
+  padding: 14px 16px 8px;
+}
+
+.freight-row {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fbfcfe;
+}
+
+.freight-row-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.freight-row-title {
+  display: grid;
+  gap: 2px;
+}
+
+.freight-row-remove {
+  min-width: 88px;
 }
 
 .freight-note {
   margin: 0;
+}
+
+.freight-primary-grid,
+.freight-secondary-grid,
+.freight-tertiary-grid {
+  padding: 0;
+}
+
+.freight-primary-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.freight-secondary-grid {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.35fr);
+}
+
+.freight-tertiary-grid {
+  grid-template-columns: minmax(180px, 0.9fr) minmax(180px, 0.9fr) minmax(0, 1.6fr);
+}
+
+.freight-flags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  min-height: 38px;
+  padding-top: 22px;
 }
 
 .freight-help-row {
@@ -415,22 +467,10 @@ button.metric {
   cursor: not-allowed;
 }
 
-.freight-primary-grid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  padding: 0;
-}
-
-.freight-secondary-grid {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.35fr);
-  padding: 0;
-}
-
-.freight-secondary-grid label:last-child {
-  grid-column: span 1;
-}
-
-.freight-secondary-grid input[name="description"] {
-  min-width: 0;
+.freight-actions-row {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 16px 4px;
 }
 
 .panel {
@@ -833,6 +873,86 @@ select:focus {
   font-size: 15px;
 }
 
+.audit-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.audit-entry {
+  border: 1px solid #d9e2ec;
+  border-radius: var(--radius);
+  background: #f8fbff;
+  overflow: hidden;
+}
+
+.audit-entry summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  cursor: pointer;
+  font-weight: 700;
+  color: #102a43;
+}
+
+.audit-entry summary::-webkit-details-marker {
+  display: none;
+}
+
+.audit-summary-meta {
+  color: #486581;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.audit-entry-body {
+  padding: 0 14px 14px;
+  display: grid;
+  gap: 12px;
+}
+
+.audit-message {
+  margin: 0;
+  color: #334e68;
+  font-size: 13px;
+}
+
+.audit-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.audit-block {
+  display: grid;
+  gap: 8px;
+}
+
+.audit-block strong {
+  font-size: 13px;
+}
+
+.audit-json {
+  margin: 0;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid #d9e2ec;
+  background: #ffffff;
+  color: #102a43;
+  font-size: 12px;
+  line-height: 1.45;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 260px;
+}
+
+.audit-empty {
+  padding: 10px 0;
+}
+
 .tracking-summary {
   display: grid;
   gap: 8px;
@@ -1101,8 +1221,17 @@ select:focus {
   }
 
   .freight-primary-grid,
-  .freight-secondary-grid {
+  .freight-secondary-grid,
+  .freight-tertiary-grid {
     grid-template-columns: 1fr;
+  }
+
+  .freight-row-header {
+    flex-direction: column;
+  }
+
+  .freight-flags {
+    padding-top: 0;
   }
 
   .location-address-grid label:first-child,

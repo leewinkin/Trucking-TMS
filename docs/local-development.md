@@ -95,6 +95,27 @@ SPEEDSHIP_API_KEY=your_speedship_api_key
 
 Leave `SPEEDSHIP_API_TOKEN` unset unless WWEX explicitly gives you a direct bearer token. The app already supports the production OAuth flow and will start using the live endpoint after the env file is updated and the server restarts.
 
+## FedEx Freight
+
+FedEx Freight LTL uses backend-only OAuth credentials plus a freight account number. Add these values to `.env.local`:
+
+```text
+FEDEX_FREIGHT_BASE_URL=https://apis-sandbox.fedex.com
+FEDEX_FREIGHT_AUTH_URL=https://apis-sandbox.fedex.com/oauth/token
+FEDEX_FREIGHT_CLIENT_ID=your_fedex_client_id
+FEDEX_FREIGHT_CLIENT_SECRET=your_fedex_client_secret
+FEDEX_FREIGHT_ACCOUNT_NUMBER=your_fedex_freight_account_number
+```
+
+For production FedEx Freight, switch the base URL and token URL to:
+
+```text
+FEDEX_FREIGHT_BASE_URL=https://apis.fedex.com
+FEDEX_FREIGHT_AUTH_URL=https://apis.fedex.com/oauth/token
+```
+
+FedEx Freight rate replies can include transit days and estimated delivery dates, which the app will display in the rate cards.
+
 ## Current Capabilities
 
 - Email/password login
@@ -108,6 +129,7 @@ Leave `SPEEDSHIP_API_TOKEN` unset unless WWEX explicitly gives you a direct bear
 - Store all business data in PostgreSQL when `DATABASE_URL` is set
 - Optionally call Mothership sandbox quotes when the backend token is configured
 - Optionally call SpeedShip LTL sandbox quotes when SpeedShip credentials are configured
+- Optionally call FedEx Freight quotes when the backend FedEx credentials are configured
 
 ## Current Safety Defaults
 

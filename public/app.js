@@ -24,6 +24,8 @@ const state = {
 
 const zipLookupTimers = new WeakMap();
 const zipLookupTokens = new WeakMap();
+const freightSuggestionTimers = new WeakMap();
+const freightSuggestionTokens = new WeakMap();
 
 const viewMeta = {
   dashboard: () =>
@@ -87,7 +89,19 @@ function wireNavigation() {
 
     const freightSuggestionButton = event.target.closest("[data-apply-freight-suggestion]");
     if (freightSuggestionButton) {
-      applySuggestedFreightClass();
+      applySuggestedFreightClass(freightSuggestionButton.closest("[data-freight-row]"));
+      return;
+    }
+
+    const addFreightRowButton = event.target.closest("[data-add-freight-row]");
+    if (addFreightRowButton) {
+      addFreightRow();
+      return;
+    }
+
+    const removeFreightRowButton = event.target.closest("[data-remove-freight-row]");
+    if (removeFreightRowButton) {
+      removeFreightRow(removeFreightRowButton.closest("[data-freight-row]"));
       return;
     }
 
@@ -149,6 +163,7 @@ function wireForms() {
   decorateRequiredQuoteLabels();
   populateTimeSelects();
   wireAccessorialDropdowns();
+  ensureFreightRows();
 
   document.getElementById("customerForm").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -1138,37 +1153,191 @@ function locationSummary(values, prefix) {
   return [street, cityState].filter(Boolean).join(" · ") || "Enter location details";
 }
 
-function freightSummary(values) {
-  const quantity = Number(values.get("quantity") || 0);
-  const freightType = String(values.get("freightType") || "").trim();
-  const freightClass = String(values.get("freightClass") || "").trim();
-  const weight = Number(values.get("weight") || 0);
-  const length = Number(values.get("length") || 0);
-  const width = Number(values.get("width") || 0);
-  const height = Number(values.get("height") || 0);
-  const totalWeight = quantity && weight ? quantity * weight : 0;
-
-  const pieces = `${quantity || "0"} ${freightType.toLowerCase() || "piece"}${quantity === 1 ? "" : "s"}`;
-  const classText = freightClass ? `Class ${freightClass}` : "Set class";
-  const weightText = weight ? `${weight} lbs each${totalWeight ? ` (${totalWeight} lbs total)` : ""}` : "Set weight";
-  const sizeText = length && width && height ? `${length} x ${width} x ${height} in` : "Set dimensions";
-  return `${pieces} · ${classText} · ${weightText} · ${sizeText}`;
+function freightRows() {
+  return Array.from(document.querySelectorAll("[data-freight-row]"));
 }
 
-function updateFreightClassSuggestion() {
-  const form = document.getElementById("quoteForm");
-  const suggestion = document.getElementById("freightClassSuggestion");
-  const button = document.querySelector("[data-apply-freight-suggestion]");
-  if (!form || !suggestion) {
+function freightRowField(row, field) {
+  return row?.querySelector(`[data-freight-field='${field}']`) || null;
+}
+
+function freightRowFlag(row, flag) {
+  return row?.querySelector(`[data-freight-flag='${flag}']`) || null;
+}
+
+function renumberFreightRows() {
+  freightRows().forEach((row, index) => {
+    const title = row.querySelector("[data-freight-row-title]");
+    if (title) {
+      title.textContent = `Item ${index + 1}`;
+    }
+    const removeButton = row.querySelector("[data-remove-freight-row]");
+    if (removeButton) {
+      removeButton.disabled = freightRows().length <= 1;
+    }
+  });
+}
+
+function createFreightRow(values = {}) {
+  const template = document.getElementById("freightRowTemplate");
+  if (!(template instanceof HTMLTemplateElement)) {
+    return null;
+  }
+
+  const fragment = template.content.cloneNode(true);
+  const row = fragment.querySelector("[data-freight-row]");
+  if (!row) {
+    return null;
+  }
+
+  const defaults = {
+    quantity: "",
+    type: "",
+    pieces: "1",
+    weight: "",
+    freightClass: "",
+    nmfc: "",
+    length: "",
+    width: "",
+    height: "",
+    description: "",
+    stackable: false,
+    hazmat: false,
+    used: false,
+    machinery: false
+  };
+  const nextValues = { ...defaults, ...values };
+
+  Object.entries(nextValues).forEach(([key, value]) => {
+    const control = freightRowField(row, key);
+    if (control) {
+      control.value = value ?? "";
+    }
+    const flag = freightRowFlag(row, key);
+    if (flag) {
+      flag.checked = Boolean(value);
+    }
+  });
+
+  return row;
+}
+
+function addFreightRow(values = {}) {
+  const container = document.getElementById("freightRows");
+  if (!container) {
     return;
   }
 
-  if (state.freightSuggestionTimer) {
-    clearTimeout(state.freightSuggestionTimer);
+  const row = createFreightRow(values);
+  if (!row) {
+    return;
   }
 
-  const values = new FormData(form);
-  const suggestionValue = suggestFreightClass(values);
+  container.appendChild(row);
+  renumberFreightRows();
+  updateFreightClassSuggestion(row);
+}
+
+function removeFreightRow(row) {
+  if (!row) {
+    return;
+  }
+
+  const rows = freightRows();
+  if (rows.length <= 1) {
+    return;
+  }
+
+  if (freightSuggestionTimers.has(row)) {
+    clearTimeout(freightSuggestionTimers.get(row));
+    freightSuggestionTimers.delete(row);
+  }
+  freightSuggestionTokens.delete(row);
+  row.remove();
+  renumberFreightRows();
+  updateFreightClassSuggestion();
+}
+
+function ensureFreightRows() {
+  if (freightRows().length > 0) {
+    renumberFreightRows();
+    return;
+  }
+  addFreightRow();
+}
+
+function freightRowData(row) {
+  const quantity = Number(freightRowField(row, "quantity")?.value || 0);
+  const weight = Number(freightRowField(row, "weight")?.value || 0);
+  const pieces = Number(freightRowField(row, "pieces")?.value || 0);
+  const length = Number(freightRowField(row, "length")?.value || 0);
+  const width = Number(freightRowField(row, "width")?.value || 0);
+  const height = Number(freightRowField(row, "height")?.value || 0);
+
+  return {
+    quantity,
+    type: String(freightRowField(row, "type")?.value || "").trim(),
+    pieces,
+    weight,
+    freightClass: String(freightRowField(row, "freightClass")?.value || "").trim(),
+    nmfc: String(freightRowField(row, "nmfc")?.value || "").trim(),
+    length,
+    width,
+    height,
+    description: String(freightRowField(row, "description")?.value || "").trim(),
+    stackable: Boolean(freightRowFlag(row, "stackable")?.checked),
+    hazmat: Boolean(freightRowFlag(row, "hazmat")?.checked),
+    used: Boolean(freightRowFlag(row, "used")?.checked),
+    machinery: Boolean(freightRowFlag(row, "machinery")?.checked)
+  };
+}
+
+function freightSummary() {
+  const rows = freightRows();
+  if (rows.length === 0) {
+    return "Add freight details";
+  }
+
+  const parts = rows.map((row) => {
+    const data = freightRowData(row);
+    const totalWeight = data.quantity && data.weight ? data.quantity * data.weight : 0;
+    const quantityText = data.quantity ? `${data.quantity} ${String(data.type || "item").toLowerCase()}${data.quantity === 1 ? "" : "s"}` : "0 items";
+    const classText = data.freightClass ? `Class ${data.freightClass}` : "Set class";
+    const weightText = data.weight ? `${data.weight} lbs each${totalWeight ? ` (${totalWeight} lbs total)` : ""}` : "Set weight";
+    const sizeText = data.length && data.width && data.height ? `${data.length} x ${data.width} x ${data.height} in` : "Set dimensions";
+    return `${quantityText} · ${classText} · ${weightText} · ${sizeText}`;
+  });
+
+  return parts.join(" | ");
+}
+
+function updateFreightClassSuggestion(targetRow = null) {
+  const form = document.getElementById("quoteForm");
+  if (!form) {
+    return;
+  }
+
+  const rows = targetRow ? [targetRow] : freightRows();
+  rows.forEach((row) => updateFreightRowSuggestion(form, row));
+}
+
+function updateFreightRowSuggestion(form, row) {
+  if (!row) {
+    return;
+  }
+
+  const suggestion = row.querySelector("[data-freight-suggestion]");
+  const button = row.querySelector("[data-apply-freight-suggestion]");
+  if (!suggestion) {
+    return;
+  }
+
+  if (freightSuggestionTimers.has(row)) {
+    clearTimeout(freightSuggestionTimers.get(row));
+  }
+
+  const data = freightRowData(row);
+  const suggestionValue = suggestFreightClass(data);
   if (!suggestionValue) {
     suggestion.textContent = "Suggested freight class: enter quantity, weight, and dimensions to calculate one.";
     suggestion.dataset.value = "";
@@ -1177,7 +1346,7 @@ function updateFreightClassSuggestion() {
     if (button) {
       button.disabled = true;
     }
-    state.freightSuggestionRequestToken += 1;
+    freightSuggestionTokens.set(row, (freightSuggestionTokens.get(row) || 0) + 1);
     return;
   }
 
@@ -1189,23 +1358,24 @@ function updateFreightClassSuggestion() {
     button.disabled = true;
   }
 
-  const requestToken = ++state.freightSuggestionRequestToken;
+  const requestToken = (freightSuggestionTokens.get(row) || 0) + 1;
+  freightSuggestionTokens.set(row, requestToken);
   const payload = {
-    quantity: Number(values.get("quantity") || 0),
-    weight: Number(values.get("weight") || 0),
-    length: Number(values.get("length") || 0),
-    width: Number(values.get("width") || 0),
-    height: Number(values.get("height") || 0),
+    quantity: data.quantity,
+    weight: data.weight,
+    length: data.length,
+    width: data.width,
+    height: data.height,
     customerId: getQuoteSuggestionCustomerId(form)
   };
 
-  state.freightSuggestionTimer = setTimeout(async () => {
+  const timer = setTimeout(async () => {
     try {
       const response = await api("/api/freight-class-suggestion", {
         method: "POST",
         body: payload
       });
-      if (requestToken !== state.freightSuggestionRequestToken) {
+      if (requestToken !== freightSuggestionTokens.get(row)) {
         return;
       }
 
@@ -1229,7 +1399,7 @@ function updateFreightClassSuggestion() {
         button.disabled = false;
       }
     } catch {
-      if (requestToken !== state.freightSuggestionRequestToken) {
+      if (requestToken !== freightSuggestionTokens.get(row)) {
         return;
       }
       suggestion.dataset.value = suggestionValue;
@@ -1241,6 +1411,8 @@ function updateFreightClassSuggestion() {
       }
     }
   }, 300);
+
+  freightSuggestionTimers.set(row, timer);
 }
 
 function wireZipAutofill() {
@@ -1321,19 +1493,18 @@ function normalizeZipLookupValue(value) {
   return digits.slice(0, 5);
 }
 
-function applySuggestedFreightClass() {
-  const form = document.getElementById("quoteForm");
-  const suggestion = document.getElementById("freightClassSuggestion");
-  if (!form || !suggestion) {
+function applySuggestedFreightClass(row) {
+  if (!row) {
     return;
   }
 
+  const suggestion = row.querySelector("[data-freight-suggestion]");
   const value = String(suggestion.dataset.value || "").trim();
   if (!value) {
     return;
   }
 
-  const control = form.querySelector("[name='freightClass']");
+  const control = freightRowField(row, "freightClass");
   if (control) {
     control.value = value;
     control.dispatchEvent(new Event("change", { bubbles: true }));
@@ -1350,11 +1521,11 @@ function getQuoteSuggestionCustomerId(form) {
 }
 
 function suggestFreightClass(values) {
-  const quantity = Number(values.get("quantity") || 0);
-  const weight = Number(values.get("weight") || 0);
-  const length = Number(values.get("length") || 0);
-  const width = Number(values.get("width") || 0);
-  const height = Number(values.get("height") || 0);
+  const quantity = Number(values.quantity || 0);
+  const weight = Number(values.weight || 0);
+  const length = Number(values.length || 0);
+  const width = Number(values.width || 0);
+  const height = Number(values.height || 0);
 
   if (!quantity || !weight || !length || !width || !height) {
     return "";
@@ -1482,6 +1653,80 @@ function detailSection(title, contentHtml) {
   `;
 }
 
+function quoteAuditRows(quote) {
+  if (Array.isArray(quote?.carrierAudit) && quote.carrierAudit.length > 0) {
+    return quote.carrierAudit;
+  }
+
+  if (Array.isArray(quote?.rawCarrierResponse) && quote.rawCarrierResponse.length > 0) {
+    return quote.rawCarrierResponse.map((run) => ({
+      mode: run.mode,
+      carrier: run.carrier,
+      carrierQuoteId: run.carrierQuoteId,
+      carrierMessage: run.carrierMessage,
+      rateCount: Array.isArray(run.rates) ? run.rates.length : 0,
+      request: null,
+      response: run.rawCarrierResponse
+    }));
+  }
+
+  return [];
+}
+
+function auditJsonBlock(value, emptyLabel = "No data recorded.") {
+  if (value == null || (typeof value === "object" && Object.keys(value).length === 0)) {
+    return `<div class="empty-state audit-empty">${escapeHtml(emptyLabel)}</div>`;
+  }
+
+  return `<pre class="audit-json">${escapeHtml(JSON.stringify(value, null, 2))}</pre>`;
+}
+
+function quoteAuditHtml(quote) {
+  const customerView = isCustomerUser();
+  if (customerView) {
+    return "";
+  }
+
+  const rows = quoteAuditRows(quote);
+  if (rows.length === 0) {
+    return `<div class="empty-state audit-empty">No carrier audit data recorded for this quote.</div>`;
+  }
+
+  return `
+    <div class="audit-panel">
+      ${rows
+        .map(
+          (row, index) => `
+            <details class="audit-entry" ${index === 0 ? "open" : ""}>
+              <summary>
+                <span>${escapeHtml(carrierDisplayName(row.carrier || row.mode || "carrier"))}</span>
+                <span class="audit-summary-meta">
+                  ${escapeHtml(carrierModeSummaryLabel(row.mode || quote.carrierMode, false))}
+                  ${row.rateCount ? `· ${escapeHtml(String(row.rateCount))} rates` : ""}
+                  ${row.carrierQuoteId ? `· ${escapeHtml(row.carrierQuoteId)}` : ""}
+                </span>
+              </summary>
+              <div class="audit-entry-body">
+                ${row.carrierMessage ? `<p class="audit-message">${escapeHtml(row.carrierMessage)}</p>` : ""}
+                <div class="audit-grid">
+                  <div class="audit-block">
+                    <strong>Outbound request</strong>
+                    ${auditJsonBlock(row.request, "No outbound request recorded for this quote.")}
+                  </div>
+                  <div class="audit-block">
+                    <strong>Carrier response</strong>
+                    ${auditJsonBlock(row.response, "No carrier response recorded for this quote.")}
+                  </div>
+                </div>
+              </div>
+            </details>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
 function trackingTimelineHtml(events) {
   if (!events.length) {
     return `<div class="empty-state">No tracking events yet.</div>`;
@@ -1505,6 +1750,29 @@ function trackingTimelineHtml(events) {
         .join("")}
     </div>
   `;
+}
+
+function freightDetailLinesHtml(freight) {
+  if (!Array.isArray(freight) || freight.length === 0) {
+    return "No freight details recorded.";
+  }
+
+  return freight
+    .map((item, index) => {
+      const totalWeight = Number(item.quantity || 0) * Number(item.weight || 0);
+      const dimensions = [item.length, item.width, item.height].filter(Boolean).join(" x ");
+      const parts = [
+        `${item.quantity || ""} ${item.type || ""}`.trim(),
+        item.freightClass ? `Class ${item.freightClass}` : "",
+        item.weight ? `${item.weight} lbs each` : "",
+        totalWeight ? `(${totalWeight} lbs total)` : "",
+        dimensions ? `${dimensions} in` : "",
+        item.description || ""
+      ].filter(Boolean);
+
+      return `${index + 1}. ${escapeHtml(parts.join(" · "))}`;
+    })
+    .join("<br>");
 }
 
 function quoteDetailsHtml(quote) {
@@ -1553,9 +1821,6 @@ function quoteDetailsHtml(quote) {
       </div>
     `
     : "";
-  const totalWeight = Number(quote.freight?.[0]?.quantity || 0) * Number(quote.freight?.[0]?.weight || 0);
-  const freightSize = [quote.freight?.[0]?.length, quote.freight?.[0]?.width, quote.freight?.[0]?.height].filter(Boolean).join(" x ");
-
   return `
     <div class="detail-grid">
       ${detailSection(
@@ -1567,9 +1832,10 @@ function quoteDetailsHtml(quote) {
           ${customerView ? "" : `<p><strong>Tariff:</strong> ${escapeHtml(quote.tariffRule?.ruleType || "n/a")} ${quote.tariffRule?.ruleType === "fixed" ? `· ${money.format(Number(quote.tariffRule?.fixedAmount || 0))}` : `· ${Number(quote.tariffRule?.markupPercentage || 0)}%`}</p>`}
           <p><strong>Pickup:</strong> ${escapeHtml(quote.pickup?.name || "")}, ${escapeHtml(quote.pickup?.address?.street || "")}, ${escapeHtml(quote.pickup?.address?.city || "")}, ${escapeHtml(quote.pickup?.address?.state || "")}</p>
           <p><strong>Delivery:</strong> ${escapeHtml(quote.delivery?.name || "")}, ${escapeHtml(quote.delivery?.address?.street || "")}, ${escapeHtml(quote.delivery?.address?.city || "")}, ${escapeHtml(quote.delivery?.address?.state || "")}</p>
-          <p><strong>Freight:</strong> ${escapeHtml(quote.freight?.[0]?.quantity || "")} ${escapeHtml(quote.freight?.[0]?.type || "")} · Class ${escapeHtml(quote.freight?.[0]?.freightClass || "")} · ${escapeHtml(quote.freight?.[0]?.weight || "")} lbs each${totalWeight ? ` (${escapeHtml(totalWeight)} lbs total)` : ""}${freightSize ? ` · ${escapeHtml(freightSize)} in` : ""}</p>
+          <p><strong>Freight:</strong><br>${freightDetailLinesHtml(quote.freight)}</p>
         `
       )} 
+      ${customerView ? "" : detailSection("Quote Audit", quoteAuditHtml(quote))}
       ${detailSection("Rates", rateCards)}
       <div class="modal-actions">
         <button class="primary-action" type="button" data-reenter-quote="${escapeHtml(quote.id)}">Re-enter Quote</button>
@@ -1620,8 +1886,6 @@ function shipmentDetailsHtml(shipment, events = []) {
   const priceLabel = customerPriceLabel();
   const latestEvent = Array.isArray(events) && events.length ? events[events.length - 1] : null;
   const trackingSummary = trackingSummaryHtml(shipment, latestEvent, events.length);
-  const totalWeight = Number(shipment.freight?.[0]?.quantity || 0) * Number(shipment.freight?.[0]?.weight || 0);
-  const freightSize = [shipment.freight?.[0]?.length, shipment.freight?.[0]?.width, shipment.freight?.[0]?.height].filter(Boolean).join(" x ");
   return `
     <div class="detail-grid">
       ${detailSection(
@@ -1639,7 +1903,7 @@ function shipmentDetailsHtml(shipment, events = []) {
           <p><strong>Reference / PO:</strong> ${escapeHtml(shipment.referenceNumber || "")}</p>
           <p><strong>Pickup:</strong> ${escapeHtml(shipment.pickup?.name || "")}, ${escapeHtml(shipment.pickup?.address?.city || "")}, ${escapeHtml(shipment.pickup?.address?.state || "")}</p>
           <p><strong>Delivery:</strong> ${escapeHtml(shipment.delivery?.name || "")}, ${escapeHtml(shipment.delivery?.address?.city || "")}, ${escapeHtml(shipment.delivery?.address?.state || "")}</p>
-          <p><strong>Freight:</strong> ${escapeHtml(shipment.freight?.[0]?.quantity || "")} ${escapeHtml(shipment.freight?.[0]?.type || "")} · Class ${escapeHtml(shipment.freight?.[0]?.freightClass || "")} · ${escapeHtml(shipment.freight?.[0]?.weight || "")} lbs each${totalWeight ? ` (${escapeHtml(totalWeight)} lbs total)` : ""}${freightSize ? ` · ${escapeHtml(freightSize)} in` : ""}</p>
+          <p><strong>Freight:</strong><br>${freightDetailLinesHtml(shipment.freight)}</p>
           <p><strong>${escapeHtml(priceLabel)}:</strong> ${money.format(shipment.sellPrice)}</p>
           <div class="modal-actions">
             <button class="secondary-action" type="button" data-track-shipment="${escapeHtml(shipment.id)}">Refresh Tracking</button>
@@ -1759,7 +2023,11 @@ function carrierDisplayName(provider, carrierMode = "", customerView = false) {
     tforce: "TForce Freight",
     tfin: "TForce Freight",
     stg: "STG Logistics",
-    stglogistics: "STG Logistics"
+    stglogistics: "STG Logistics",
+    fedex: "FedEx Freight",
+    fedexfreight: "FedEx Freight",
+    fedexltl: "FedEx Freight",
+    fxf: "FedEx Freight"
   };
   if (knownNames[normalized]) {
     return knownNames[normalized];
@@ -1769,6 +2037,9 @@ function carrierDisplayName(provider, carrierMode = "", customerView = false) {
   }
   if (normalized.includes("priority1") || mode === "priority1ltl") {
     return "Priority1";
+  }
+  if (normalized.includes("fedex") || mode === "fedexfreight") {
+    return "FedEx Freight";
   }
   if (normalized.includes("mothership")) {
     return customerView ? "Self-owned Truck" : "Mothership";
@@ -1804,6 +2075,9 @@ function carrierModeSummaryLabel(mode, customerView = false) {
     if (normalized === "priority1ltl") {
       return "P";
     }
+    if (normalized === "fedexfreight") {
+      return "FX";
+    }
     if (normalized === "demo") {
       return "D";
     }
@@ -1816,6 +2090,8 @@ function carrierModeSummaryLabel(mode, customerView = false) {
       return "SpeedShip LTL";
     case "priority1ltl":
       return "Priority1 LTL";
+    case "fedexfreight":
+      return "FedEx Freight";
     case "demo":
       return "Demo rates";
     default:
@@ -1827,14 +2103,14 @@ function quoteCarrierModesList(quote) {
   const directModes = Array.isArray(quote?.carrierModes)
     ? quote.carrierModes
         .map((mode) => String(mode || "").trim())
-        .filter((mode) => ["mothershipSandbox", "speedshipLtl", "priority1Ltl", "demo"].includes(mode))
+        .filter((mode) => ["mothershipSandbox", "speedshipLtl", "priority1Ltl", "fedexFreight", "demo"].includes(mode))
     : [];
   if (directModes.length > 0) {
     return directModes;
   }
 
   const legacyMode = String(quote?.carrierMode || "").trim();
-  if (!legacyMode || legacyMode === "multiCarrier" || !["mothershipSandbox", "speedshipLtl", "priority1Ltl", "demo"].includes(legacyMode)) {
+  if (!legacyMode || legacyMode === "multiCarrier" || !["mothershipSandbox", "speedshipLtl", "priority1Ltl", "fedexFreight", "demo"].includes(legacyMode)) {
     return [];
   }
 
@@ -1868,7 +2144,7 @@ function normalizeAllowedCarrierModes(values) {
     if (!mode) {
       continue;
     }
-    if (!["mothershipSandbox", "speedshipLtl", "priority1Ltl", "demo"].includes(mode)) {
+    if (!["mothershipSandbox", "speedshipLtl", "priority1Ltl", "fedexFreight", "demo"].includes(mode)) {
       continue;
     }
     if (!normalized.includes(mode)) {
@@ -1895,6 +2171,9 @@ function carrierBadgeLabel(provider, carrierMode = "", customerView = false) {
   }
   if (normalized.includes("priority1") || mode === "priority1ltl") {
     return "P";
+  }
+  if (normalized.includes("fedex") || mode === "fedexfreight") {
+    return "FX";
   }
   if (normalized.includes("mothership") || mode === "mothershipsandbox") {
     return "M";
@@ -1980,8 +2259,6 @@ function validateQuoteForm(form) {
 
   const controls = Array.from(form.querySelectorAll("input, select, textarea")).filter((control) => !control.disabled);
   const invalidControls = [];
-  const freightSuggestion = document.getElementById("freightClassSuggestion");
-  const freightClassControl = form.querySelector("[name='freightClass']");
 
   controls.forEach((control) => {
     const value = String(control.value || "").trim();
@@ -2002,23 +2279,6 @@ function validateQuoteForm(form) {
     }
   });
 
-  const suggestionValue = String(freightSuggestion?.dataset.value || "").trim();
-  const freightClassValue = String(freightClassControl?.value || "").trim();
-  if (suggestionValue && freightClassValue !== suggestionValue) {
-    if (freightClassControl) {
-      freightClassControl.setCustomValidity("Please click Use suggestion to apply the freight class before getting rates.");
-      freightClassControl.classList.add("field-invalid");
-      freightClassControl.setAttribute("aria-invalid", "true");
-      const label = freightClassControl.closest("label");
-      if (label) {
-        label.classList.add("field-invalid");
-      }
-      if (!invalidControls.includes(freightClassControl)) {
-        invalidControls.push(freightClassControl);
-      }
-    }
-  }
-
   if (invalidControls.length === 0) {
     if (error) {
       error.textContent = "";
@@ -2036,16 +2296,11 @@ function validateQuoteForm(form) {
   });
 
   if (error) {
-    const phoneInvalid = invalidControls.some((control) => control.name === "pickupPhone" || control.name === "deliveryPhone");
-    const freightSuggestionMissing = Boolean(suggestionValue && freightClassValue !== suggestionValue);
-    if (freightSuggestionMissing) {
-      error.textContent = "Please click Use suggestion to apply the freight class before getting rates.";
-    } else {
+      const phoneInvalid = invalidControls.some((control) => control.name === "pickupPhone" || control.name === "deliveryPhone");
       error.textContent = phoneInvalid
         ? "Phone numbers must be 10 digits and the highlighted fields must be completed before getting rates."
         : "Please fill in the highlighted required fields before getting rates.";
     }
-  }
 
   invalidControls[0].focus();
   showToast("Please fill in the required fields.", true);
@@ -2408,18 +2663,25 @@ function quotePayload(form) {
       closeTime: form.get("deliveryClose"),
       accessorials: deliveryAccessorials
     },
-    freight: [
-      {
-        quantity: Number(form.get("quantity")),
-        type: form.get("freightType"),
-        weight: Number(form.get("weight")),
-        freightClass: form.get("freightClass"),
-        length: Number(form.get("length")),
-        width: Number(form.get("width")),
-        height: Number(form.get("height")),
-        description: form.get("description")
-      }
-    ]
+    freight: freightRows().map((row) => {
+      const data = freightRowData(row);
+      return {
+        quantity: data.quantity,
+        type: data.type,
+        pieces: data.pieces || 1,
+        weight: data.weight,
+        freightClass: data.freightClass,
+        nmfc: data.nmfc,
+        length: data.length,
+        width: data.width,
+        height: data.height,
+        description: data.description,
+        stackable: data.stackable,
+        hazmat: data.hazmat,
+        used: data.used,
+        machinery: data.machinery
+      };
+    })
   };
 }
 
@@ -2468,15 +2730,29 @@ function populateQuoteFormFromQuote(quote) {
   setValue("deliveryOpen", quote.delivery?.openTime || "");
   setValue("deliveryClose", quote.delivery?.closeTime || "");
 
-  const freight = Array.isArray(quote.freight) ? quote.freight[0] || {} : {};
-  setValue("quantity", freight.quantity ?? "");
-  setValue("freightType", freight.type || "");
-  setValue("weight", freight.weight ?? "");
-  setValue("freightClass", freight.freightClass || "");
-  setValue("length", freight.length ?? "");
-  setValue("width", freight.width ?? "");
-  setValue("height", freight.height ?? "");
-  setValue("description", freight.description || "");
+  const freightItems = Array.isArray(quote.freight) && quote.freight.length > 0 ? quote.freight : [{}];
+  const freightContainer = document.getElementById("freightRows");
+  if (freightContainer) {
+    freightContainer.innerHTML = "";
+    freightItems.forEach((item) => {
+      addFreightRow({
+        quantity: item.quantity ?? "",
+        type: item.type || "",
+        pieces: item.pieces ?? 1,
+        weight: item.weight ?? "",
+        freightClass: item.freightClass || "",
+        nmfc: item.nmfc || "",
+        length: item.length ?? "",
+        width: item.width ?? "",
+        height: item.height ?? "",
+        description: item.description || "",
+        stackable: item.stackable,
+        hazmat: item.hazmat,
+        used: item.used,
+        machinery: item.machinery
+      });
+    });
+  }
 
   setCheckboxGroup("pickupAccessorials", quote.pickup?.accessorials || []);
   setCheckboxGroup("deliveryAccessorials", quote.delivery?.accessorials || []);
