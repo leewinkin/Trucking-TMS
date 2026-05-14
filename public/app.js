@@ -194,6 +194,9 @@ function wireForms() {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const allowedCarrierModes = form.getAll("allowedCarrierModes");
+    const allowedBookingCarrierModes = form
+      .getAll("allowedBookingCarrierModes")
+      .filter((mode) => allowedCarrierModes.includes(mode));
     const tariffError = document.getElementById("tariffFormError");
     if (tariffError) {
       tariffError.textContent = "";
@@ -214,7 +217,8 @@ function wireForms() {
         fixedAmount: form.get("fixedAmount"),
         markupPercentage: form.get("markupPercentage"),
         allowedCarrierModes,
-        allowedBooking: form.has("allowedBooking")
+        allowedBooking: allowedBookingCarrierModes.length > 0,
+        allowedBookingCarrierModes
       }
     });
     showToast("Tariff saved.");
@@ -279,6 +283,9 @@ function wireForms() {
     });
     tariffCustomerSelect.dataset.modeSyncBound = "true";
   }
+  document.querySelectorAll("#tariffForm input[name='allowedCarrierModes']").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => syncTariffBookingPermission(tariffCustomerSelect?.value || ""));
+  });
 
   syncCarrierControls();
   updateFreightClassSuggestion();
@@ -481,12 +488,29 @@ function hasDisplayValue(value) {
   return value !== null && value !== undefined && String(value).trim() !== "";
 }
 
-function customerBookingAllowed(customerId = state.user?.customerId) {
+function customerBookingAllowed(customerId = state.user?.customerId, carrierMode = "") {
   if (!isCustomerUser()) {
     return true;
   }
   const customer = state.customers.find((item) => item.id === customerId) || null;
-  return Boolean(customer) && customer.allowedBooking !== false;
+  if (!customer || customer.allowedBooking === false) {
+    return false;
+  }
+  if (!carrierMode) {
+    return customerAllowedBookingModes(customer).length > 0;
+  }
+  return customerAllowedBookingModes(customer).includes(normalizeCarrierModeValue(carrierMode));
+}
+
+function customerAllowedBookingModes(customer) {
+  if (!customer || customer.allowedBooking === false) {
+    return [];
+  }
+  const allowedModes = normalizeAllowedCarrierModes(customer.allowedCarrierModes || [], []);
+  const fallbackModes = allowedModes.length > 0 ? allowedModes : ["mothershipSandbox"];
+  const bookingModes = normalizeAllowedCarrierModes(customer.allowedBookingCarrierModes || [], []);
+  const selectedModes = bookingModes.length > 0 ? bookingModes : fallbackModes;
+  return selectedModes.filter((mode) => fallbackModes.includes(mode));
 }
 
 function renderHealth() {
@@ -699,13 +723,13 @@ function openBookingConfirmation(quoteId, rateId) {
     return;
   }
 
-  if (isCustomerUser() && !customerBookingAllowed(quote.customerId)) {
-    showToast("Shipment booking is disabled for this account.", true);
+  const rate = Array.isArray(quote.rates) ? quote.rates.find((item) => item.id === rateId) : null;
+  if (!rate) {
     return;
   }
 
-  const rate = Array.isArray(quote.rates) ? quote.rates.find((item) => item.id === rateId) : null;
-  if (!rate) {
+  if (isCustomerUser() && !customerBookingAllowed(quote.customerId, rate.carrierSource || quote.carrierMode)) {
+    showToast("Shipment booking is disabled for this carrier.", true);
     return;
   }
 
@@ -730,15 +754,15 @@ async function confirmPendingBooking() {
     return;
   }
 
-  if (isCustomerUser() && !customerBookingAllowed(quote.customerId)) {
-    cancelPendingBooking();
-    showToast("Shipment booking is disabled for this account.", true);
-    return;
-  }
-
   const rate = Array.isArray(quote.rates) ? quote.rates.find((item) => item.id === pending.rateId) : null;
   if (!rate) {
     cancelPendingBooking();
+    return;
+  }
+
+  if (isCustomerUser() && !customerBookingAllowed(quote.customerId, rate.carrierSource || quote.carrierMode)) {
+    cancelPendingBooking();
+    showToast("Shipment booking is disabled for this carrier.", true);
     return;
   }
 
@@ -937,6 +961,7 @@ function customerSummaryHtml() {
       ${state.customers
         .map((customer) => {
           const tariff = state.tariffs.find((rule) => rule.customerId === customer.id);
+          const bookingModes = customerAllowedBookingModes(customer);
           return `
             <article class="row-item">
               <div>
@@ -950,7 +975,7 @@ function customerSummaryHtml() {
                     : ""}
                   ${customer.companyPhone ? `<span class="pill">${escapeHtml(customer.companyPhone)}</span>` : ""}
                   ${customerHoursRange(customer) ? `<span class="pill">${escapeHtml(customerHoursRange(customer))}</span>` : ""}
-                  <span class="pill">${customer.allowedBooking === false ? "Booking disabled" : "Booking enabled"}</span>
+                  <span class="pill">${bookingModes.length > 0 ? `Booking: ${escapeHtml(carrierModeListLabel(bookingModes, false))}` : "Booking disabled"}</span>
                   <span class="pill">${escapeHtml(tariff?.ruleType || "no tariff")}</span>
                   <span class="pill">${money.format(Number(tariff?.fixedAmount || 0))} fixed</span>
                   <span class="pill">${Number(tariff?.markupPercentage || 0)}% markup</span>
@@ -1913,11 +1938,12 @@ function quoteDetailsHtml(quote) {
 
 function bookingConfirmationHtml(quote, rate) {
   const customerView = isCustomerUser();
+  const isCarrierBooking = rate?.carrierSource === "mothershipSandbox";
   return `
     <div class="booking-confirmation">
       <div class="quote-status notice-state success-state">
         <strong>Confirm shipment booking</strong>
-        <p>This will finalize the shipment with the carrier platform. Please confirm before continuing.</p>
+        <p>${isCarrierBooking ? "This will finalize the shipment with the carrier platform." : "This will create a shipment booking in the TMS."} Please confirm before continuing.</p>
       </div>
       <div class="confirmation-grid">
         <div>
@@ -2199,7 +2225,24 @@ function sortedQuoteRates(quote) {
   });
 }
 
-function normalizeAllowedCarrierModes(values) {
+function normalizeCarrierModeValue(value) {
+  const key = String(value || "").trim().toLowerCase().replace(/[\s_-]+/g, "");
+  const aliases = {
+    mothership: "mothershipSandbox",
+    mothershipsandbox: "mothershipSandbox",
+    speedship: "speedshipLtl",
+    speedshipltl: "speedshipLtl",
+    priority1: "priority1Ltl",
+    priority1ltl: "priority1Ltl",
+    fedex: "fedexFreight",
+    fedexfreight: "fedexFreight",
+    fedexltl: "fedexFreight",
+    demo: "demo"
+  };
+  return aliases[key] || String(value || "").trim();
+}
+
+function normalizeAllowedCarrierModes(values, fallback = ["mothershipSandbox"]) {
   const list = Array.isArray(values)
     ? values
     : typeof values === "string"
@@ -2208,7 +2251,7 @@ function normalizeAllowedCarrierModes(values) {
   const normalized = [];
 
   for (const entry of list) {
-    const mode = String(entry || "").trim();
+    const mode = normalizeCarrierModeValue(entry);
     if (!mode) {
       continue;
     }
@@ -2220,11 +2263,7 @@ function normalizeAllowedCarrierModes(values) {
     }
   }
 
-  if (normalized.length === 0) {
-    normalized.push("mothershipSandbox");
-  }
-
-  return normalized;
+  return normalized.length > 0 ? normalized : fallback;
 }
 
 function carrierBadgeLabel(provider, carrierMode = "", customerView = false) {
@@ -2424,11 +2463,14 @@ function syncTariffCarrierModes(customerId) {
 
 function syncTariffBookingPermission(customerId) {
   const customer = state.customers.find((item) => item.id === customerId) || null;
-  const bookingAllowed = customer?.allowedBooking !== false;
-  const checkbox = document.querySelector("#tariffForm input[name='allowedBooking']");
-  if (checkbox) {
-    checkbox.checked = bookingAllowed;
-  }
+  const allowedModeCheckboxes = Array.from(document.querySelectorAll("#tariffForm input[name='allowedCarrierModes']"));
+  const currentAllowedModes = allowedModeCheckboxes.filter((checkbox) => checkbox.checked).map((checkbox) => checkbox.value);
+  const selectedModes = customer ? customerAllowedBookingModes(customer) : currentAllowedModes;
+  document.querySelectorAll("#tariffForm input[name='allowedBookingCarrierModes']").forEach((checkbox) => {
+    const carrierAllowed = currentAllowedModes.includes(checkbox.value);
+    checkbox.disabled = !carrierAllowed;
+    checkbox.checked = carrierAllowed && selectedModes.includes(checkbox.value);
+  });
 }
 
 function renderCustomerOptions() {
@@ -2471,6 +2513,7 @@ function renderCustomers() {
     .map((customer) => {
       const tariff = state.tariffs.find((rule) => rule.customerId === customer.id);
       const allowedModes = Array.isArray(customer.allowedCarrierModes) ? customer.allowedCarrierModes : [];
+      const bookingModes = customerAllowedBookingModes(customer);
       return `
         <article class="row-item" data-customer-id="${escapeHtml(customer.id)}">
           <div>
@@ -2483,7 +2526,7 @@ function renderCustomers() {
               ${allowedModes.length > 0
                 ? `<span class="pill">${escapeHtml(carrierModeListLabel(allowedModes, false))}</span>`
                 : ""}
-              <span class="pill">${customer.allowedBooking === false ? "Booking disabled" : "Booking enabled"}</span>
+              <span class="pill">${bookingModes.length > 0 ? `Booking: ${escapeHtml(carrierModeListLabel(bookingModes, false))}` : "Booking disabled"}</span>
               <span class="pill">${escapeHtml(tariff?.ruleType || "no tariff")}</span>
               <span class="pill">${Number(tariff?.markupPercentage || 0)}% markup</span>
               <span class="pill">${money.format(Number(tariff?.fixedAmount || 0))} fixed</span>
@@ -2561,7 +2604,6 @@ function renderQuoteResults(quote) {
   list.classList.remove("empty-state");
   list.classList.toggle("compare-grid", visibleCount > 1);
   const customerView = isCustomerUser();
-  const bookingAllowed = !customerView || customerBookingAllowed(quote.customerId);
   const priceLabel = customerPriceLabel();
   const quoteCarrierModes = quoteCarrierModesList(quote);
   const carrierLabel = quoteCarrierModes.length > 1
@@ -2582,7 +2624,9 @@ function renderQuoteResults(quote) {
   const canLoadMore = visibleRates.length < sortedRates.length;
   list.innerHTML = `
     ${visibleRates
-    .map((rate) => `
+    .map((rate) => {
+      const rateBookingAllowed = !customerView || customerBookingAllowed(quote.customerId, rate.carrierSource || quote.carrierMode);
+      return `
       <article class="rate-item quote-rate-card">
         <div class="rate-main">
           <div class="rate-title-row">
@@ -2604,12 +2648,13 @@ function renderQuoteResults(quote) {
         <div class="rate-aside">
           <small>${escapeHtml(priceLabel)}</small>
           <strong>${money.format(rate.sellPrice)}</strong>
-          ${bookingAllowed
+          ${rateBookingAllowed
             ? `<button class="primary-action rate-book-action" type="button" data-book-rate="${escapeHtml(rate.id)}">Book Shipment</button>`
-            : `<small class="helper-text booking-disabled-note">Booking disabled by admin.</small>`}
+            : `<small class="helper-text booking-disabled-note">Booking disabled for this carrier.</small>`}
         </div>
       </article>
-    `)
+    `;
+    })
     .join("")}
     ${canLoadMore ? `
       <div class="rate-list-footer">
@@ -2650,11 +2695,11 @@ function loadMoreQuoteRates() {
 
 async function finalizeBooking(quoteId, rateId) {
   const quote = state.currentQuote || state.quotes.find((item) => item.id === quoteId);
-  if (isCustomerUser() && quote && !customerBookingAllowed(quote.customerId)) {
-    showToast("Shipment booking is disabled for this account.", true);
+  const rate = quote && Array.isArray(quote.rates) ? quote.rates.find((item) => item.id === rateId) : null;
+  if (isCustomerUser() && quote && rate && !customerBookingAllowed(quote.customerId, rate.carrierSource || quote.carrierMode)) {
+    showToast("Shipment booking is disabled for this carrier.", true);
     return;
   }
-  const rate = quote && Array.isArray(quote.rates) ? quote.rates.find((item) => item.id === rateId) : null;
   const response = await api("/api/shipments", {
     method: "POST",
     body: {

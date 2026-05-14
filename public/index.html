@@ -227,11 +227,30 @@
                       <span>Demo rates</span>
                     </label>
                   </div>
-                  <label class="checkbox-wrap tariff-permission-toggle">
-                    <input type="checkbox" name="allowedBooking" checked>
-                    <span>Allow shipment booking for this customer</span>
-                  </label>
-                  <div class="helper-text">Uncheck this if the customer may quote but not finalize shipments.</div>
+                  <div class="field-label">Allowed booking modes</div>
+                  <div class="mode-checkbox-grid" id="bookingModeCheckboxGrid">
+                    <label class="checkbox-wrap">
+                      <input type="checkbox" name="allowedBookingCarrierModes" value="mothershipSandbox" checked>
+                      <span>Mothership sandbox</span>
+                    </label>
+                    <label class="checkbox-wrap">
+                      <input type="checkbox" name="allowedBookingCarrierModes" value="speedshipLtl">
+                      <span>SpeedShip LTL</span>
+                    </label>
+                    <label class="checkbox-wrap">
+                      <input type="checkbox" name="allowedBookingCarrierModes" value="priority1Ltl">
+                      <span>Priority1 LTL</span>
+                    </label>
+                    <label class="checkbox-wrap">
+                      <input type="checkbox" name="allowedBookingCarrierModes" value="fedexFreight">
+                      <span>FedEx Freight</span>
+                    </label>
+                    <label class="checkbox-wrap">
+                      <input type="checkbox" name="allowedBookingCarrierModes" value="demo">
+                      <span>Demo rates</span>
+                    </label>
+                  </div>
+                  <div class="helper-text">Customers can book only the selected carrier modes. Uncheck all to disable booking.</div>
                   <div id="tariffFormError" class="form-error"></div>
                   <div class="helper-text">Quotes for this customer will pull rates from every selected carrier mode.</div>
                 </div>

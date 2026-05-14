@@ -406,21 +406,21 @@ async function createShipment(req, res, currentUser) {
     return;
   }
 
-  if (currentUser.role === "customer") {
-    const bookingCustomer = await store.getCustomer(currentUser.customerId);
-    if (!bookingCustomer || bookingCustomer.allowedBooking === false) {
-      sendJson(res, 403, {
-        error: "BOOKING_DISABLED",
-        message: "Shipment booking is disabled for your account."
-      });
-      return;
-    }
-  }
-
   const rate = quote.rates.find((item) => item.id === input.rateId);
   if (!rate) {
     sendJson(res, 404, { error: "RATE_NOT_FOUND", message: "Selected rate was not found." });
     return;
+  }
+
+  if (currentUser.role === "customer") {
+    const bookingCustomer = await store.getCustomer(currentUser.customerId);
+    if (!isCustomerAllowedToBookCarrier(bookingCustomer, rate.carrierSource || quote.carrierMode)) {
+      sendJson(res, 403, {
+        error: "BOOKING_DISABLED",
+        message: "Shipment booking is disabled for this carrier mode on your account."
+      });
+      return;
+    }
   }
 
   let carrierShipment = null;
@@ -1446,6 +1446,23 @@ function normalizeAllowedCarrierModes(values, fallback = ["mothershipSandbox"]) 
   }
 
   return normalized.length > 0 ? normalized : fallback;
+}
+
+function normalizeAllowedBookingCarrierModes(customer) {
+  if (!customer || customer.allowedBooking === false) {
+    return [];
+  }
+
+  const allowedModes = normalizeAllowedCarrierModes(customer.allowedCarrierModes || [], []);
+  const bookingModes = normalizeAllowedCarrierModes(customer.allowedBookingCarrierModes || [], []);
+  const fallbackModes = allowedModes.length > 0 ? allowedModes : ["mothershipSandbox"];
+  const selectedModes = bookingModes.length > 0 ? bookingModes : fallbackModes;
+  return selectedModes.filter((mode) => fallbackModes.includes(mode));
+}
+
+function isCustomerAllowedToBookCarrier(customer, carrierMode) {
+  const mode = normalizeCarrierMode(carrierMode);
+  return normalizeAllowedBookingCarrierModes(customer).includes(mode);
 }
 
 function carrierModeDisplayName(mode) {

@@ -73,9 +73,14 @@ async function createPostgresStore(dbUrl) {
       try {
         await client.query("BEGIN");
         const allowedCarrierModes = normalizeAllowedCarrierModes(input.allowedCarrierModes);
+        const allowedBookingCarrierModes = normalizeAllowedBookingCarrierModes(
+          input.allowedBookingCarrierModes,
+          allowedCarrierModes,
+          normalizeAllowedBooking(input.allowedBooking, true)
+        );
         const customerResult = await client.query(
-          `INSERT INTO customers (id, company_name, billing_email, payment_terms, company_phone, company_open_time, company_close_time, company_street, company_city, company_state, company_zip, allowed_carrier_modes, allowed_booking, status, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $15)
+          `INSERT INTO customers (id, company_name, billing_email, payment_terms, company_phone, company_open_time, company_close_time, company_street, company_city, company_state, company_zip, allowed_carrier_modes, allowed_booking, allowed_booking_carrier_modes, status, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14::jsonb, $15, $16)
            RETURNING *`,
           [
             createId("cust"),
@@ -91,6 +96,7 @@ async function createPostgresStore(dbUrl) {
             String(input.companyZip || "").trim(),
             JSON.stringify(allowedCarrierModes),
             normalizeAllowedBooking(input.allowedBooking, true),
+            JSON.stringify(allowedBookingCarrierModes),
             "active",
             nowIso()
           ]
@@ -147,6 +153,9 @@ async function createPostgresStore(dbUrl) {
         const allowedBooking = Object.prototype.hasOwnProperty.call(input, "allowedBooking")
           ? normalizeAllowedBooking(input.allowedBooking)
           : null;
+        const allowedBookingCarrierModes = Object.prototype.hasOwnProperty.call(input, "allowedBookingCarrierModes")
+          ? normalizeAllowedBookingCarrierModes(input.allowedBookingCarrierModes, allowedCarrierModes, allowedBooking !== false)
+          : null;
         const customerResult = await client.query(
           `UPDATE customers
            SET company_name = COALESCE($2, company_name),
@@ -161,7 +170,8 @@ async function createPostgresStore(dbUrl) {
                company_zip = COALESCE($11, company_zip),
                allowed_carrier_modes = COALESCE($12::jsonb, allowed_carrier_modes),
                allowed_booking = COALESCE($13::boolean, allowed_booking),
-               status = COALESCE($14, status)
+               allowed_booking_carrier_modes = COALESCE($14::jsonb, allowed_booking_carrier_modes),
+               status = COALESCE($15, status)
            WHERE id = $1
            RETURNING *`,
           [
@@ -178,6 +188,7 @@ async function createPostgresStore(dbUrl) {
             normalizeNullableString(input.companyZip),
             allowedCarrierModes ? JSON.stringify(allowedCarrierModes) : null,
             allowedBooking,
+            allowedBookingCarrierModes ? JSON.stringify(allowedBookingCarrierModes) : null,
             normalizeNullableString(input.status)
           ]
         );
@@ -231,6 +242,13 @@ async function createPostgresStore(dbUrl) {
           await client.query("UPDATE customers SET allowed_booking = $2 WHERE id = $1", [
             id,
             normalizeAllowedBooking(input.allowedBooking)
+          ]);
+        }
+
+        if (Object.prototype.hasOwnProperty.call(input, "allowedBookingCarrierModes")) {
+          await client.query("UPDATE customers SET allowed_booking_carrier_modes = $2::jsonb WHERE id = $1", [
+            id,
+            JSON.stringify(normalizeAllowedBookingCarrierModes(input.allowedBookingCarrierModes, input.allowedCarrierModes, normalizeAllowedBooking(input.allowedBooking, true)))
           ]);
         }
 
@@ -318,6 +336,12 @@ async function createPostgresStore(dbUrl) {
           await client.query("UPDATE customers SET allowed_booking = $2 WHERE id = $1", [
             input.customerId,
             normalizeAllowedBooking(input.allowedBooking)
+          ]);
+        }
+        if (Object.prototype.hasOwnProperty.call(input, "allowedBookingCarrierModes")) {
+          await client.query("UPDATE customers SET allowed_booking_carrier_modes = $2::jsonb WHERE id = $1", [
+            input.customerId,
+            JSON.stringify(normalizeAllowedBookingCarrierModes(input.allowedBookingCarrierModes, input.allowedCarrierModes, normalizeAllowedBooking(input.allowedBooking, true)))
           ]);
         }
         await client.query("COMMIT");
@@ -553,6 +577,7 @@ async function ensureSchema(pool) {
       company_zip text NOT NULL DEFAULT '',
       allowed_carrier_modes jsonb NOT NULL DEFAULT '["mothershipSandbox"]'::jsonb,
       allowed_booking boolean NOT NULL DEFAULT true,
+      allowed_booking_carrier_modes jsonb NOT NULL DEFAULT '[]'::jsonb,
       status text NOT NULL DEFAULT 'active',
       created_at timestamptz NOT NULL DEFAULT now()
     )`,
@@ -565,6 +590,7 @@ async function ensureSchema(pool) {
     "ALTER TABLE customers ADD COLUMN IF NOT EXISTS company_zip text NOT NULL DEFAULT ''",
     "ALTER TABLE customers ADD COLUMN IF NOT EXISTS allowed_carrier_modes jsonb NOT NULL DEFAULT '[\"mothershipSandbox\"]'::jsonb",
     "ALTER TABLE customers ADD COLUMN IF NOT EXISTS allowed_booking boolean NOT NULL DEFAULT true",
+    "ALTER TABLE customers ADD COLUMN IF NOT EXISTS allowed_booking_carrier_modes jsonb NOT NULL DEFAULT '[]'::jsonb",
     `CREATE TABLE IF NOT EXISTS tariff_rules (
       id text PRIMARY KEY,
       customer_id text NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
@@ -773,7 +799,7 @@ function createJsonStore(filePath) {
     async listCustomers() {
       const db = await readJsonDb(filePath);
       return db.customers.map((customer) => ({
-        ...customer,
+        ...normalizeCustomerRecord(customer),
         portalEmail:
           db.users.find((user) => user.customerId === customer.id && user.role === "customer")
             ?.email || null
@@ -786,7 +812,7 @@ function createJsonStore(filePath) {
         return null;
       }
       return {
-        ...customer,
+        ...normalizeCustomerRecord(customer),
         portalEmail:
           db.users.find((user) => user.customerId === customer.id && user.role === "customer")
             ?.email || null
@@ -805,9 +831,14 @@ function createJsonStore(filePath) {
         companyStreet: String(input.companyStreet || "").trim(),
         companyCity: String(input.companyCity || "").trim(),
         companyState: String(input.companyState || "").trim().toUpperCase(),
-        companyZip: String(input.companyZip || "").trim(),
+      companyZip: String(input.companyZip || "").trim(),
         allowedCarrierModes: normalizeAllowedCarrierModes(input.allowedCarrierModes),
         allowedBooking: normalizeAllowedBooking(input.allowedBooking, true),
+        allowedBookingCarrierModes: normalizeAllowedBookingCarrierModes(
+          input.allowedBookingCarrierModes,
+          input.allowedCarrierModes,
+          normalizeAllowedBooking(input.allowedBooking, true)
+        ),
         status: "active",
         createdAt: nowIso()
       };
@@ -827,7 +858,7 @@ function createJsonStore(filePath) {
       }
       await writeJsonDb(filePath, db);
       return {
-        ...customer,
+        ...normalizeCustomerRecord(customer),
         portalEmail: String(input.portalEmail || "").trim() || null
       };
     },
@@ -873,6 +904,13 @@ function createJsonStore(filePath) {
       }
       if (Object.prototype.hasOwnProperty.call(input, "allowedBooking")) {
         customer.allowedBooking = normalizeAllowedBooking(input.allowedBooking);
+      }
+      if (Object.prototype.hasOwnProperty.call(input, "allowedBookingCarrierModes")) {
+        customer.allowedBookingCarrierModes = normalizeAllowedBookingCarrierModes(
+          input.allowedBookingCarrierModes,
+          customer.allowedCarrierModes,
+          customer.allowedBooking !== false
+        );
       }
       if (Object.prototype.hasOwnProperty.call(input, "status") && String(input.status || "").trim()) {
         customer.status = String(input.status).trim();
@@ -926,7 +964,7 @@ function createJsonStore(filePath) {
 
       await writeJsonDb(filePath, db);
       return {
-        ...customer,
+        ...normalizeCustomerRecord(customer),
         portalEmail:
           db.users.find((user) => user.customerId === id && user.role === "customer")?.email || null
       };
@@ -942,7 +980,7 @@ function createJsonStore(filePath) {
         user.status = customer.status;
       }
       await writeJsonDb(filePath, db);
-      return customer;
+      return normalizeCustomerRecord(customer);
     },
     async deleteCustomer(id) {
       const db = await readJsonDb(filePath);
@@ -993,6 +1031,13 @@ function createJsonStore(filePath) {
       }
       if (Object.prototype.hasOwnProperty.call(input, "allowedBooking")) {
         customer.allowedBooking = normalizeAllowedBooking(input.allowedBooking);
+      }
+      if (Object.prototype.hasOwnProperty.call(input, "allowedBookingCarrierModes")) {
+        customer.allowedBookingCarrierModes = normalizeAllowedBookingCarrierModes(
+          input.allowedBookingCarrierModes,
+          customer.allowedCarrierModes,
+          customer.allowedBooking !== false
+        );
       }
       await writeJsonDb(filePath, db);
       return tariffRule;
@@ -1166,6 +1211,7 @@ function createSeedDb() {
         companyZip: "",
         allowedCarrierModes: ["mothershipSandbox"],
         allowedBooking: true,
+        allowedBookingCarrierModes: ["mothershipSandbox"],
         status: "active",
         createdAt: now
       }
@@ -1259,6 +1305,33 @@ function normalizeAllowedCarrierModes(value, fallback = ["mothershipSandbox"]) {
   return normalized.length > 0 ? normalized : fallback;
 }
 
+function normalizeAllowedBookingCarrierModes(value, allowedCarrierModes = null, bookingAllowed = true) {
+  if (bookingAllowed === false) {
+    return [];
+  }
+
+  const allowedModes = normalizeAllowedCarrierModes(allowedCarrierModes, []);
+  const fallbackModes = allowedModes.length > 0 ? allowedModes : ["mothershipSandbox"];
+  const list = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(/[,\s]+/).filter(Boolean)
+      : [];
+  const normalized = [];
+
+  for (const entry of list) {
+    const mode = normalizeCarrierMode(entry);
+    if (!fallbackModes.includes(mode)) {
+      continue;
+    }
+    if (!normalized.includes(mode)) {
+      normalized.push(mode);
+    }
+  }
+
+  return normalized.length > 0 ? normalized : fallbackModes;
+}
+
 function normalizeAllowedBooking(value, fallback = true) {
   if (value === undefined || value === null || value === "") {
     return fallback;
@@ -1296,6 +1369,8 @@ function createId(prefix) {
 }
 
 function mapCustomerRow(row) {
+  const allowedCarrierModes = normalizeAllowedCarrierModes(row.allowed_carrier_modes);
+  const allowedBooking = row.allowed_booking !== false;
   return {
     id: row.id,
     companyName: row.company_name,
@@ -1308,8 +1383,13 @@ function mapCustomerRow(row) {
     companyCity: row.company_city || "",
     companyState: row.company_state || "",
     companyZip: row.company_zip || "",
-    allowedCarrierModes: normalizeAllowedCarrierModes(row.allowed_carrier_modes),
-    allowedBooking: row.allowed_booking !== false,
+    allowedCarrierModes,
+    allowedBooking,
+    allowedBookingCarrierModes: normalizeAllowedBookingCarrierModes(
+      row.allowed_booking_carrier_modes,
+      allowedCarrierModes,
+      allowedBooking
+    ),
     status: row.status,
     portalEmail: row.portal_email || null,
     createdAt: row.created_at
@@ -1457,10 +1537,17 @@ function normalizeJsonDb(db) {
 }
 
 function normalizeCustomerRecord(customer) {
+  const allowedCarrierModes = normalizeAllowedCarrierModes(customer?.allowedCarrierModes);
+  const allowedBooking = normalizeAllowedBooking(customer?.allowedBooking, true);
   return {
     ...customer,
-    allowedCarrierModes: normalizeAllowedCarrierModes(customer?.allowedCarrierModes),
-    allowedBooking: normalizeAllowedBooking(customer?.allowedBooking, true)
+    allowedCarrierModes,
+    allowedBooking,
+    allowedBookingCarrierModes: normalizeAllowedBookingCarrierModes(
+      customer?.allowedBookingCarrierModes,
+      allowedCarrierModes,
+      allowedBooking
+    )
   };
 }
 
