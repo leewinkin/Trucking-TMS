@@ -926,7 +926,7 @@ function normalizeFreight(freight) {
     length: toPositiveNumber(item.length, `freight.${index}.length`),
     width: toPositiveNumber(item.width, `freight.${index}.width`),
     height: toPositiveNumber(item.height, `freight.${index}.height`),
-    freightClass: String(item.freightClass || item.commodityClass || "").trim(),
+    freightClass: requiredString(item.freightClass || item.commodityClass, `freight.${index}.freightClass`),
     nmfc: String(item.nmfc || item.nmfcCode || "").trim(),
     stackable: Boolean(item.stackable),
     hazmat: Boolean(item.hazmat),

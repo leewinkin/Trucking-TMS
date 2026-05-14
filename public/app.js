@@ -332,8 +332,8 @@ async function refreshAll(options = {}) {
     renderInvoices();
     renderModal();
     syncCarrierControls();
-    if (isCustomerUser()) {
-      autofillPickupFromCustomer(state.user?.customerId, true);
+    if (isCustomerUser() && isPickupAutofillEmpty()) {
+      autofillPickupFromCustomer(state.user?.customerId, false);
       syncCarrierControls();
     }
 
@@ -1080,12 +1080,30 @@ function autofillPickupFromCustomer(customerId, force = false) {
     if (!input) {
       return;
     }
-    if (force || !String(input.value || "").trim()) {
+    const nextValue = String(value || "").trim();
+    if (nextValue && (force || !String(input.value || "").trim())) {
       input.value = value;
     }
   });
 
   triggerZipAutofillField("pickupZip");
+}
+
+function isPickupAutofillEmpty() {
+  const fieldNames = [
+    "pickupName",
+    "pickupPhone",
+    "pickupOpen",
+    "pickupClose",
+    "pickupStreet",
+    "pickupCity",
+    "pickupState",
+    "pickupZip"
+  ];
+  return fieldNames.every((name) => {
+    const input = document.querySelector(`[name='${name}']`);
+    return !String(input?.value || "").trim();
+  });
 }
 
 function customerHoursRange(customer) {
@@ -2414,12 +2432,13 @@ function syncTariffBookingPermission(customerId) {
 }
 
 function renderCustomerOptions() {
+  const quoteSelect = document.getElementById("quoteCustomerSelect");
+  const previousQuoteCustomerId = quoteSelect?.value || "";
   const options = state.customers
     .map((customer) => `<option value="${escapeHtml(customer.id)}">${escapeHtml(customer.companyName)}</option>`)
     .join("");
 
   const tariffSelect = document.getElementById("tariffCustomerSelect");
-  const quoteSelect = document.getElementById("quoteCustomerSelect");
   if (tariffSelect) {
     tariffSelect.innerHTML = options;
     syncTariffCarrierModes(tariffSelect.value || state.customers[0]?.id || "");
@@ -2429,9 +2448,11 @@ function renderCustomerOptions() {
     quoteSelect.innerHTML = options;
     if (isCustomerUser()) {
       quoteSelect.value = state.user?.customerId || state.customers[0]?.id || "";
+    } else if (previousQuoteCustomerId && state.customers.some((customer) => customer.id === previousQuoteCustomerId)) {
+      quoteSelect.value = previousQuoteCustomerId;
     }
-    if (quoteSelect.value && !state.pendingQuoteReentry) {
-      autofillPickupFromCustomer(quoteSelect.value, true);
+    if (quoteSelect.value && !state.pendingQuoteReentry && isPickupAutofillEmpty()) {
+      autofillPickupFromCustomer(quoteSelect.value, false);
     }
   }
   syncCarrierControls();
