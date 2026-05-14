@@ -41,6 +41,7 @@ Notes:
 - Multi-item support: `yes`
 - Freight class in quote request: `no documented field`
 - NMFC in quote request: `no documented field`
+- Shipment create supports `referenceNumber` for the carrier-side reference / PO.
 - Lowest-risk carrier for a shared freight UI because the request is a simple line-item array.
 
 ## Priority1 LTL
@@ -114,6 +115,7 @@ Notes:
 - Multi-item support: `yes`
 - Freight class: `yes`, as `commodityClass`
 - NMFC: `yes`, sample includes `NMFCDescription` and `NMFCNbr`
+- Shipment-level reference lives on `shipment.shipmentReferenceList[]`; the LTL examples use `Shipment Reference 1`.
 - High double-count risk because quantity appears at:
   - handling unit level
   - shipped item level
@@ -150,6 +152,8 @@ Notes:
 - Multi-item support: `yes`
 - Freight class: `yes`
 - NMFC: `yes`
+- Shipment APIs expose `shipmentIdentifiers[]`, including `CUSTOMER_REFERENCE` and `PURCHASE_ORDER`.
+- Quote requests do not currently show a reference field in the supplied OpenAPI, so the reference should be attached when a shipment is created or dispatched.
 - Like SpeedShip, it has both shipment-level handling-unit detail and freight-line detail, so the adapter must decide which field owns count and which field owns descriptive freight classification.
 
 ## Sunset Pacific

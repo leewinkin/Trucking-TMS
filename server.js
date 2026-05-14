@@ -445,7 +445,8 @@ async function createShipment(req, res, currentUser) {
 
     const carrierShipmentRequest = {
       quoteId: rate.carrierQuoteId || quote.carrierQuoteId,
-      rateId: rate.carrierRateId || rate.id
+      rateId: rate.carrierRateId || rate.id,
+      referenceNumber: quote.referenceNumber
     };
     const carrierShipmentResponse = await requestMothershipShipment(carrierShipmentRequest);
     carrierShipment = {
@@ -453,7 +454,7 @@ async function createShipment(req, res, currentUser) {
       response: carrierShipmentResponse,
       tmsReferenceNumber: quote.referenceNumber,
       referenceNote:
-        "Mothership's public Create Shipment API accepts quoteId and rateId; Reference / PO is stored in the TMS."
+        "Mothership's Create Shipment API accepts referenceNumber, so the TMS Reference / PO is sent with quoteId and rateId."
     };
   }
 
@@ -764,7 +765,7 @@ function buildSpeedshipShopFlowRequest(input, freight) {
         },
         shipmentReferenceList: [
           {
-            type: "Reference 1",
+            type: "Shipment Reference 1",
             value: requiredString(input.referenceNumber, "referenceNumber"),
             isPrintAsBarCode: false
           }

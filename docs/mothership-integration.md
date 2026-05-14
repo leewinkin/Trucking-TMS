@@ -72,7 +72,7 @@ Responsibilities:
 
 1. Confirm user owns the quote.
 2. Confirm selected rate belongs to quote.
-3. Call Mothership `POST /shipments` with `quoteId` and `rateId`.
+3. Call Mothership `POST /shipments` with `quoteId`, `rateId`, and `referenceNumber`.
 4. Store carrier shipment ID, carrier cost, customer sell price, and margin.
 5. Create invoice record.
 6. Return booking confirmation.
@@ -171,8 +171,8 @@ Reference / PO handling:
 
 - The TMS stores the customer-entered `referenceNumber` on the quote, shipment, and invoice records.
 - Mothership's current public `POST /quotes` documentation does not list a Reference / PO field.
-- Mothership's current public `POST /shipments` documentation lists only `quoteId` and `rateId`.
-- Until Mothership confirms an API field for customer reference data, do not send undocumented PO fields to Mothership. Keep the value in the TMS and show it in staff audit views.
+- Mothership's shipment create API includes `referenceNumber`, and the app maps the TMS Reference / PO to that field.
+- Keep the value in the TMS and show it in staff audit views as well, so staff can verify what was sent.
 
 ## Quote Response Handling
 
@@ -221,11 +221,12 @@ Mothership `POST /shipments` requires:
 ```json
 {
   "quoteId": "MOTHERSHIP_QUOTE_ID",
-  "rateId": "SELECTED_RATE_ID"
+  "rateId": "SELECTED_RATE_ID",
+  "referenceNumber": "CUSTOMER_REFERENCE"
 }
 ```
 
-The app stores the outbound booking request and carrier response on the local shipment audit record. For Mothership, the audit also carries the TMS Reference / PO as local context because the documented carrier booking request does not expose a reference field.
+The app stores the outbound booking request and carrier response on the local shipment audit record. For Mothership, the audit also carries the TMS Reference / PO as local context because that value is sent as `referenceNumber` on shipment create.
 
 Risk: booking purchases the shipment against the organization's payment source. Keep booking behind an explicit customer confirmation screen.
 
