@@ -2228,7 +2228,7 @@ function extractMothershipInvoiceLineItems(payload) {
 }
 
 function readInvoiceLineItemAmount(item) {
-  return readNestedNumber(item, [
+  return normalizeMothershipCurrencyAmount(readNestedNumber(item, [
     ["amount"],
     ["amountDue"],
     ["amount_due"],
@@ -2244,7 +2244,7 @@ function readInvoiceLineItemAmount(item) {
     ["rate"],
     ["extendedAmount"],
     ["extended_amount"]
-  ]);
+  ]));
 }
 
 function unwrapMothershipInvoiceDetail(payload) {
@@ -2269,6 +2269,18 @@ function readNestedNumber(source, paths) {
     }
   }
   return 0;
+}
+
+function normalizeMothershipCurrencyAmount(value) {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+
+  if (Number.isInteger(value) && Math.abs(value) >= 100) {
+    return value / 100;
+  }
+
+  return value;
 }
 
 function parseMoneyValue(value) {

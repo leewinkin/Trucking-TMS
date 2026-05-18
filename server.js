@@ -2673,7 +2673,7 @@ function normalizeMothershipInvoice(referenceRecord, detailRecord, syncedAt, raw
 }
 
 function deriveMothershipInvoiceAmount(source) {
-  const directAmount = readNestedNumber(source, [
+  const directAmount = normalizeMothershipCurrencyAmount(readNestedNumber(source, [
     ["totalAmount"],
     ["total"],
     ["amount"],
@@ -2697,7 +2697,7 @@ function deriveMothershipInvoiceAmount(source) {
     ["charges", "totalAmount"],
     ["charges", "total_amount"],
     ["pricing", "total"]
-  ]);
+  ]));
   if (directAmount) {
     return directAmount;
   }
@@ -2708,7 +2708,7 @@ function deriveMothershipInvoiceAmount(source) {
   }
 
   const lineTotal = lineItems.reduce((sum, item) => {
-    const value = readNestedNumber(item, [
+    const value = normalizeMothershipCurrencyAmount(readNestedNumber(item, [
       ["amount"],
       ["amountDue"],
       ["amount_due"],
@@ -2724,11 +2724,23 @@ function deriveMothershipInvoiceAmount(source) {
       ["rate"],
       ["extendedAmount"],
       ["extended_amount"]
-    ]);
+    ]));
     return sum + value;
   }, 0);
 
   return lineTotal || directAmount;
+}
+
+function normalizeMothershipCurrencyAmount(value) {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+
+  if (Number.isInteger(value) && Math.abs(value) >= 100) {
+    return value / 100;
+  }
+
+  return value;
 }
 
 function extractMothershipInvoiceLineItems(source) {
