@@ -237,6 +237,12 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  const mothershipDocumentMatch = url.pathname.match(/^\/api\/mothership\/documents\/([^/]+)$/);
+  if (req.method === "GET" && mothershipDocumentMatch) {
+    await getMothershipShipmentDocuments(res, mothershipDocumentMatch[1], currentUser);
+    return;
+  }
+
   const shipmentMatch = url.pathname.match(/^\/api\/shipments\/([^/]+)$/);
   if (req.method === "GET" && shipmentMatch) {
     const shipment = await store.getShipment(shipmentMatch[1]);
@@ -626,6 +632,27 @@ async function getShipmentDocuments(res, shipmentId, currentUser) {
   sendJson(res, 200, {
     shipmentId: shipment.id,
     carrierShipmentId: shipment.carrierShipmentId,
+    documents,
+    message: documents.length > 0 ? null : "No carrier documents were returned for this shipment.",
+    rawCarrierResponse: carrierDocuments
+  });
+}
+
+async function getMothershipShipmentDocuments(res, shipmentId, currentUser) {
+  requireStaff(currentUser);
+
+  if (!process.env.MOTHERSHIP_API_TOKEN) {
+    sendJson(res, 400, {
+      error: "MOTHERSHIP_TOKEN_MISSING",
+      message: "Add MOTHERSHIP_API_TOKEN to .env.local before downloading Mothership documents."
+    });
+    return;
+  }
+
+  const carrierDocuments = await requestMothershipShipmentDocuments(shipmentId);
+  const documents = normalizeShipmentDocuments(carrierDocuments, "mothership");
+  sendJson(res, 200, {
+    shipmentId,
     documents,
     message: documents.length > 0 ? null : "No carrier documents were returned for this shipment.",
     rawCarrierResponse: carrierDocuments
@@ -2590,6 +2617,16 @@ function readMothershipInvoiceNextPage(payload, currentPage, currentCount) {
 
 function normalizeMothershipInvoice(referenceRecord, detailRecord, syncedAt, rawCarrierResponse = null, linkedShipmentId = null) {
   const externalInvoiceId = readMothershipInvoiceId(detailRecord || referenceRecord);
+  const carrierShipmentId =
+    readNestedString(detailRecord || referenceRecord, [
+      ["shipmentId"],
+      ["shipment_id"],
+      ["carrierShipmentId"],
+      ["carrier_shipment_id"],
+      ["shipment", "id"],
+      ["shipment", "shipmentId"],
+      ["shipment", "carrierShipmentId"]
+    ]) || null;
   const invoiceNumber =
     readNestedString(detailRecord || referenceRecord, [
       ["invoiceNumber"],
@@ -2674,6 +2711,7 @@ function normalizeMothershipInvoice(referenceRecord, detailRecord, syncedAt, raw
     createdAt,
     source: "mothership",
     externalInvoiceId,
+    carrierShipmentId,
     carrierName: "Mothership",
     rawCarrierResponse: rawCarrierResponse || detailRecord || referenceRecord,
     syncedAt

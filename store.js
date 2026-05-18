@@ -506,14 +506,15 @@ async function createPostgresStore(dbUrl) {
                    invoice_number = $5,
                    reference_number = $6,
                    amount = $7,
-                   status = $8,
-                   issued_at = $9,
-                   due_at = $10,
-                   created_at = $11,
-                   source = $12,
-                   carrier_name = $13,
-                   raw_carrier_response = $14::jsonb,
-                   synced_at = $15
+               status = $8,
+               issued_at = $9,
+               due_at = $10,
+               created_at = $11,
+               source = $12,
+               carrier_name = $13,
+               carrier_shipment_id = $14,
+               raw_carrier_response = $15::jsonb,
+               synced_at = $16
                WHERE external_invoice_id = $1`,
               [
                 invoice.externalInvoiceId,
@@ -529,6 +530,7 @@ async function createPostgresStore(dbUrl) {
                 invoice.createdAt,
                 invoice.source || "mothership",
                 invoice.carrierName || "Mothership",
+                invoice.carrierShipmentId || null,
                 JSON.stringify(invoice.rawCarrierResponse || {}),
                 invoice.syncedAt || nowIso()
               ]
@@ -537,10 +539,10 @@ async function createPostgresStore(dbUrl) {
             continue;
           }
 
-          await client.query(
+         await client.query(
             `INSERT INTO invoices
-             (shipment_id, customer_id, customer_name, invoice_number, reference_number, amount, status, issued_at, due_at, created_at, source, external_invoice_id, carrier_name, raw_carrier_response, synced_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15)`,
+             (shipment_id, customer_id, customer_name, invoice_number, reference_number, amount, status, issued_at, due_at, created_at, source, external_invoice_id, carrier_name, carrier_shipment_id, raw_carrier_response, synced_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16)`,
             [
               invoice.shipmentId || null,
               invoice.customerId || null,
@@ -555,6 +557,7 @@ async function createPostgresStore(dbUrl) {
               invoice.source || "mothership",
               invoice.externalInvoiceId,
               invoice.carrierName || "Mothership",
+              invoice.carrierShipmentId || null,
               JSON.stringify(invoice.rawCarrierResponse || {}),
               invoice.syncedAt || nowIso()
             ]
@@ -783,6 +786,7 @@ async function ensureSchema(pool) {
       source text NOT NULL DEFAULT 'local',
       external_invoice_id text,
       carrier_name text NOT NULL DEFAULT '',
+      carrier_shipment_id text,
       raw_carrier_response jsonb NOT NULL DEFAULT '{}'::jsonb,
       synced_at timestamptz
     )`,
@@ -799,6 +803,7 @@ async function ensureSchema(pool) {
     "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'local'",
     "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS external_invoice_id text",
     "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS carrier_name text NOT NULL DEFAULT ''",
+    "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS carrier_shipment_id text",
     "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS raw_carrier_response jsonb NOT NULL DEFAULT '{}'::jsonb",
     "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS synced_at timestamptz",
     "CREATE INDEX IF NOT EXISTS idx_tariff_rules_customer_id ON tariff_rules(customer_id)",
@@ -1237,6 +1242,7 @@ function createJsonStore(filePath) {
           existing.createdAt = invoice.createdAt;
           existing.source = invoice.source || "mothership";
           existing.carrierName = invoice.carrierName || "Mothership";
+          existing.carrierShipmentId = invoice.carrierShipmentId || null;
           existing.rawCarrierResponse = invoice.rawCarrierResponse || {};
           existing.syncedAt = invoice.syncedAt || nowIso();
           summary.updated += 1;
@@ -1258,6 +1264,7 @@ function createJsonStore(filePath) {
           source: invoice.source || "mothership",
           externalInvoiceId: invoice.externalInvoiceId,
           carrierName: invoice.carrierName || "Mothership",
+          carrierShipmentId: invoice.carrierShipmentId || null,
           rawCarrierResponse: invoice.rawCarrierResponse || {},
           syncedAt: invoice.syncedAt || nowIso()
         });
@@ -1653,6 +1660,7 @@ function mapInvoiceRow(row) {
     source: row.source || "local",
     externalInvoiceId: row.external_invoice_id || null,
     carrierName: row.carrier_name || "",
+    carrierShipmentId: row.carrier_shipment_id || null,
     rawCarrierResponse: row.raw_carrier_response || {},
     syncedAt: row.synced_at || null
   };
