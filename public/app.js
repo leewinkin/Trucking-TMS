@@ -761,10 +761,15 @@ async function openCarrierShipmentDocuments(carrierShipmentId, kind = "bol") {
     if (!state.modal || state.modal.title !== title) {
       return;
     }
-    const documents = filterShipmentDocumentsByKind(response.documents || [], normalizedKind);
+    const allDocuments = Array.isArray(response.documents) ? response.documents : [];
+    const documents = normalizedKind === "pod"
+      ? selectPodDocuments(allDocuments)
+      : filterShipmentDocumentsByKind(allDocuments, normalizedKind);
     const notice = response.message || (documents.length === 0
       ? `No ${normalizedKind === "pod" ? "proof of delivery" : "bill of lading"} was returned for this shipment yet.`
-      : "");
+      : normalizedKind === "pod" && allDocuments.length > 0
+        ? "Mothership returned shipment documents, but none were explicitly labeled POD. Showing the documents returned for this shipment."
+        : "");
     paintModal(title, shipmentDocumentsHtml(
       {
         id: carrierShipmentId,
@@ -782,6 +787,15 @@ async function openCarrierShipmentDocuments(carrierShipmentId, kind = "bol") {
     }
     paintModal(title, `<div class="empty-state">${escapeHtml(error.message || (normalizedKind === "pod" ? "POD lookup failed." : "BOL lookup failed."))}</div>`);
   }
+}
+
+function selectPodDocuments(documents) {
+  const normalized = filterShipmentDocumentsByKind(documents, "pod");
+  if (normalized.length > 0) {
+    return normalized;
+  }
+
+  return Array.isArray(documents) ? documents.slice(0, 10) : [];
 }
 
 async function openQuoteDetails(quoteId) {
