@@ -2230,13 +2230,20 @@ function extractMothershipInvoiceLineItems(payload) {
 function readInvoiceLineItemAmount(item) {
   return readNestedNumber(item, [
     ["amount"],
+    ["amountDue"],
+    ["amount_due"],
     ["chargeAmount"],
+    ["charge_amount"],
     ["lineTotal"],
+    ["line_total"],
     ["total"],
+    ["totalAmount"],
+    ["total_amount"],
     ["value"],
     ["price"],
     ["rate"],
-    ["extendedAmount"]
+    ["extendedAmount"],
+    ["extended_amount"]
   ]);
 }
 
@@ -2255,13 +2262,64 @@ function readNestedNumber(source, paths) {
       current = current?.[key];
     }
     if (current !== undefined && current !== null && current !== "") {
-      const number = Number(current);
+      const number = parseMoneyValue(current);
       if (Number.isFinite(number)) {
         return number;
       }
     }
   }
   return 0;
+}
+
+function parseMoneyValue(value) {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : NaN;
+  }
+
+  if (typeof value === "string") {
+    const text = value.trim();
+    if (!text) {
+      return NaN;
+    }
+
+    const cleaned = text
+      .replace(/\$/g, "")
+      .replace(/,/g, "")
+      .replace(/\s+/g, " ")
+      .replace(/\(([^)]+)\)/g, "-$1");
+    const direct = Number(cleaned);
+    if (Number.isFinite(direct)) {
+      return direct;
+    }
+
+    const match = cleaned.match(/-?\d+(?:\.\d+)?/);
+    if (match) {
+      const parsed = Number(match[0]);
+      return Number.isFinite(parsed) ? parsed : NaN;
+    }
+  }
+
+  if (value && typeof value === "object") {
+    const nestedCandidates = [
+      value.value,
+      value.amount,
+      value.total,
+      value.totalAmount,
+      value.total_amount,
+      value.balanceDue,
+      value.balance_due,
+      value.invoiceTotal,
+      value.invoice_total
+    ];
+    for (const candidate of nestedCandidates) {
+      const parsed = parseMoneyValue(candidate);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+  }
+
+  return NaN;
 }
 
 function isImportedInvoiceReference(invoice) {
