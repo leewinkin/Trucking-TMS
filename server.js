@@ -1038,6 +1038,12 @@ async function requestMothershipModifiedInvoices(modifiedSince, page = null) {
   });
 }
 
+async function requestMothershipInvoice(invoiceId) {
+  return requestMothership(`/invoices/${encodeURIComponent(invoiceId)}`, {
+    method: "GET"
+  });
+}
+
 async function requestMothership(route, options) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 35000);
@@ -1083,19 +1089,15 @@ async function syncMothershipInvoices(res) {
 
   const modifiedSince = "2000-01-01T00:00:00.000Z";
   const syncedAt = nowIso();
-  const invoicesById = new Map();
+  const referenceRecords = [];
+  const hydratedInvoices = [];
   let page = null;
   let pagesVisited = 0;
 
   while (pagesVisited < 100) {
     const payload = await requestMothershipModifiedInvoices(modifiedSince, page);
     const records = extractMothershipInvoiceRecords(payload);
-    records.forEach((record) => {
-      const normalized = normalizeMothershipInvoice(record, syncedAt);
-      if (normalized.externalInvoiceId) {
-        invoicesById.set(normalized.externalInvoiceId, normalized);
-      }
-    });
+    referenceRecords.push(...records);
 
     pagesVisited += 1;
     const nextPage = readMothershipInvoiceNextPage(payload, page || 0, records.length);
@@ -1105,10 +1107,40 @@ async function syncMothershipInvoices(res) {
     page = nextPage;
   }
 
-  const summary = await store.upsertExternalInvoices(Array.from(invoicesById.values()));
+  const detailSummary = {
+    hydrated: 0,
+    failed: 0
+  };
+
+  for (const chunk of chunkArray(referenceRecords, 5)) {
+    const resolved = await Promise.all(
+      chunk.map(async (referenceRecord) => {
+        const invoiceId = readMothershipInvoiceId(referenceRecord);
+        if (!invoiceId) {
+          detailSummary.failed += 1;
+          return normalizeMothershipInvoice(referenceRecord, null, syncedAt);
+        }
+
+        try {
+          const detailPayload = await requestMothershipInvoice(invoiceId);
+          detailSummary.hydrated += 1;
+          return normalizeMothershipInvoice(referenceRecord, unwrapMothershipData(detailPayload), syncedAt, detailPayload);
+        } catch (error) {
+          detailSummary.failed += 1;
+          return normalizeMothershipInvoice(referenceRecord, null, syncedAt, { error: error.message, reference: referenceRecord });
+        }
+      })
+    );
+
+    hydratedInvoices.push(...resolved);
+  }
+
+  const summary = await store.upsertExternalInvoices(hydratedInvoices);
   sendJson(res, 200, {
     synced: summary,
-    totalFetched: invoicesById.size,
+    totalFetched: referenceRecords.length,
+    hydrated: detailSummary.hydrated,
+    detailFailed: detailSummary.failed,
     modifiedSince,
     syncedAt
   });
@@ -2406,6 +2438,32 @@ function readNestedString(source, paths) {
   return "";
 }
 
+function unwrapMothershipData(payload) {
+  if (!payload || typeof payload !== "object") {
+    return payload;
+  }
+
+  return Object.prototype.hasOwnProperty.call(payload, "data") ? payload.data : payload;
+}
+
+function chunkArray(values, size) {
+  const chunks = [];
+  for (let index = 0; index < values.length; index += size) {
+    chunks.push(values.slice(index, index + size));
+  }
+  return chunks;
+}
+
+function readMothershipInvoiceId(record) {
+  return readNestedString(record, [
+    ["id"],
+    ["invoiceId"],
+    ["invoice_id"],
+    ["invoice", "id"],
+    ["reference", "id"]
+  ]);
+}
+
 function extractMothershipInvoiceRecords(payload) {
   const candidates = [
     payload?.data?.invoices,
@@ -2465,59 +2523,51 @@ function readMothershipInvoiceNextPage(payload, currentPage, currentCount) {
   return currentCount > 0 ? null : null;
 }
 
-function normalizeMothershipInvoice(record, syncedAt) {
-  const externalInvoiceId = readNestedString(record, [
-    ["id"],
-    ["invoiceId"],
-    ["invoice_id"],
-    ["invoice", "id"],
-    ["reference", "id"]
-  ]);
+function normalizeMothershipInvoice(referenceRecord, detailRecord, syncedAt, rawCarrierResponse = null) {
+  const externalInvoiceId = readMothershipInvoiceId(detailRecord || referenceRecord);
   const invoiceNumber =
-    readNestedString(record, [
+    readNestedString(detailRecord || referenceRecord, [
       ["invoiceNumber"],
       ["invoice_number"],
       ["number"],
       ["invoiceNo"],
+      ["displayNumber"],
+      ["documentNumber"],
       ["invoice", "invoiceNumber"],
       ["invoice", "number"]
     ]) || (externalInvoiceId ? `MS-${externalInvoiceId.slice(-10)}` : `MS-${createId("invoice")}`);
   const shipmentId =
-    readNestedString(record, [
+    readNestedString(detailRecord || referenceRecord, [
       ["shipmentId"],
       ["shipment_id"],
       ["shipment", "id"],
       ["shipment", "shipmentId"]
     ]) || null;
   const customerName =
-    readNestedString(record, [
+    readNestedString(detailRecord || referenceRecord, [
       ["customerName"],
       ["customer", "name"],
       ["accountName"],
       ["account", "name"],
       ["companyName"],
       ["shipper", "name"],
-      ["billTo", "name"]
+      ["billTo", "name"],
+      ["shipperName"],
+      ["account", "companyName"]
     ]) || "Imported from Mothership";
-  const referenceNumber = readNestedString(record, [
+  const referenceNumber = readNestedString(detailRecord || referenceRecord, [
     ["referenceNumber"],
     ["purchaseOrderNumber"],
     ["poNumber"],
+    ["po"],
+    ["customerReference"],
     ["shipment", "referenceNumber"],
     ["reference", "number"]
   ]);
-  const amount = readNestedNumber(record, [
-    ["totalAmount"],
-    ["amount"],
-    ["invoiceAmount"],
-    ["amountDue"],
-    ["balanceDue"],
-    ["charges", "total"],
-    ["pricing", "total"]
-  ]);
+  const amount = deriveMothershipInvoiceAmount(detailRecord || referenceRecord);
   const status =
     normalizeImportedInvoiceStatus(
-      readNestedString(record, [
+      readNestedString(detailRecord || referenceRecord, [
         ["status"],
         ["invoiceStatus"],
         ["paymentStatus"],
@@ -2525,7 +2575,7 @@ function normalizeMothershipInvoice(record, syncedAt) {
       ])
     ) || "imported";
   const issuedAt = normalizeIsoTimestamp(
-    readNestedString(record, [
+    readNestedString(detailRecord || referenceRecord, [
       ["issuedAt"],
       ["invoiceDate"],
       ["dateIssued"],
@@ -2534,7 +2584,7 @@ function normalizeMothershipInvoice(record, syncedAt) {
     ])
   );
   const dueAt = normalizeIsoTimestamp(
-    readNestedString(record, [
+    readNestedString(detailRecord || referenceRecord, [
       ["dueAt"],
       ["dueDate"],
       ["paymentDueDate"]
@@ -2542,7 +2592,7 @@ function normalizeMothershipInvoice(record, syncedAt) {
   );
   const createdAt =
     normalizeIsoTimestamp(
-      readNestedString(record, [
+      readNestedString(detailRecord || referenceRecord, [
         ["createdAt"],
         ["created_at"],
         ["updatedAt"],
@@ -2566,9 +2616,72 @@ function normalizeMothershipInvoice(record, syncedAt) {
     source: "mothership",
     externalInvoiceId,
     carrierName: "Mothership",
-    rawCarrierResponse: record,
+    rawCarrierResponse: rawCarrierResponse || detailRecord || referenceRecord,
     syncedAt
   };
+}
+
+function deriveMothershipInvoiceAmount(source) {
+  const directAmount = readNestedNumber(source, [
+    ["totalAmount"],
+    ["total"],
+    ["amount"],
+    ["invoiceAmount"],
+    ["amountDue"],
+    ["balanceDue"],
+    ["balance_due"],
+    ["invoiceTotal"],
+    ["invoice_total"],
+    ["charges", "total"],
+    ["pricing", "total"]
+  ]);
+  if (directAmount) {
+    return directAmount;
+  }
+
+  const lineItems = extractMothershipInvoiceLineItems(source);
+  if (!lineItems.length) {
+    return directAmount;
+  }
+
+  const lineTotal = lineItems.reduce((sum, item) => {
+    const value = readNestedNumber(item, [
+      ["amount"],
+      ["chargeAmount"],
+      ["lineTotal"],
+      ["total"],
+      ["value"],
+      ["price"],
+      ["rate"],
+      ["extendedAmount"]
+    ]);
+    return sum + value;
+  }, 0);
+
+  return lineTotal || directAmount;
+}
+
+function extractMothershipInvoiceLineItems(source) {
+  const candidates = [
+    source?.lineItems,
+    source?.line_items,
+    source?.items,
+    source?.charges,
+    source?.adjustments,
+    source?.data?.lineItems,
+    source?.data?.items,
+    source?.data?.charges,
+    source?.invoice?.lineItems,
+    source?.invoice?.items
+  ];
+
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) {
+      return candidate;
+    }
+  }
+
+  return [];
 }
 
 function normalizeImportedInvoiceStatus(value) {

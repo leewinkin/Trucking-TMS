@@ -2144,6 +2144,10 @@ function invoiceDetailsHtml(invoice, shipment) {
         `
       )}
       ${invoice.source === "mothership" && isStaffUser() ? detailSection(
+        "Invoice Line Items",
+        invoiceLineItemsHtml(invoice.rawCarrierResponse)
+      ) : ""}
+      ${invoice.source === "mothership" && isStaffUser() ? detailSection(
         "Mothership Payload",
         `
           <p class="audit-message">This raw payload is shown to admins so we can map the real Mothership invoice fields from your account.</p>
@@ -2152,6 +2156,112 @@ function invoiceDetailsHtml(invoice, shipment) {
       ) : ""}
     </div>
   `;
+}
+
+function invoiceLineItemsHtml(payload) {
+  const items = extractMothershipInvoiceLineItems(payload);
+  if (!items.length) {
+    return `<div class="empty-state audit-empty">No invoice line items were returned.</div>`;
+  }
+
+  return `
+    <div class="audit-panel">
+      ${items
+        .slice(0, 50)
+        .map(
+          (item, index) => {
+            const label = String(
+              item?.description ||
+              item?.name ||
+              item?.type ||
+              item?.code ||
+              item?.lineType ||
+              `Line Item ${index + 1}`
+            ).trim();
+            const detailBits = [
+              item?.quantity ? `Qty ${item.quantity}` : "",
+              item?.status ? String(item.status) : "",
+              item?.referenceNumber ? `Ref ${item.referenceNumber}` : "",
+              item?.adjustmentType ? String(item.adjustmentType) : ""
+            ].filter(Boolean);
+            const amount = readInvoiceLineItemAmount(item);
+            return `
+              <article class="row-item compact-rate">
+                <div>
+                  <strong>${escapeHtml(label)}</strong>
+                  <small>${escapeHtml(detailBits.join(" · ") || "Invoice line item")}</small>
+                </div>
+                <div class="price-block">
+                  <strong>${money.format(amount)}</strong>
+                </div>
+              </article>
+            `;
+          }
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function extractMothershipInvoiceLineItems(payload) {
+  const source = unwrapMothershipInvoiceDetail(payload);
+  const candidates = [
+    source?.lineItems,
+    source?.line_items,
+    source?.items,
+    source?.charges,
+    source?.adjustments,
+    source?.data?.lineItems,
+    source?.data?.items,
+    source?.data?.charges,
+    source?.invoice?.lineItems,
+    source?.invoice?.items
+  ];
+
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) {
+      return candidate;
+    }
+  }
+
+  return [];
+}
+
+function readInvoiceLineItemAmount(item) {
+  return readNestedNumber(item, [
+    ["amount"],
+    ["chargeAmount"],
+    ["lineTotal"],
+    ["total"],
+    ["value"],
+    ["price"],
+    ["rate"],
+    ["extendedAmount"]
+  ]);
+}
+
+function unwrapMothershipInvoiceDetail(payload) {
+  if (!payload || typeof payload !== "object") {
+    return payload;
+  }
+
+  return Object.prototype.hasOwnProperty.call(payload, "data") ? payload.data : payload;
+}
+
+function readNestedNumber(source, paths) {
+  for (const path of paths) {
+    let current = source;
+    for (const key of path) {
+      current = current?.[key];
+    }
+    if (current !== undefined && current !== null && current !== "") {
+      const number = Number(current);
+      if (Number.isFinite(number)) {
+        return number;
+      }
+    }
+  }
+  return 0;
 }
 
 function isImportedInvoiceReference(invoice) {
