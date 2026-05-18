@@ -2188,8 +2188,14 @@ function invoiceDetailsHtml(invoice, shipment) {
             <div class="modal-actions">
               <button class="secondary-action" type="button" data-view-shipment="${escapeHtml(shipment.id)}">View Shipment</button>
               <button class="secondary-action" type="button" data-track-shipment="${escapeHtml(shipment.id)}">Track Shipment</button>
+              <button class="secondary-action" type="button" data-view-pod-shipment="${escapeHtml(shipment.id)}">View POD</button>
             </div>
-          ` : ""}
+          ` : `
+            <div class="modal-actions">
+              <button class="secondary-action" type="button" disabled title="This invoice is not linked to a shipment.">View POD</button>
+            </div>
+            <p class="audit-message">POD is only available when an invoice is linked to a shipment.</p>
+          `}
         `
       )}
       ${invoice.source === "mothership" && isStaffUser() ? detailSection(
