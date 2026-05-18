@@ -131,9 +131,15 @@ function wireNavigation() {
       return;
     }
 
-    const invoiceCarrierPodButton = event.target.closest("[data-view-pod-carrier-shipment]");
+    const invoiceCarrierBolButton = event.target.closest("[data-view-bol-carrier-entity]");
+    if (invoiceCarrierBolButton) {
+      openCarrierShipmentDocuments(invoiceCarrierBolButton.dataset.viewBolCarrierEntity, "bol");
+      return;
+    }
+
+    const invoiceCarrierPodButton = event.target.closest("[data-view-pod-carrier-entity]");
     if (invoiceCarrierPodButton) {
-      openCarrierShipmentDocuments(invoiceCarrierPodButton.dataset.viewPodCarrierShipment, "pod");
+      openCarrierShipmentDocuments(invoiceCarrierPodButton.dataset.viewPodCarrierEntity, "pod");
       return;
     }
 
@@ -750,30 +756,28 @@ async function openShipmentDocuments(shipmentId, kind = "bol") {
   }
 }
 
-async function openCarrierShipmentDocuments(carrierShipmentId, kind = "bol") {
+async function openCarrierShipmentDocuments(entityId, kind = "bol") {
   const normalizedKind = String(kind || "bol").toLowerCase() === "pod" ? "pod" : "bol";
   const title = normalizedKind === "pod"
-    ? `Proof of Delivery ${carrierShipmentId}`
-    : `Bill of Lading ${carrierShipmentId}`;
+    ? `Proof of Delivery ${entityId}`
+    : `Bill of Lading ${entityId}`;
   openModal(title, `<div class="empty-state">Loading ${normalizedKind === "pod" ? "proof of delivery" : "bill of lading"}...</div>`);
   try {
-    const response = await api(`/api/mothership/documents/${carrierShipmentId}`);
+    const response = await api(`/api/mothership/documents/${entityId}`);
     if (!state.modal || state.modal.title !== title) {
       return;
     }
     const allDocuments = Array.isArray(response.documents) ? response.documents : [];
-    const documents = normalizedKind === "pod"
-      ? selectPodDocuments(allDocuments)
-      : filterShipmentDocumentsByKind(allDocuments, normalizedKind);
-    const notice = response.message || (documents.length === 0
-      ? `No ${normalizedKind === "pod" ? "proof of delivery" : "bill of lading"} was returned for this shipment yet.`
-      : normalizedKind === "pod" && allDocuments.length > 0
-        ? "Mothership returned shipment documents, but none were explicitly labeled POD. Showing the documents returned for this shipment."
-        : "");
+    const documents = filterShipmentDocumentsByKind(allDocuments, normalizedKind);
+    const notice = normalizedKind === "pod"
+      ? (documents.length > 0
+          ? response.message || ""
+          : "POD is in your actual Mothership account, please log in to download.")
+      : (response.message || (documents.length === 0 ? "No bill of lading was returned for this shipment yet." : ""));
     paintModal(title, shipmentDocumentsHtml(
       {
-        id: carrierShipmentId,
-        confirmationNumber: carrierShipmentId,
+        id: entityId,
+        confirmationNumber: entityId,
         referenceNumber: "",
         carrier: "mothership"
       },
@@ -787,15 +791,6 @@ async function openCarrierShipmentDocuments(carrierShipmentId, kind = "bol") {
     }
     paintModal(title, `<div class="empty-state">${escapeHtml(error.message || (normalizedKind === "pod" ? "POD lookup failed." : "BOL lookup failed."))}</div>`);
   }
-}
-
-function selectPodDocuments(documents) {
-  const normalized = filterShipmentDocumentsByKind(documents, "pod");
-  if (normalized.length > 0) {
-    return normalized;
-  }
-
-  return Array.isArray(documents) ? documents.slice(0, 10) : [];
 }
 
 async function openQuoteDetails(quoteId) {
@@ -1783,7 +1778,7 @@ function invoiceRow(invoice, options = {}) {
   const showActions = options.showActions !== false;
   const sourceLabel = invoice.source === "mothership" ? "Mothership" : "Local";
   const referenceOnly = isImportedInvoiceReference(invoice);
-  const podTarget = resolveInvoicePodTarget(invoice);
+  const podTarget = resolveInvoiceDocumentTarget(invoice);
   const shipment = podTarget.localShipment;
   const subLabel = podTarget.displayLabel
     ? `${escapeHtml(invoice.customerName)} · ${escapeHtml(podTarget.displayLabel)}`
@@ -1809,7 +1804,7 @@ function invoiceRow(invoice, options = {}) {
         ${showActions ? `
           <div class="row-actions">
             <button class="secondary-action" type="button" data-view-invoice="${escapeHtml(invoice.id)}">${referenceOnly ? "View Payload" : "View Invoice"}</button>
-            ${podTarget.localShipment ? `<button class="secondary-action" type="button" data-view-pod-shipment="${escapeHtml(podTarget.localShipment.id)}">View POD</button>` : podTarget.carrierShipmentId ? `<button class="secondary-action" type="button" data-view-pod-carrier-shipment="${escapeHtml(podTarget.carrierShipmentId)}">View POD</button>` : ""}
+            ${invoiceCarrierDocumentActions(podTarget.entityId)}
           </div>
         ` : ""}
       </div>
@@ -2189,7 +2184,7 @@ function shipmentDocumentsHtml(shipment, documents = [], notice = "", kind = "bo
           `
         )
         .join("")
-    : `<div class="empty-state">${escapeHtml(notice || "No bill of lading was returned for this shipment yet.")}</div>`;
+    : `<div class="empty-state">${escapeHtml(notice || (normalizedKind === "pod" ? "POD is in your actual Mothership account, please log in to download." : "No bill of lading was returned for this shipment yet."))}</div>`;
 
   return `
     <div class="detail-grid">
@@ -2222,7 +2217,7 @@ function filterShipmentDocumentsByKind(documents, kind) {
 function invoiceDetailsHtml(invoice, shipment) {
   const sourceLabel = invoice.source === "mothership" ? "Mothership" : "Local";
   const referenceOnly = isImportedInvoiceReference(invoice);
-  const podTarget = resolveInvoicePodTarget(invoice);
+  const podTarget = resolveInvoiceDocumentTarget(invoice);
   return `
     <div class="detail-grid">
       ${detailSection(
@@ -2246,13 +2241,13 @@ function invoiceDetailsHtml(invoice, shipment) {
             <div class="modal-actions">
               <button class="secondary-action" type="button" data-view-shipment="${escapeHtml(shipment.id)}">View Shipment</button>
               <button class="secondary-action" type="button" data-track-shipment="${escapeHtml(shipment.id)}">Track Shipment</button>
-              ${shipment.carrierShipmentId ? `<button class="secondary-action" type="button" data-view-pod-carrier-shipment="${escapeHtml(shipment.carrierShipmentId)}">View POD</button>` : ""}
+              ${invoiceCarrierDocumentActions(podTarget.entityId)}
             </div>
           ` : `
             <div class="modal-actions">
-              ${podTarget.carrierShipmentId ? `<button class="secondary-action" type="button" data-view-pod-carrier-shipment="${escapeHtml(podTarget.carrierShipmentId)}">View POD</button>` : `<button class="secondary-action" type="button" disabled title="This invoice is not linked to a shipment.">View POD</button>`}
+              ${invoiceCarrierDocumentActions(podTarget.entityId)}
             </div>
-            ${podTarget.carrierShipmentId ? "" : `<p class="audit-message">POD is only available when an invoice is linked to a shipment.</p>`}
+            ${podTarget.entityId ? "" : `<p class="audit-message">POD is only available when Mothership returns a carrier entity ID for this invoice.</p>`}
           `}
         `
       )}
@@ -2401,44 +2396,48 @@ function readNestedString(source, paths) {
 }
 
 function resolveInvoiceShipment(invoice) {
-  const target = resolveInvoicePodTarget(invoice);
+  const target = resolveInvoiceDocumentTarget(invoice);
   if (!target.localShipment) {
     return null;
   }
   return target.localShipment;
 }
 
-function resolveInvoicePodTarget(invoice) {
+function resolveInvoiceDocumentTarget(invoice) {
   const candidates = extractInvoiceShipmentCandidates(invoice);
   const localShipment = candidates.length
     ? state.shipments.find((shipment) =>
         candidates.some((candidate) =>
           String(shipment.id || "").trim() === candidate ||
           String(shipment.carrierShipmentId || "").trim() === candidate ||
+          String(shipment.carrierEntityId || "").trim() === candidate ||
           String(shipment.confirmationNumber || "").trim() === candidate ||
           String(shipment.referenceNumber || "").trim() === candidate
         )
       ) || null
     : null;
 
-  const carrierShipmentId =
-    readNestedString(invoice?.rawCarrierResponse || invoice, [["carrierShipmentId"]]) ||
-    readNestedString(invoice?.rawCarrierResponse || invoice, [["carrier_shipment_id"]]) ||
-    readNestedString(invoice?.rawCarrierResponse || invoice, [["shipmentId"]]) ||
-    readNestedString(invoice?.rawCarrierResponse || invoice, [["shipment_id"]]) ||
-    invoice?.carrierShipmentId ||
-    (localShipment ? localShipment.carrierShipmentId : "") ||
+  const carrierEntityId =
+    readNestedString(invoice?.rawCarrierResponse || invoice, [["entityID"]]) ||
+    readNestedString(invoice?.rawCarrierResponse || invoice, [["entityId"]]) ||
+    readNestedString(invoice?.rawCarrierResponse || invoice, [["entity_id"]]) ||
+    readNestedString(invoice?.rawCarrierResponse || invoice, [["shipment", "entityID"]]) ||
+    readNestedString(invoice?.rawCarrierResponse || invoice, [["shipment", "entityId"]]) ||
+    readNestedString(invoice?.rawCarrierResponse || invoice, [["shipment", "entity_id"]]) ||
+    invoice?.carrierEntityId ||
+    (localShipment ? localShipment.carrierEntityId : "") ||
     "";
 
   const displayLabel = localShipment
     ? `Shipment ${localShipment.confirmationNumber || localShipment.id}`
-    : carrierShipmentId
-      ? `Shipment ${carrierShipmentId}`
+    : carrierEntityId
+      ? `Shipment ${carrierEntityId}`
       : "";
 
   return {
     localShipment,
-    carrierShipmentId: carrierShipmentId || "",
+    entityId: carrierEntityId || "",
+    carrierShipmentId: invoice?.carrierShipmentId || (localShipment ? localShipment.carrierShipmentId : "") || "",
     displayLabel
   };
 }
@@ -2446,6 +2445,15 @@ function resolveInvoicePodTarget(invoice) {
 function extractInvoiceShipmentCandidates(invoice) {
   const source = invoice?.rawCarrierResponse || invoice || null;
   return [
+    readNestedString(invoice, [["carrierEntityId"]]),
+    readNestedString(source, [["carrierEntityId"]]),
+    readNestedString(source, [["carrier_entity_id"]]),
+    readNestedString(source, [["entityID"]]),
+    readNestedString(source, [["entityId"]]),
+    readNestedString(source, [["entity_id"]]),
+    readNestedString(source, [["shipment", "entityID"]]),
+    readNestedString(source, [["shipment", "entityId"]]),
+    readNestedString(source, [["shipment", "entity_id"]]),
     readNestedString(invoice, [["shipmentId"]]),
     readNestedString(source, [["shipmentId"]]),
     readNestedString(source, [["shipment_id"]]),
@@ -2460,6 +2468,22 @@ function extractInvoiceShipmentCandidates(invoice) {
     readNestedString(source, [["referenceNumber"]]),
     readNestedString(source, [["shipment", "referenceNumber"]])
   ].filter(Boolean);
+}
+
+function invoiceCarrierDocumentActions(entityId) {
+  const value = String(entityId || "").trim();
+  if (!value) {
+    const title = "This invoice is not linked to a Mothership entity ID.";
+    return `
+      <button class="secondary-action" type="button" disabled title="${escapeHtml(title)}">View BOL</button>
+      <button class="secondary-action" type="button" disabled title="${escapeHtml(title)}">View POD</button>
+    `;
+  }
+
+  return `
+    <button class="secondary-action" type="button" data-view-bol-carrier-entity="${escapeHtml(value)}">View BOL</button>
+    <button class="secondary-action" type="button" data-view-pod-carrier-entity="${escapeHtml(value)}">View POD</button>
+  `;
 }
 
 function normalizeMothershipCurrencyAmount(value) {

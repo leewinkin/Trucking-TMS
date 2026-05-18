@@ -486,6 +486,7 @@ async function createShipment(req, res, currentUser) {
               ? "fedexFreight"
               : quote.carrier || "demo",
     carrierShipmentId: getCarrierShipmentId(carrierShipment) || createId("demoShipment"),
+    carrierEntityId: getCarrierEntityId(carrierShipment) || null,
     confirmationNumber: getCarrierShipmentId(carrierShipment) || `LOCAL-${Date.now()}`,
     referenceNumber: quote.referenceNumber,
     pickup: quote.pickup,
@@ -638,7 +639,7 @@ async function getShipmentDocuments(res, shipmentId, currentUser) {
   });
 }
 
-async function getMothershipShipmentDocuments(res, shipmentId, currentUser) {
+async function getMothershipShipmentDocuments(res, entityId, currentUser) {
   requireStaff(currentUser);
 
   if (!process.env.MOTHERSHIP_API_TOKEN) {
@@ -649,10 +650,11 @@ async function getMothershipShipmentDocuments(res, shipmentId, currentUser) {
     return;
   }
 
-  const carrierDocuments = await requestMothershipShipmentDocuments(shipmentId);
+  const carrierDocuments = await requestMothershipShipmentDocuments(entityId);
   const documents = normalizeShipmentDocuments(carrierDocuments, "mothership");
   sendJson(res, 200, {
-    shipmentId,
+    entityId,
+    shipmentId: entityId,
     documents,
     message: documents.length > 0 ? null : "No carrier documents were returned for this shipment.",
     rawCarrierResponse: carrierDocuments
@@ -1046,8 +1048,8 @@ async function requestMothershipShipmentDetails(shipmentId) {
   });
 }
 
-async function requestMothershipShipmentDocuments(shipmentId) {
-  return requestMothership(`/documents/${encodeURIComponent(shipmentId)}`, {
+async function requestMothershipShipmentDocuments(entityId) {
+  return requestMothership(`/documents/${encodeURIComponent(entityId)}`, {
     method: "GET"
   });
 }
@@ -1538,6 +1540,11 @@ function getCarrierQuoteId(payload) {
 function getCarrierShipmentId(payload) {
   const data = payload?.response?.data || payload?.response || payload?.data || payload;
   return data?.id || data?.shipmentId || data?.productTransactionId || data?.shipmentOfferId || null;
+}
+
+function getCarrierEntityId(payload) {
+  const data = payload?.response?.data || payload?.response || payload?.data || payload;
+  return data?.entityID || data?.entityId || data?.entity_id || data?.shipment?.entityID || data?.shipment?.entityId || data?.shipment?.entity_id || null;
 }
 
 function getSpeedshipProductTransactionId(shipment, quote) {
@@ -2617,6 +2624,15 @@ function readMothershipInvoiceNextPage(payload, currentPage, currentCount) {
 
 function normalizeMothershipInvoice(referenceRecord, detailRecord, syncedAt, rawCarrierResponse = null, linkedShipmentId = null) {
   const externalInvoiceId = readMothershipInvoiceId(detailRecord || referenceRecord);
+  const carrierEntityId =
+    readNestedString(detailRecord || referenceRecord, [
+      ["entityID"],
+      ["entityId"],
+      ["entity_id"],
+      ["shipment", "entityID"],
+      ["shipment", "entityId"],
+      ["shipment", "entity_id"]
+    ]) || null;
   const carrierShipmentId =
     readNestedString(detailRecord || referenceRecord, [
       ["shipmentId"],
@@ -2711,6 +2727,7 @@ function normalizeMothershipInvoice(referenceRecord, detailRecord, syncedAt, raw
     createdAt,
     source: "mothership",
     externalInvoiceId,
+    carrierEntityId,
     carrierShipmentId,
     carrierName: "Mothership",
     rawCarrierResponse: rawCarrierResponse || detailRecord || referenceRecord,

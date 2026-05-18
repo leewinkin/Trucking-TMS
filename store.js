@@ -413,8 +413,8 @@ async function createPostgresStore(dbUrl) {
 
         const shipmentResult = await client.query(
           `INSERT INTO shipments
-           (id, customer_id, customer_name, quote_id, carrier, carrier_name, carrier_shipment_id, confirmation_number, reference_number, pickup, delivery, freight, carrier_cost, sell_price, margin, provider, service, status, pickup_date, carrier_shipment, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12::jsonb, $13, $14, $15, $16, $17, $18, $19::jsonb, $20::jsonb, $21)
+           (id, customer_id, customer_name, quote_id, carrier, carrier_name, carrier_shipment_id, carrier_entity_id, confirmation_number, reference_number, pickup, delivery, freight, carrier_cost, sell_price, margin, provider, service, status, pickup_date, carrier_shipment, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13::jsonb, $14, $15, $16, $17, $18, $19, $20::jsonb, $21::jsonb, $22)
            RETURNING *`,
           [
             payload.shipment.id,
@@ -424,6 +424,7 @@ async function createPostgresStore(dbUrl) {
             payload.shipment.carrier,
             payload.shipment.carrierName || "",
             payload.shipment.carrierShipmentId,
+            payload.shipment.carrierEntityId || null,
             payload.shipment.confirmationNumber,
             payload.shipment.referenceNumber || "",
             JSON.stringify(payload.shipment.pickup),
@@ -443,8 +444,8 @@ async function createPostgresStore(dbUrl) {
 
         const invoiceResult = await client.query(
           `INSERT INTO invoices
-           (shipment_id, customer_id, customer_name, reference_number, amount, status, issued_at, due_at, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           (shipment_id, customer_id, customer_name, reference_number, amount, status, issued_at, due_at, created_at, carrier_entity_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
            RETURNING *`,
           [
             shipmentResult.rows[0].id,
@@ -455,7 +456,8 @@ async function createPostgresStore(dbUrl) {
             payload.invoice.status,
             payload.invoice.issuedAt,
             payload.invoice.dueAt,
-            payload.invoice.createdAt
+            payload.invoice.createdAt,
+            payload.shipment.carrierEntityId || null
           ]
         );
 
@@ -506,15 +508,16 @@ async function createPostgresStore(dbUrl) {
                    invoice_number = $5,
                    reference_number = $6,
                    amount = $7,
-               status = $8,
-               issued_at = $9,
-               due_at = $10,
-               created_at = $11,
-               source = $12,
-               carrier_name = $13,
-               carrier_shipment_id = $14,
-               raw_carrier_response = $15::jsonb,
-               synced_at = $16
+                   status = $8,
+                   issued_at = $9,
+                   due_at = $10,
+                   created_at = $11,
+                   source = $12,
+                   carrier_name = $13,
+                   carrier_shipment_id = $14,
+                   carrier_entity_id = $15,
+                   raw_carrier_response = $16::jsonb,
+                   synced_at = $17
                WHERE external_invoice_id = $1`,
               [
                 invoice.externalInvoiceId,
@@ -531,6 +534,7 @@ async function createPostgresStore(dbUrl) {
                 invoice.source || "mothership",
                 invoice.carrierName || "Mothership",
                 invoice.carrierShipmentId || null,
+                invoice.carrierEntityId || null,
                 JSON.stringify(invoice.rawCarrierResponse || {}),
                 invoice.syncedAt || nowIso()
               ]
@@ -539,10 +543,10 @@ async function createPostgresStore(dbUrl) {
             continue;
           }
 
-         await client.query(
+          await client.query(
             `INSERT INTO invoices
-             (shipment_id, customer_id, customer_name, invoice_number, reference_number, amount, status, issued_at, due_at, created_at, source, external_invoice_id, carrier_name, carrier_shipment_id, raw_carrier_response, synced_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16)`,
+             (shipment_id, customer_id, customer_name, invoice_number, reference_number, amount, status, issued_at, due_at, created_at, source, external_invoice_id, carrier_name, carrier_shipment_id, carrier_entity_id, raw_carrier_response, synced_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb, $17)`,
             [
               invoice.shipmentId || null,
               invoice.customerId || null,
@@ -558,6 +562,7 @@ async function createPostgresStore(dbUrl) {
               invoice.externalInvoiceId,
               invoice.carrierName || "Mothership",
               invoice.carrierShipmentId || null,
+              invoice.carrierEntityId || null,
               JSON.stringify(invoice.rawCarrierResponse || {}),
               invoice.syncedAt || nowIso()
             ]
@@ -746,6 +751,7 @@ async function ensureSchema(pool) {
       carrier text NOT NULL,
       carrier_name text NOT NULL DEFAULT '',
       carrier_shipment_id text NOT NULL,
+      carrier_entity_id text,
       confirmation_number text NOT NULL,
       reference_number text NOT NULL DEFAULT '',
       pickup jsonb NOT NULL,
@@ -787,6 +793,7 @@ async function ensureSchema(pool) {
       external_invoice_id text,
       carrier_name text NOT NULL DEFAULT '',
       carrier_shipment_id text,
+      carrier_entity_id text,
       raw_carrier_response jsonb NOT NULL DEFAULT '{}'::jsonb,
       synced_at timestamptz
     )`,
@@ -796,6 +803,7 @@ async function ensureSchema(pool) {
     "ALTER TABLE quotes ADD COLUMN IF NOT EXISTS carrier_audit jsonb NOT NULL DEFAULT '[]'::jsonb",
     "ALTER TABLE shipments ADD COLUMN IF NOT EXISTS reference_number text NOT NULL DEFAULT ''",
     "ALTER TABLE shipments ADD COLUMN IF NOT EXISTS carrier_name text NOT NULL DEFAULT ''",
+    "ALTER TABLE shipments ADD COLUMN IF NOT EXISTS carrier_entity_id text",
     "ALTER TABLE invoices ALTER COLUMN shipment_id DROP NOT NULL",
     "ALTER TABLE invoices ALTER COLUMN customer_id DROP NOT NULL",
     "ALTER TABLE invoices ALTER COLUMN customer_name SET DEFAULT ''",
@@ -804,6 +812,7 @@ async function ensureSchema(pool) {
     "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS external_invoice_id text",
     "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS carrier_name text NOT NULL DEFAULT ''",
     "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS carrier_shipment_id text",
+    "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS carrier_entity_id text",
     "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS raw_carrier_response jsonb NOT NULL DEFAULT '{}'::jsonb",
     "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS synced_at timestamptz",
     "CREATE INDEX IF NOT EXISTS idx_tariff_rules_customer_id ON tariff_rules(customer_id)",
@@ -1182,7 +1191,7 @@ function createJsonStore(filePath) {
     async createShipment(payload) {
       const db = await readJsonDb(filePath);
       const shipment = payload.shipment;
-      const invoice = {
+        const invoice = {
         id: createId("inv"),
         shipmentId: shipment.id,
         customerId: shipment.customerId,
@@ -1197,6 +1206,7 @@ function createJsonStore(filePath) {
         source: "local",
         externalInvoiceId: null,
         carrierName: shipment.carrierName || "",
+        carrierEntityId: shipment.carrierEntityId || null,
         rawCarrierResponse: {},
         syncedAt: null
       };
@@ -1243,6 +1253,7 @@ function createJsonStore(filePath) {
           existing.source = invoice.source || "mothership";
           existing.carrierName = invoice.carrierName || "Mothership";
           existing.carrierShipmentId = invoice.carrierShipmentId || null;
+          existing.carrierEntityId = invoice.carrierEntityId || null;
           existing.rawCarrierResponse = invoice.rawCarrierResponse || {};
           existing.syncedAt = invoice.syncedAt || nowIso();
           summary.updated += 1;
@@ -1265,6 +1276,7 @@ function createJsonStore(filePath) {
           externalInvoiceId: invoice.externalInvoiceId,
           carrierName: invoice.carrierName || "Mothership",
           carrierShipmentId: invoice.carrierShipmentId || null,
+          carrierEntityId: invoice.carrierEntityId || null,
           rawCarrierResponse: invoice.rawCarrierResponse || {},
           syncedAt: invoice.syncedAt || nowIso()
         });
@@ -1627,6 +1639,7 @@ function mapShipmentRow(row) {
     carrier: row.carrier,
     carrierName: row.carrier_name || "",
     carrierShipmentId: row.carrier_shipment_id,
+    carrierEntityId: row.carrier_entity_id || null,
     confirmationNumber: row.confirmation_number,
     referenceNumber: row.reference_number || "",
     pickup: row.pickup,
@@ -1661,6 +1674,7 @@ function mapInvoiceRow(row) {
     externalInvoiceId: row.external_invoice_id || null,
     carrierName: row.carrier_name || "",
     carrierShipmentId: row.carrier_shipment_id || null,
+    carrierEntityId: row.carrier_entity_id || null,
     rawCarrierResponse: row.raw_carrier_response || {},
     syncedAt: row.synced_at || null
   };
