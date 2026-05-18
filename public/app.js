@@ -1700,9 +1700,12 @@ function shipmentCarrierLabel(shipment) {
 function invoiceRow(invoice, options = {}) {
   const showActions = options.showActions !== false;
   const sourceLabel = invoice.source === "mothership" ? "Mothership" : "Local";
+  const referenceOnly = isImportedInvoiceReference(invoice);
   const subLabel = invoice.shipmentId
     ? `${escapeHtml(invoice.customerName)} · Shipment ${escapeHtml(invoice.shipmentId)}`
-    : `${escapeHtml(invoice.customerName)} · ${escapeHtml(sourceLabel)} import`;
+    : referenceOnly
+      ? `${escapeHtml(sourceLabel)} invoice reference`
+      : `${escapeHtml(invoice.customerName)} · ${escapeHtml(sourceLabel)} import`;
   return `
     <article class="row-item">
       <div>
@@ -1711,13 +1714,15 @@ function invoiceRow(invoice, options = {}) {
         <div class="meta-line">
           <span class="pill">${escapeHtml(invoice.status)}</span>
           <span class="pill">${escapeHtml(sourceLabel)}</span>
+          ${referenceOnly ? `<span class="pill">Reference only</span>` : ""}
           ${invoice.referenceNumber ? `<span class="pill">PO ${escapeHtml(invoice.referenceNumber)}</span>` : ""}
           <span class="pill">${formatDate(invoice.createdAt)}</span>
         </div>
       </div>
       <div class="price-block">
-        <strong>${money.format(invoice.amount)}</strong>
-        ${showActions ? `<button class="secondary-action" type="button" data-view-invoice="${escapeHtml(invoice.id)}">View Invoice</button>` : ""}
+        ${referenceOnly ? `<small>Waiting for detail fields</small>` : ""}
+        <strong>${referenceOnly ? "Pending" : money.format(invoice.amount)}</strong>
+        ${showActions ? `<button class="secondary-action" type="button" data-view-invoice="${escapeHtml(invoice.id)}">${referenceOnly ? "View Payload" : "View Invoice"}</button>` : ""}
       </div>
     </article>
   `;
@@ -2110,20 +2115,24 @@ function shipmentDocumentsHtml(shipment, documents = [], notice = "") {
 
 function invoiceDetailsHtml(invoice, shipment) {
   const sourceLabel = invoice.source === "mothership" ? "Mothership" : "Local";
+  const referenceOnly = isImportedInvoiceReference(invoice);
   return `
     <div class="detail-grid">
       ${detailSection(
-        "Invoice Summary",
+        referenceOnly ? "Invoice Reference" : "Invoice Summary",
         `
           <div class="meta-line">
             <span class="pill">${escapeHtml(invoice.status)}</span>
             <span class="pill">${escapeHtml(invoice.invoiceNumber)}</span>
             <span class="pill">${escapeHtml(sourceLabel)}</span>
+            ${referenceOnly ? `<span class="pill">Reference only</span>` : ""}
             ${shipment ? `<span class="pill">Shipment ${escapeHtml(shipment.confirmationNumber)}</span>` : ""}
           </div>
+          ${referenceOnly ? `<p class="audit-message">Mothership returned this record through the modified invoices feed, but the current sync does not yet have resolved amount, PO, or invoice detail fields for this item.</p>` : ""}
+          ${invoice.externalInvoiceId ? `<p><strong>Mothership invoice id:</strong> ${escapeHtml(invoice.externalInvoiceId)}</p>` : ""}
           <p><strong>Customer:</strong> ${escapeHtml(invoice.customerName || "")}</p>
-          <p><strong>Reference / PO:</strong> ${escapeHtml(invoice.referenceNumber || "")}</p>
-          <p><strong>Amount:</strong> ${money.format(invoice.amount)}</p>
+          <p><strong>Reference / PO:</strong> ${escapeHtml(invoice.referenceNumber || "Not available")}</p>
+          <p><strong>Amount:</strong> ${referenceOnly ? "Pending detail import" : money.format(invoice.amount)}</p>
           <p><strong>Issued:</strong> ${formatDateTime(invoice.issuedAt || invoice.createdAt)}</p>
           <p><strong>Due:</strong> ${formatDateTime(invoice.dueAt || null) || "Not set"}</p>
           ${shipment ? `
@@ -2134,8 +2143,25 @@ function invoiceDetailsHtml(invoice, shipment) {
           ` : ""}
         `
       )}
+      ${invoice.source === "mothership" && isStaffUser() ? detailSection(
+        "Mothership Payload",
+        `
+          <p class="audit-message">This raw payload is shown to admins so we can map the real Mothership invoice fields from your account.</p>
+          ${auditJsonBlock(invoice.rawCarrierResponse, "No raw Mothership payload was recorded for this invoice.")}
+        `
+      ) : ""}
     </div>
   `;
+}
+
+function isImportedInvoiceReference(invoice) {
+  if (invoice?.source !== "mothership") {
+    return false;
+  }
+
+  const fallbackInvoiceNumber = String(invoice.invoiceNumber || "").startsWith("MS-");
+  const fallbackCustomer = !invoice.customerName || invoice.customerName === "Imported from Mothership";
+  return fallbackInvoiceNumber && !invoice.referenceNumber && Number(invoice.amount || 0) === 0 && !invoice.shipmentId && fallbackCustomer;
 }
 
 function carrierDisplayName(provider, carrierMode = "", customerView = false) {
