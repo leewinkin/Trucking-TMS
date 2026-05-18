@@ -475,6 +475,102 @@ async function createPostgresStore(dbUrl) {
       const { rows } = await pool.query("SELECT * FROM invoices ORDER BY created_at DESC");
       return rows.map(mapInvoiceRow);
     },
+    async upsertExternalInvoices(invoices) {
+      const client = await pool.connect();
+      const summary = {
+        created: 0,
+        updated: 0,
+        skipped: 0
+      };
+
+      try {
+        await client.query("BEGIN");
+
+        for (const invoice of invoices) {
+          if (!String(invoice.externalInvoiceId || "").trim()) {
+            summary.skipped += 1;
+            continue;
+          }
+
+          const existing = await client.query(
+            "SELECT id FROM invoices WHERE external_invoice_id = $1 LIMIT 1",
+            [invoice.externalInvoiceId]
+          );
+
+          if (existing.rowCount > 0) {
+            await client.query(
+              `UPDATE invoices
+               SET shipment_id = $2,
+                   customer_id = $3,
+                   customer_name = $4,
+                   invoice_number = $5,
+                   reference_number = $6,
+                   amount = $7,
+                   status = $8,
+                   issued_at = $9,
+                   due_at = $10,
+                   created_at = $11,
+                   source = $12,
+                   carrier_name = $13,
+                   raw_carrier_response = $14::jsonb,
+                   synced_at = $15
+               WHERE external_invoice_id = $1`,
+              [
+                invoice.externalInvoiceId,
+                invoice.shipmentId || null,
+                invoice.customerId || null,
+                invoice.customerName || "Imported from Mothership",
+                invoice.invoiceNumber,
+                invoice.referenceNumber || "",
+                invoice.amount,
+                invoice.status,
+                invoice.issuedAt,
+                invoice.dueAt,
+                invoice.createdAt,
+                invoice.source || "mothership",
+                invoice.carrierName || "Mothership",
+                JSON.stringify(invoice.rawCarrierResponse || {}),
+                invoice.syncedAt || nowIso()
+              ]
+            );
+            summary.updated += 1;
+            continue;
+          }
+
+          await client.query(
+            `INSERT INTO invoices
+             (shipment_id, customer_id, customer_name, invoice_number, reference_number, amount, status, issued_at, due_at, created_at, source, external_invoice_id, carrier_name, raw_carrier_response, synced_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15)`,
+            [
+              invoice.shipmentId || null,
+              invoice.customerId || null,
+              invoice.customerName || "Imported from Mothership",
+              invoice.invoiceNumber,
+              invoice.referenceNumber || "",
+              invoice.amount,
+              invoice.status,
+              invoice.issuedAt,
+              invoice.dueAt,
+              invoice.createdAt,
+              invoice.source || "mothership",
+              invoice.externalInvoiceId,
+              invoice.carrierName || "Mothership",
+              JSON.stringify(invoice.rawCarrierResponse || {}),
+              invoice.syncedAt || nowIso()
+            ]
+          );
+          summary.created += 1;
+        }
+
+        await client.query("COMMIT");
+        return summary;
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
     async replaceTrackingEvents(shipmentId, events, rawCarrierResponse) {
       const client = await pool.connect();
       try {
@@ -674,16 +770,21 @@ async function ensureSchema(pool) {
     )`,
     `CREATE TABLE IF NOT EXISTS invoices (
       id bigserial PRIMARY KEY,
-      shipment_id text NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
-      customer_id text NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
-      customer_name text NOT NULL,
+      shipment_id text REFERENCES shipments(id) ON DELETE CASCADE,
+      customer_id text REFERENCES customers(id) ON DELETE CASCADE,
+      customer_name text NOT NULL DEFAULT '',
       invoice_number text NOT NULL UNIQUE DEFAULT ('INV-' || lpad(nextval('invoice_number_seq')::text, 5, '0')),
       reference_number text NOT NULL DEFAULT '',
       amount numeric NOT NULL DEFAULT 0,
       status text NOT NULL DEFAULT 'draft',
       issued_at timestamptz,
       due_at timestamptz,
-      created_at timestamptz NOT NULL DEFAULT now()
+      created_at timestamptz NOT NULL DEFAULT now(),
+      source text NOT NULL DEFAULT 'local',
+      external_invoice_id text,
+      carrier_name text NOT NULL DEFAULT '',
+      raw_carrier_response jsonb NOT NULL DEFAULT '{}'::jsonb,
+      synced_at timestamptz
     )`,
     "ALTER TABLE quotes ADD COLUMN IF NOT EXISTS reference_number text NOT NULL DEFAULT ''",
     "ALTER TABLE quotes ADD COLUMN IF NOT EXISTS carrier_modes jsonb NOT NULL DEFAULT '[]'::jsonb",
@@ -691,13 +792,22 @@ async function ensureSchema(pool) {
     "ALTER TABLE quotes ADD COLUMN IF NOT EXISTS carrier_audit jsonb NOT NULL DEFAULT '[]'::jsonb",
     "ALTER TABLE shipments ADD COLUMN IF NOT EXISTS reference_number text NOT NULL DEFAULT ''",
     "ALTER TABLE shipments ADD COLUMN IF NOT EXISTS carrier_name text NOT NULL DEFAULT ''",
+    "ALTER TABLE invoices ALTER COLUMN shipment_id DROP NOT NULL",
+    "ALTER TABLE invoices ALTER COLUMN customer_id DROP NOT NULL",
+    "ALTER TABLE invoices ALTER COLUMN customer_name SET DEFAULT ''",
     "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS reference_number text NOT NULL DEFAULT ''",
+    "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'local'",
+    "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS external_invoice_id text",
+    "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS carrier_name text NOT NULL DEFAULT ''",
+    "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS raw_carrier_response jsonb NOT NULL DEFAULT '{}'::jsonb",
+    "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS synced_at timestamptz",
     "CREATE INDEX IF NOT EXISTS idx_tariff_rules_customer_id ON tariff_rules(customer_id)",
     "CREATE INDEX IF NOT EXISTS idx_quotes_customer_id ON quotes(customer_id)",
     "CREATE INDEX IF NOT EXISTS idx_shipments_customer_id ON shipments(customer_id)",
     "CREATE INDEX IF NOT EXISTS idx_shipments_quote_id ON shipments(quote_id)",
     "CREATE INDEX IF NOT EXISTS idx_tracking_events_shipment_id ON tracking_events(shipment_id)",
     "CREATE INDEX IF NOT EXISTS idx_invoices_shipment_id ON invoices(shipment_id)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_external_invoice_id ON invoices(external_invoice_id)",
     "CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash)",
     "CREATE INDEX IF NOT EXISTS idx_users_customer_id ON users(customer_id)"
   ];
@@ -1078,7 +1188,12 @@ function createJsonStore(filePath) {
         status: payload.invoice.status,
         issuedAt: payload.invoice.issuedAt,
         dueAt: payload.invoice.dueAt,
-        createdAt: payload.invoice.createdAt
+        createdAt: payload.invoice.createdAt,
+        source: "local",
+        externalInvoiceId: null,
+        carrierName: shipment.carrierName || "",
+        rawCarrierResponse: {},
+        syncedAt: null
       };
 
       db.shipments.push(shipment);
@@ -1093,6 +1208,64 @@ function createJsonStore(filePath) {
     async listInvoices() {
       const db = await readJsonDb(filePath);
       return db.invoices.slice().reverse();
+    },
+    async upsertExternalInvoices(invoices) {
+      const db = await readJsonDb(filePath);
+      const summary = {
+        created: 0,
+        updated: 0,
+        skipped: 0
+      };
+
+      for (const invoice of invoices) {
+        if (!String(invoice.externalInvoiceId || "").trim()) {
+          summary.skipped += 1;
+          continue;
+        }
+
+        const existing = db.invoices.find((item) => item.externalInvoiceId === invoice.externalInvoiceId);
+        if (existing) {
+          existing.shipmentId = invoice.shipmentId || null;
+          existing.customerId = invoice.customerId || null;
+          existing.customerName = invoice.customerName || "Imported from Mothership";
+          existing.invoiceNumber = invoice.invoiceNumber;
+          existing.referenceNumber = invoice.referenceNumber || "";
+          existing.amount = invoice.amount;
+          existing.status = invoice.status;
+          existing.issuedAt = invoice.issuedAt;
+          existing.dueAt = invoice.dueAt;
+          existing.createdAt = invoice.createdAt;
+          existing.source = invoice.source || "mothership";
+          existing.carrierName = invoice.carrierName || "Mothership";
+          existing.rawCarrierResponse = invoice.rawCarrierResponse || {};
+          existing.syncedAt = invoice.syncedAt || nowIso();
+          summary.updated += 1;
+          continue;
+        }
+
+        db.invoices.push({
+          id: createId("inv"),
+          shipmentId: invoice.shipmentId || null,
+          customerId: invoice.customerId || null,
+          customerName: invoice.customerName || "Imported from Mothership",
+          invoiceNumber: invoice.invoiceNumber,
+          referenceNumber: invoice.referenceNumber || "",
+          amount: invoice.amount,
+          status: invoice.status,
+          issuedAt: invoice.issuedAt,
+          dueAt: invoice.dueAt,
+          createdAt: invoice.createdAt,
+          source: invoice.source || "mothership",
+          externalInvoiceId: invoice.externalInvoiceId,
+          carrierName: invoice.carrierName || "Mothership",
+          rawCarrierResponse: invoice.rawCarrierResponse || {},
+          syncedAt: invoice.syncedAt || nowIso()
+        });
+        summary.created += 1;
+      }
+
+      await writeJsonDb(filePath, db);
+      return summary;
     },
     async replaceTrackingEvents(shipmentId, events, rawCarrierResponse) {
       const db = await readJsonDb(filePath);
@@ -1476,7 +1649,12 @@ function mapInvoiceRow(row) {
     status: row.status,
     issuedAt: row.issued_at,
     dueAt: row.due_at,
-    createdAt: row.created_at
+    createdAt: row.created_at,
+    source: row.source || "local",
+    externalInvoiceId: row.external_invoice_id || null,
+    carrierName: row.carrier_name || "",
+    rawCarrierResponse: row.raw_carrier_response || {},
+    syncedAt: row.synced_at || null
   };
 }
 

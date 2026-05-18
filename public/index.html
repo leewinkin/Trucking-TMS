@@ -486,6 +486,16 @@
             <div class="panel-heading">
               <h2>Invoices</h2>
             </div>
+            <div class="invoice-sync-bar admin-only">
+              <div class="invoice-sync-copy">
+                <strong>Mothership invoice sync</strong>
+                <p class="helper-text">Pull existing carrier invoices into the admin invoice list.</p>
+              </div>
+              <div class="invoice-sync-actions">
+                <span id="mothershipInvoiceSyncStatus" class="pill">Ready for sync</span>
+                <button class="primary-action" id="mothershipInvoiceSyncButton" type="button">Sync from Mothership</button>
+              </div>
+            </div>
             <div id="invoiceList" class="table-list"></div>
           </section>
         </section>

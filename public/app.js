@@ -56,6 +56,37 @@ function wireNavigation() {
   document.getElementById("refreshButton").addEventListener("click", refreshAll);
   document.getElementById("logoutButton").addEventListener("click", logout);
 
+  const mothershipInvoiceSyncButton = document.getElementById("mothershipInvoiceSyncButton");
+  if (mothershipInvoiceSyncButton) {
+    mothershipInvoiceSyncButton.addEventListener("click", async () => {
+      const status = document.getElementById("mothershipInvoiceSyncStatus");
+      mothershipInvoiceSyncButton.disabled = true;
+      mothershipInvoiceSyncButton.textContent = "Syncing...";
+      if (status) {
+        status.textContent = "Sync in progress";
+      }
+
+      try {
+        const response = await api("/api/invoices/sync", {
+          method: "POST"
+        });
+        if (status) {
+          status.textContent = `Synced ${response.synced.created + response.synced.updated} invoices`;
+        }
+        showToast(`Mothership sync complete. ${response.synced.created} created, ${response.synced.updated} updated.`);
+        await refreshAll();
+      } catch (error) {
+        if (status) {
+          status.textContent = "Sync failed";
+        }
+        showToast(error.message || "Could not sync Mothership invoices.", true);
+      } finally {
+        mothershipInvoiceSyncButton.disabled = false;
+        mothershipInvoiceSyncButton.textContent = "Sync from Mothership";
+      }
+    });
+  }
+
   document.addEventListener("click", (event) => {
     const trackButton = event.target.closest("[data-track-shipment]");
     if (trackButton) {
@@ -1668,13 +1699,18 @@ function shipmentCarrierLabel(shipment) {
 
 function invoiceRow(invoice, options = {}) {
   const showActions = options.showActions !== false;
+  const sourceLabel = invoice.source === "mothership" ? "Mothership" : "Local";
+  const subLabel = invoice.shipmentId
+    ? `${escapeHtml(invoice.customerName)} · Shipment ${escapeHtml(invoice.shipmentId)}`
+    : `${escapeHtml(invoice.customerName)} · ${escapeHtml(sourceLabel)} import`;
   return `
     <article class="row-item">
       <div>
         <strong>${escapeHtml(invoice.invoiceNumber)}</strong>
-        <small>${escapeHtml(invoice.customerName)} · Shipment ${escapeHtml(invoice.shipmentId)}</small>
+        <small>${subLabel}</small>
         <div class="meta-line">
           <span class="pill">${escapeHtml(invoice.status)}</span>
+          <span class="pill">${escapeHtml(sourceLabel)}</span>
           ${invoice.referenceNumber ? `<span class="pill">PO ${escapeHtml(invoice.referenceNumber)}</span>` : ""}
           <span class="pill">${formatDate(invoice.createdAt)}</span>
         </div>
@@ -2073,6 +2109,7 @@ function shipmentDocumentsHtml(shipment, documents = [], notice = "") {
 }
 
 function invoiceDetailsHtml(invoice, shipment) {
+  const sourceLabel = invoice.source === "mothership" ? "Mothership" : "Local";
   return `
     <div class="detail-grid">
       ${detailSection(
@@ -2081,8 +2118,10 @@ function invoiceDetailsHtml(invoice, shipment) {
           <div class="meta-line">
             <span class="pill">${escapeHtml(invoice.status)}</span>
             <span class="pill">${escapeHtml(invoice.invoiceNumber)}</span>
+            <span class="pill">${escapeHtml(sourceLabel)}</span>
             ${shipment ? `<span class="pill">Shipment ${escapeHtml(shipment.confirmationNumber)}</span>` : ""}
           </div>
+          <p><strong>Customer:</strong> ${escapeHtml(invoice.customerName || "")}</p>
           <p><strong>Reference / PO:</strong> ${escapeHtml(invoice.referenceNumber || "")}</p>
           <p><strong>Amount:</strong> ${money.format(invoice.amount)}</p>
           <p><strong>Issued:</strong> ${formatDateTime(invoice.issuedAt || invoice.createdAt)}</p>

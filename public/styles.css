@@ -494,6 +494,35 @@ button.metric {
   border-bottom: 0;
 }
 
+.invoice-sync-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(180deg, #fafcff 0%, #f7f9fc 100%);
+}
+
+.invoice-sync-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.invoice-sync-copy strong {
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.invoice-sync-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -681,6 +710,10 @@ select:focus {
   display: grid;
   gap: 10px;
   padding: 14px;
+}
+
+.invoice-sync-bar + .table-list {
+  padding-top: 14px;
 }
 
 .rate-list.compare-grid {

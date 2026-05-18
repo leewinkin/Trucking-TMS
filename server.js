@@ -279,6 +279,12 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/api/invoices/sync") {
+    requireStaff(currentUser);
+    await syncMothershipInvoices(res);
+    return;
+  }
+
   sendJson(res, 404, { error: "NOT_FOUND", message: "Route not found." });
 }
 
@@ -1019,6 +1025,19 @@ async function requestMothershipShipmentDocuments(shipmentId) {
   });
 }
 
+async function requestMothershipModifiedInvoices(modifiedSince, page = null) {
+  const params = new URLSearchParams();
+  params.set("timestamp", modifiedSince);
+  params.set("limit", "100");
+  if (page !== null && page !== undefined && page !== "") {
+    params.set("page", String(page));
+  }
+
+  return requestMothership(`/invoices/modified_since?${params.toString()}`, {
+    method: "GET"
+  });
+}
+
 async function requestMothership(route, options) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 35000);
@@ -1051,6 +1070,48 @@ async function requestMothership(route, options) {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function syncMothershipInvoices(res) {
+  if (!process.env.MOTHERSHIP_API_TOKEN) {
+    sendJson(res, 400, {
+      error: "MOTHERSHIP_TOKEN_MISSING",
+      message: "Add MOTHERSHIP_API_TOKEN to .env.local before syncing Mothership invoices."
+    });
+    return;
+  }
+
+  const modifiedSince = "2000-01-01T00:00:00.000Z";
+  const syncedAt = nowIso();
+  const invoicesById = new Map();
+  let page = null;
+  let pagesVisited = 0;
+
+  while (pagesVisited < 100) {
+    const payload = await requestMothershipModifiedInvoices(modifiedSince, page);
+    const records = extractMothershipInvoiceRecords(payload);
+    records.forEach((record) => {
+      const normalized = normalizeMothershipInvoice(record, syncedAt);
+      if (normalized.externalInvoiceId) {
+        invoicesById.set(normalized.externalInvoiceId, normalized);
+      }
+    });
+
+    pagesVisited += 1;
+    const nextPage = readMothershipInvoiceNextPage(payload, page || 0, records.length);
+    if (!nextPage || nextPage === page) {
+      break;
+    }
+    page = nextPage;
+  }
+
+  const summary = await store.upsertExternalInvoices(Array.from(invoicesById.values()));
+  sendJson(res, 200, {
+    synced: summary,
+    totalFetched: invoicesById.size,
+    modifiedSince,
+    syncedAt
+  });
 }
 
 async function requestSpeedship(route, options) {
@@ -2343,6 +2404,193 @@ function readNestedString(source, paths) {
     }
   }
   return "";
+}
+
+function extractMothershipInvoiceRecords(payload) {
+  const candidates = [
+    payload?.data?.invoices,
+    payload?.data?.results,
+    payload?.data?.items,
+    payload?.data,
+    payload?.invoices,
+    payload?.results,
+    payload?.items
+  ];
+
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) {
+      return candidate;
+    }
+  }
+
+  return [];
+}
+
+function readMothershipInvoiceNextPage(payload, currentPage, currentCount) {
+  const directNext = readNestedString(payload, [
+    ["data", "nextPage"],
+    ["data", "next_page"],
+    ["nextPage"],
+    ["next_page"]
+  ]);
+  if (directNext) {
+    const parsed = Number(directNext);
+    if (Number.isFinite(parsed) && parsed > currentPage) {
+      return parsed;
+    }
+  }
+
+  const hasMore = readNestedString(payload, [
+    ["data", "hasMore"],
+    ["data", "has_more"],
+    ["hasMore"],
+    ["has_more"]
+  ]);
+  if (String(hasMore).toLowerCase() === "true") {
+    return currentPage + 1;
+  }
+
+  const totalPages = readNestedNumber(payload, [
+    ["data", "totalPages"],
+    ["data", "total_pages"],
+    ["pagination", "totalPages"],
+    ["pagination", "total_pages"],
+    ["totalPages"],
+    ["total_pages"]
+  ]);
+  if (totalPages > currentPage) {
+    return currentPage + 1;
+  }
+
+  return currentCount > 0 ? null : null;
+}
+
+function normalizeMothershipInvoice(record, syncedAt) {
+  const externalInvoiceId = readNestedString(record, [
+    ["id"],
+    ["invoiceId"],
+    ["invoice_id"],
+    ["invoice", "id"],
+    ["reference", "id"]
+  ]);
+  const invoiceNumber =
+    readNestedString(record, [
+      ["invoiceNumber"],
+      ["invoice_number"],
+      ["number"],
+      ["invoiceNo"],
+      ["invoice", "invoiceNumber"],
+      ["invoice", "number"]
+    ]) || (externalInvoiceId ? `MS-${externalInvoiceId.slice(-10)}` : `MS-${createId("invoice")}`);
+  const shipmentId =
+    readNestedString(record, [
+      ["shipmentId"],
+      ["shipment_id"],
+      ["shipment", "id"],
+      ["shipment", "shipmentId"]
+    ]) || null;
+  const customerName =
+    readNestedString(record, [
+      ["customerName"],
+      ["customer", "name"],
+      ["accountName"],
+      ["account", "name"],
+      ["companyName"],
+      ["shipper", "name"],
+      ["billTo", "name"]
+    ]) || "Imported from Mothership";
+  const referenceNumber = readNestedString(record, [
+    ["referenceNumber"],
+    ["purchaseOrderNumber"],
+    ["poNumber"],
+    ["shipment", "referenceNumber"],
+    ["reference", "number"]
+  ]);
+  const amount = readNestedNumber(record, [
+    ["totalAmount"],
+    ["amount"],
+    ["invoiceAmount"],
+    ["amountDue"],
+    ["balanceDue"],
+    ["charges", "total"],
+    ["pricing", "total"]
+  ]);
+  const status =
+    normalizeImportedInvoiceStatus(
+      readNestedString(record, [
+        ["status"],
+        ["invoiceStatus"],
+        ["paymentStatus"],
+        ["state"]
+      ])
+    ) || "imported";
+  const issuedAt = normalizeIsoTimestamp(
+    readNestedString(record, [
+      ["issuedAt"],
+      ["invoiceDate"],
+      ["dateIssued"],
+      ["createdAt"],
+      ["created_at"]
+    ])
+  );
+  const dueAt = normalizeIsoTimestamp(
+    readNestedString(record, [
+      ["dueAt"],
+      ["dueDate"],
+      ["paymentDueDate"]
+    ])
+  );
+  const createdAt =
+    normalizeIsoTimestamp(
+      readNestedString(record, [
+        ["createdAt"],
+        ["created_at"],
+        ["updatedAt"],
+        ["updated_at"],
+        ["invoiceDate"],
+        ["issuedAt"]
+      ])
+    ) || syncedAt;
+
+  return {
+    shipmentId,
+    customerId: null,
+    customerName,
+    invoiceNumber,
+    referenceNumber,
+    amount,
+    status,
+    issuedAt,
+    dueAt,
+    createdAt,
+    source: "mothership",
+    externalInvoiceId,
+    carrierName: "Mothership",
+    rawCarrierResponse: record,
+    syncedAt
+  };
+}
+
+function normalizeImportedInvoiceStatus(value) {
+  const text = String(value || "").trim().toLowerCase();
+  if (!text) {
+    return "";
+  }
+  return text.replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "imported";
+}
+
+function normalizeIsoTimestamp(value) {
+  const text = String(value || "").trim();
+  if (!text) {
+    return null;
+  }
+
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  return parsed.toISOString();
 }
 
 function normalizeShipmentDocuments(payload, source) {
