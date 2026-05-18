@@ -835,7 +835,7 @@ async function openInvoiceDetails(invoiceId) {
     return;
   }
 
-  const shipment = state.shipments.find((item) => item.id === invoice.shipmentId) || null;
+  const shipment = resolveInvoiceShipment(invoice);
   openModal(`Invoice ${invoice.invoiceNumber}`, invoiceDetailsHtml(invoice, shipment));
 }
 
@@ -1728,8 +1728,9 @@ function invoiceRow(invoice, options = {}) {
   const showActions = options.showActions !== false;
   const sourceLabel = invoice.source === "mothership" ? "Mothership" : "Local";
   const referenceOnly = isImportedInvoiceReference(invoice);
-  const subLabel = invoice.shipmentId
-    ? `${escapeHtml(invoice.customerName)} · Shipment ${escapeHtml(invoice.shipmentId)}`
+  const shipment = resolveInvoiceShipment(invoice);
+  const subLabel = shipment
+    ? `${escapeHtml(invoice.customerName)} · Shipment ${escapeHtml(shipment.confirmationNumber || shipment.id)}`
     : referenceOnly
       ? `${escapeHtml(sourceLabel)} invoice reference`
       : `${escapeHtml(invoice.customerName)} · ${escapeHtml(sourceLabel)} import`;
@@ -1752,7 +1753,7 @@ function invoiceRow(invoice, options = {}) {
         ${showActions ? `
           <div class="row-actions">
             <button class="secondary-action" type="button" data-view-invoice="${escapeHtml(invoice.id)}">${referenceOnly ? "View Payload" : "View Invoice"}</button>
-            ${invoice.shipmentId ? `<button class="secondary-action" type="button" data-view-pod-shipment="${escapeHtml(invoice.shipmentId)}">View POD</button>` : ""}
+            ${shipment ? `<button class="secondary-action" type="button" data-view-pod-shipment="${escapeHtml(shipment.id)}">View POD</button>` : ""}
           </div>
         ` : ""}
       </div>
@@ -2324,6 +2325,57 @@ function readNestedNumber(source, paths) {
     }
   }
   return 0;
+}
+
+function readNestedString(source, paths) {
+  for (const path of paths) {
+    let current = source;
+    for (const key of path) {
+      current = current?.[key];
+    }
+    if (current !== undefined && current !== null && current !== "") {
+      const text = String(current).trim();
+      if (text) {
+        return text;
+      }
+    }
+  }
+  return "";
+}
+
+function resolveInvoiceShipment(invoice) {
+  const candidates = extractInvoiceShipmentCandidates(invoice);
+  if (!candidates.length) {
+    return null;
+  }
+
+  return state.shipments.find((shipment) =>
+    candidates.some((candidate) =>
+      String(shipment.id || "").trim() === candidate ||
+      String(shipment.carrierShipmentId || "").trim() === candidate ||
+      String(shipment.confirmationNumber || "").trim() === candidate ||
+      String(shipment.referenceNumber || "").trim() === candidate
+    )
+  ) || null;
+}
+
+function extractInvoiceShipmentCandidates(invoice) {
+  const source = invoice?.rawCarrierResponse || invoice || null;
+  return [
+    readNestedString(invoice, [["shipmentId"]]),
+    readNestedString(source, [["shipmentId"]]),
+    readNestedString(source, [["shipment_id"]]),
+    readNestedString(source, [["carrierShipmentId"]]),
+    readNestedString(source, [["carrier_shipment_id"]]),
+    readNestedString(source, [["confirmationNumber"]]),
+    readNestedString(source, [["confirmation_number"]]),
+    readNestedString(source, [["shipment", "id"]]),
+    readNestedString(source, [["shipment", "shipmentId"]]),
+    readNestedString(source, [["shipment", "carrierShipmentId"]]),
+    readNestedString(source, [["shipment", "confirmationNumber"]]),
+    readNestedString(source, [["referenceNumber"]]),
+    readNestedString(source, [["shipment", "referenceNumber"]])
+  ].filter(Boolean);
 }
 
 function normalizeMothershipCurrencyAmount(value) {

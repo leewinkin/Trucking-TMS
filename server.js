@@ -1111,6 +1111,7 @@ async function syncMothershipInvoices(res) {
     hydrated: 0,
     failed: 0
   };
+  const shipments = await store.listShipments();
 
   for (const chunk of chunkArray(referenceRecords, 5)) {
     const resolved = await Promise.all(
@@ -1118,16 +1119,29 @@ async function syncMothershipInvoices(res) {
         const invoiceId = readMothershipInvoiceId(referenceRecord);
         if (!invoiceId) {
           detailSummary.failed += 1;
-          return normalizeMothershipInvoice(referenceRecord, null, syncedAt);
+          return normalizeMothershipInvoice(referenceRecord, null, syncedAt, null, resolveMothershipShipmentId(referenceRecord, null, shipments));
         }
 
         try {
           const detailPayload = await requestMothershipInvoice(invoiceId);
           detailSummary.hydrated += 1;
-          return normalizeMothershipInvoice(referenceRecord, unwrapMothershipData(detailPayload), syncedAt, detailPayload);
+          const detailRecord = unwrapMothershipData(detailPayload);
+          return normalizeMothershipInvoice(
+            referenceRecord,
+            detailRecord,
+            syncedAt,
+            detailPayload,
+            resolveMothershipShipmentId(referenceRecord, detailRecord, shipments)
+          );
         } catch (error) {
           detailSummary.failed += 1;
-          return normalizeMothershipInvoice(referenceRecord, null, syncedAt, { error: error.message, reference: referenceRecord });
+          return normalizeMothershipInvoice(
+            referenceRecord,
+            null,
+            syncedAt,
+            { error: error.message, reference: referenceRecord },
+            resolveMothershipShipmentId(referenceRecord, null, shipments)
+          );
         }
       })
     );
@@ -2574,7 +2588,7 @@ function readMothershipInvoiceNextPage(payload, currentPage, currentCount) {
   return currentCount > 0 ? null : null;
 }
 
-function normalizeMothershipInvoice(referenceRecord, detailRecord, syncedAt, rawCarrierResponse = null) {
+function normalizeMothershipInvoice(referenceRecord, detailRecord, syncedAt, rawCarrierResponse = null, linkedShipmentId = null) {
   const externalInvoiceId = readMothershipInvoiceId(detailRecord || referenceRecord);
   const invoiceNumber =
     readNestedString(detailRecord || referenceRecord, [
@@ -2587,13 +2601,7 @@ function normalizeMothershipInvoice(referenceRecord, detailRecord, syncedAt, raw
       ["invoice", "invoiceNumber"],
       ["invoice", "number"]
     ]) || (externalInvoiceId ? `MS-${externalInvoiceId.slice(-10)}` : `MS-${createId("invoice")}`);
-  const shipmentId =
-    readNestedString(detailRecord || referenceRecord, [
-      ["shipmentId"],
-      ["shipment_id"],
-      ["shipment", "id"],
-      ["shipment", "shipmentId"]
-    ]) || null;
+  const shipmentId = linkedShipmentId || null;
   const customerName =
     readNestedString(detailRecord || referenceRecord, [
       ["customerName"],
@@ -2670,6 +2678,51 @@ function normalizeMothershipInvoice(referenceRecord, detailRecord, syncedAt, raw
     rawCarrierResponse: rawCarrierResponse || detailRecord || referenceRecord,
     syncedAt
   };
+}
+
+function resolveMothershipShipmentId(referenceRecord, detailRecord, shipments) {
+  const source = detailRecord || referenceRecord;
+  if (!source || !Array.isArray(shipments) || shipments.length === 0) {
+    return null;
+  }
+
+  const candidateValues = [
+    ...extractMothershipShipmentIdentifiers(source),
+    ...extractMothershipShipmentIdentifiers(referenceRecord),
+    ...extractMothershipShipmentIdentifiers(detailRecord)
+  ].filter(Boolean);
+
+  for (const candidate of candidateValues) {
+    const match = shipments.find((shipment) =>
+      String(shipment.id || "").trim() === candidate ||
+      String(shipment.carrierShipmentId || "").trim() === candidate ||
+      String(shipment.confirmationNumber || "").trim() === candidate ||
+      String(shipment.referenceNumber || "").trim() === candidate
+    );
+    if (match) {
+      return match.id;
+    }
+  }
+
+  return null;
+}
+
+function extractMothershipShipmentIdentifiers(source) {
+  return [
+    readNestedString(source, [["shipmentId"]]),
+    readNestedString(source, [["shipment_id"]]),
+    readNestedString(source, [["carrierShipmentId"]]),
+    readNestedString(source, [["carrier_shipment_id"]]),
+    readNestedString(source, [["confirmationNumber"]]),
+    readNestedString(source, [["confirmation_number"]]),
+    readNestedString(source, [["shipment", "id"]]),
+    readNestedString(source, [["shipment", "shipmentId"]]),
+    readNestedString(source, [["shipment", "carrierShipmentId"]]),
+    readNestedString(source, [["shipment", "confirmationNumber"]]),
+    readNestedString(source, [["referenceNumber"]]),
+    readNestedString(source, [["reference_number"]]),
+    readNestedString(source, [["shipment", "referenceNumber"]])
+  ].filter(Boolean);
 }
 
 function deriveMothershipInvoiceAmount(source) {
