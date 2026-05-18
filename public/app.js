@@ -125,6 +125,12 @@ function wireNavigation() {
       return;
     }
 
+    const invoicePodButton = event.target.closest("[data-view-pod-shipment]");
+    if (invoicePodButton) {
+      openShipmentDocuments(invoicePodButton.dataset.viewPodShipment, "pod");
+      return;
+    }
+
     const freightSuggestionButton = event.target.closest("[data-apply-freight-suggestion]");
     if (freightSuggestionButton) {
       applySuggestedFreightClass(freightSuggestionButton.closest("[data-freight-row]"));
@@ -1743,7 +1749,12 @@ function invoiceRow(invoice, options = {}) {
       <div class="price-block">
         ${referenceOnly ? `<small>Waiting for detail fields</small>` : ""}
         <strong>${referenceOnly ? "Pending" : money.format(invoice.amount)}</strong>
-        ${showActions ? `<button class="secondary-action" type="button" data-view-invoice="${escapeHtml(invoice.id)}">${referenceOnly ? "View Payload" : "View Invoice"}</button>` : ""}
+        ${showActions ? `
+          <div class="row-actions">
+            <button class="secondary-action" type="button" data-view-invoice="${escapeHtml(invoice.id)}">${referenceOnly ? "View Payload" : "View Invoice"}</button>
+            ${invoice.shipmentId ? `<button class="secondary-action" type="button" data-view-pod-shipment="${escapeHtml(invoice.shipmentId)}">View POD</button>` : ""}
+          </div>
+        ` : ""}
       </div>
     </article>
   `;
