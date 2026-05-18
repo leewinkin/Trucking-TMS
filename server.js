@@ -2860,6 +2860,9 @@ function formatDocumentLabel(value, source) {
   if (normalized === "bill of lading" || normalized === "bol") {
     return "Bill of Lading";
   }
+  if (normalized === "proof of delivery" || normalized === "pod") {
+    return "Proof of Delivery";
+  }
 
   return normalized.replace(/\b\w/g, (char) => char.toUpperCase());
 }

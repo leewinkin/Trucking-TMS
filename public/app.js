@@ -163,7 +163,14 @@ function wireNavigation() {
 
     const bolButton = event.target.closest("[data-view-bol]");
     if (bolButton) {
-      openShipmentDocuments(bolButton.dataset.viewBol);
+      openShipmentDocuments(bolButton.dataset.viewBol, "bol");
+      return;
+    }
+
+    const podButton = event.target.closest("[data-view-pod]");
+    if (podButton) {
+      openShipmentDocuments(podButton.dataset.viewPod, "pod");
+      return;
     }
   });
 }
@@ -701,25 +708,32 @@ async function openShipmentDetails(shipmentId) {
   await openShipmentTracking(shipmentId);
 }
 
-async function openShipmentDocuments(shipmentId) {
+async function openShipmentDocuments(shipmentId, kind = "bol") {
   const shipment = state.shipments.find((item) => item.id === shipmentId);
   if (!shipment) {
     return;
   }
 
-  const title = `Bill of Lading ${shipment.confirmationNumber}`;
-  openModal(title, `<div class="empty-state">Loading bill of lading...</div>`);
+  const normalizedKind = String(kind || "bol").toLowerCase() === "pod" ? "pod" : "bol";
+  const title = normalizedKind === "pod"
+    ? `Proof of Delivery ${shipment.confirmationNumber}`
+    : `Bill of Lading ${shipment.confirmationNumber}`;
+  openModal(title, `<div class="empty-state">Loading ${normalizedKind === "pod" ? "proof of delivery" : "bill of lading"}...</div>`);
   try {
     const response = await api(`/api/shipments/${shipmentId}/documents`);
     if (!state.modal || state.modal.title !== title) {
       return;
     }
-    paintModal(title, shipmentDocumentsHtml(shipment, response.documents || [], response.message || ""));
+    const documents = filterShipmentDocumentsByKind(response.documents || [], normalizedKind);
+    const notice = response.message || (documents.length === 0
+      ? `No ${normalizedKind === "pod" ? "proof of delivery" : "bill of lading"} was returned for this shipment yet.`
+      : "");
+    paintModal(title, shipmentDocumentsHtml(shipment, documents, notice, normalizedKind));
   } catch (error) {
     if (!state.modal || state.modal.title !== title) {
       return;
     }
-    paintModal(title, `<div class="empty-state">${escapeHtml(error.message || "BOL lookup failed.")}</div>`);
+    paintModal(title, `<div class="empty-state">${escapeHtml(error.message || (normalizedKind === "pod" ? "POD lookup failed." : "BOL lookup failed."))}</div>`);
   }
 }
 
@@ -2075,13 +2089,19 @@ function trackingSummaryHtml(shipment, latestEvent, eventCount) {
       <div class="modal-actions">
         <button class="secondary-action" type="button" data-track-shipment="${escapeHtml(shipment.id)}">Refresh Tracking</button>
         <button class="secondary-action" type="button" data-view-bol="${escapeHtml(shipment.id)}">View BOL</button>
+        <button class="secondary-action" type="button" data-view-pod="${escapeHtml(shipment.id)}">View POD</button>
       </div>
     </div>
   `;
 }
 
-function shipmentDocumentsHtml(shipment, documents = [], notice = "") {
-  const heading = shipment.status === "booked_with_carrier" ? "Carrier Documents" : "Documents";
+function shipmentDocumentsHtml(shipment, documents = [], notice = "", kind = "bol") {
+  const normalizedKind = String(kind || "bol").toLowerCase() === "pod" ? "pod" : "bol";
+  const heading = normalizedKind === "pod"
+    ? "Proof of Delivery"
+    : shipment.status === "booked_with_carrier"
+      ? "Carrier Documents"
+      : "Documents";
   const documentCards = documents.length
     ? documents
         .map(
@@ -2118,6 +2138,17 @@ function shipmentDocumentsHtml(shipment, documents = [], notice = "") {
       )}
     </div>
   `;
+}
+
+function filterShipmentDocumentsByKind(documents, kind) {
+  const normalizedKind = String(kind || "bol").toLowerCase() === "pod" ? "pod" : "bol";
+  return (Array.isArray(documents) ? documents : []).filter((document) => {
+    const label = String(document?.label || document?.type || "").toLowerCase();
+    if (normalizedKind === "pod") {
+      return label.includes("proof of delivery") || label.includes("pod");
+    }
+    return label.includes("bill of lading") || label.includes("bol");
+  });
 }
 
 function invoiceDetailsHtml(invoice, shipment) {
