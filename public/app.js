@@ -19,6 +19,7 @@ const state = {
   carrierModeTouched: false,
   pendingQuoteReentry: null,
   pendingBooking: null,
+  invoiceTab: "mothership",
   modal: null
 };
 
@@ -103,6 +104,12 @@ function wireNavigation() {
     const loadMoreButton = event.target.closest("[data-load-more-rates]");
     if (loadMoreButton) {
       loadMoreQuoteRates();
+      return;
+    }
+
+    const invoiceTabButton = event.target.closest("[data-invoice-tab]");
+    if (invoiceTabButton) {
+      setInvoiceTab(invoiceTabButton.dataset.invoiceTab);
       return;
     }
 
@@ -2974,21 +2981,32 @@ function renderInvoices() {
 
   const mothershipInvoices = state.invoices.filter((invoice) => invoice?.source === "mothership");
   const otherInvoices = state.invoices.filter((invoice) => invoice?.source !== "mothership");
+  const activeTab = resolveInvoiceTab(mothershipInvoices, otherInvoices);
+  const visibleInvoices = activeTab === "mothership" ? mothershipInvoices : otherInvoices;
+  const hiddenInvoices = activeTab === "mothership" ? otherInvoices : mothershipInvoices;
+  const activeLabel = activeTab === "mothership" ? "Imported from Mothership" : "Other invoices";
 
   list.innerHTML = `
-    <div class="invoice-groups">
-      ${invoiceGroupHtml(
-        "Imported from Mothership",
-        "Invoices hydrated from the carrier invoice sync.",
-        mothershipInvoices,
-        "No Mothership invoices imported yet."
-      )}
-      ${invoiceGroupHtml(
-        "Other invoices",
-        "Invoices created locally from booked shipments.",
-        otherInvoices,
-        "No local invoices yet."
-      )}
+    <div class="invoice-tabs-shell">
+      <div class="invoice-tabs" role="tablist" aria-label="Invoice groups">
+        <button class="invoice-tab ${activeTab === "mothership" ? "active" : ""}" type="button" data-invoice-tab="mothership" role="tab" aria-selected="${activeTab === "mothership"}">
+          Imported from Mothership <span class="tab-count">${mothershipInvoices.length}</span>
+        </button>
+        <button class="invoice-tab ${activeTab === "local" ? "active" : ""}" type="button" data-invoice-tab="local" role="tab" aria-selected="${activeTab === "local"}">
+          Other invoices <span class="tab-count">${otherInvoices.length}</span>
+        </button>
+      </div>
+      <div class="invoice-tab-panel">
+        ${invoiceGroupHtml(
+          activeLabel,
+          activeTab === "mothership"
+            ? "Invoices hydrated from the carrier invoice sync."
+            : "Invoices created locally from booked shipments.",
+          visibleInvoices,
+          activeTab === "mothership" ? "No Mothership invoices imported yet." : "No local invoices yet."
+        )}
+        ${hiddenInvoices.length ? `<div class="invoice-tab-hint">${escapeHtml(hiddenInvoices.length)} invoice${hiddenInvoices.length === 1 ? "" : "s"} hidden in the other tab.</div>` : ""}
+      </div>
     </div>
   `;
 }
@@ -3008,6 +3026,42 @@ function invoiceGroupHtml(title, description, invoices, emptyLabel) {
       </div>
     </section>
   `;
+}
+
+function resolveInvoiceTab(mothershipInvoices, otherInvoices) {
+  const hasMothership = mothershipInvoices.length > 0;
+  const hasOther = otherInvoices.length > 0;
+
+  if (state.invoiceTab === "mothership" && hasMothership) {
+    return "mothership";
+  }
+
+  if (state.invoiceTab === "local" && hasOther) {
+    return "local";
+  }
+
+  if (hasMothership) {
+    state.invoiceTab = "mothership";
+    return "mothership";
+  }
+
+  if (hasOther) {
+    state.invoiceTab = "local";
+    return "local";
+  }
+
+  state.invoiceTab = "mothership";
+  return "mothership";
+}
+
+function setInvoiceTab(tab) {
+  const normalized = String(tab || "").trim().toLowerCase() === "local" ? "local" : "mothership";
+  if (state.invoiceTab === normalized) {
+    return;
+  }
+
+  state.invoiceTab = normalized;
+  renderInvoices();
 }
 
 function quotePayload(form) {

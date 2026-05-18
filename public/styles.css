@@ -716,9 +716,61 @@ select:focus {
   padding-top: 14px;
 }
 
-.invoice-groups {
+.invoice-tabs-shell {
   display: grid;
   gap: 16px;
+}
+
+.invoice-tabs {
+  display: flex;
+  gap: 8px;
+  padding: 0 0 2px;
+}
+
+.invoice-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #f8fafc;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.invoice-tab.active {
+  border-color: rgba(37, 99, 235, 0.25);
+  background: #eaf2ff;
+  color: var(--blue);
+}
+
+.tab-count {
+  display: inline-flex;
+  align-items: center;
+  min-width: 26px;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.08);
+  color: inherit;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.invoice-tab.active .tab-count {
+  background: rgba(37, 99, 235, 0.14);
+}
+
+.invoice-tab-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.invoice-tab-hint {
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .invoice-group {
