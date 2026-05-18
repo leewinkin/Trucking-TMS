@@ -2968,11 +2968,46 @@ function renderShipments() {
 
 function renderInvoices() {
   const list = document.getElementById("invoiceList");
-  list.innerHTML = state.invoices.length
-    ? state.invoices
-        .map((invoice) => invoiceRow(invoice))
-        .join("")
-    : `<div class="empty-state">No invoices yet.</div>`;
+  if (!list) {
+    return;
+  }
+
+  const mothershipInvoices = state.invoices.filter((invoice) => invoice?.source === "mothership");
+  const otherInvoices = state.invoices.filter((invoice) => invoice?.source !== "mothership");
+
+  list.innerHTML = `
+    <div class="invoice-groups">
+      ${invoiceGroupHtml(
+        "Imported from Mothership",
+        "Invoices hydrated from the carrier invoice sync.",
+        mothershipInvoices,
+        "No Mothership invoices imported yet."
+      )}
+      ${invoiceGroupHtml(
+        "Other invoices",
+        "Invoices created locally from booked shipments.",
+        otherInvoices,
+        "No local invoices yet."
+      )}
+    </div>
+  `;
+}
+
+function invoiceGroupHtml(title, description, invoices, emptyLabel) {
+  return `
+    <section class="invoice-group">
+      <div class="invoice-group-header">
+        <div>
+          <h3>${escapeHtml(title)}</h3>
+          <p class="helper-text">${escapeHtml(description)}</p>
+        </div>
+        <span class="pill">${escapeHtml(String(invoices.length))}</span>
+      </div>
+      <div class="invoice-group-body">
+        ${invoices.length ? invoices.map((invoice) => invoiceRow(invoice)).join("") : `<div class="empty-state">${escapeHtml(emptyLabel)}</div>`}
+      </div>
+    </section>
+  `;
 }
 
 function quotePayload(form) {

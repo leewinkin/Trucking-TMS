@@ -716,6 +716,43 @@ select:focus {
   padding-top: 14px;
 }
 
+.invoice-groups {
+  display: grid;
+  gap: 16px;
+}
+
+.invoice-group {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--panel);
+}
+
+.invoice-group-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+  background: #fbfcfe;
+}
+
+.invoice-group-header h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.invoice-group-header .helper-text {
+  margin: 4px 0 0;
+}
+
+.invoice-group-body {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
 .rate-list.compare-grid {
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   align-items: stretch;
