@@ -1859,7 +1859,7 @@ function mothershipReferenceAuditMessage(quote, row) {
   }
 
   const reference = quote?.referenceNumber ? ` TMS Reference / PO: ${quote.referenceNumber}.` : "";
-  return `<p class="audit-message">${escapeHtml(`${reference} Mothership quote requests still do not expose a Reference / PO field, but shipment create can send referenceNumber alongside quoteId and rateId.`)}</p>`;
+  return `<p class="audit-message">${escapeHtml(`${reference} Mothership booking now sends only quoteId and rateId, and keeps the PO on the local shipment record.`)}</p>`;
 }
 
 function quoteAuditHtml(quote) {
@@ -1922,7 +1922,7 @@ function shipmentAuditHtml(shipment) {
     : "";
   const mothershipMessage =
     shipment.carrier === "mothership"
-      ? `<p class="audit-message">Mothership carrier booking sends referenceNumber with quoteId and rateId so the carrier shipment can carry the TMS Reference / PO.</p>`
+      ? `<p class="audit-message">Mothership carrier booking now sends only quoteId and rateId, while the TMS keeps the PO on the shipment record.</p>`
       : "";
 
   return detailSection(

@@ -457,8 +457,7 @@ async function createShipment(req, res, currentUser) {
 
     const carrierShipmentRequest = {
       quoteId: rate.carrierQuoteId || quote.carrierQuoteId,
-      rateId: rate.carrierRateId || rate.id,
-      referenceNumber: quote.referenceNumber
+      rateId: rate.carrierRateId || rate.id
     };
     const carrierShipmentResponse = await requestMothershipShipment(carrierShipmentRequest);
     carrierShipment = {
@@ -466,7 +465,7 @@ async function createShipment(req, res, currentUser) {
       response: carrierShipmentResponse,
       tmsReferenceNumber: quote.referenceNumber,
       referenceNote:
-        "Mothership's Create Shipment API accepts referenceNumber, so the TMS Reference / PO is sent with quoteId and rateId."
+        "Mothership's published Create Shipment API currently documents quoteId and rateId only, so the TMS Reference / PO stays on the local shipment record."
     };
   }
 
