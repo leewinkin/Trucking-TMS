@@ -12,27 +12,35 @@
         <div class="brand login-brand">
           <span class="brand-mark">TMS</span>
           <span>
-            <strong>Shipment Desk</strong>
-            <small>Employee sign in</small>
+            <strong data-i18n="Shipment Desk">Shipment Desk</strong>
+            <small data-i18n="Employee sign in">Employee sign in</small>
           </span>
         </div>
 
+        <label class="language-switch">
+          <span data-i18n="Language">Language</span>
+          <select id="loginLanguageSelect" data-language-select>
+            <option value="en">English</option>
+            <option value="zh">中文</option>
+          </select>
+        </label>
+
         <form id="loginForm" class="login-form">
           <label>
-            Email or username
-            <input name="email" type="text" required placeholder="you@company.com" autocomplete="username">
+            <span data-i18n="Email or username">Email or username</span>
+            <input name="email" type="text" required placeholder="you@company.com" autocomplete="username" data-i18n-placeholder="you@company.com">
           </label>
           <label>
-            Password
-            <input name="password" type="password" required placeholder="Your password" autocomplete="current-password">
+            <span data-i18n="Password">Password</span>
+            <input name="password" type="password" required placeholder="Your password" autocomplete="current-password" data-i18n-placeholder="Your password">
           </label>
-          <button class="primary-action" type="submit">Sign In</button>
+          <button class="primary-action" type="submit" data-i18n="Sign In">Sign In</button>
           <div id="loginError" class="form-error" aria-live="polite"></div>
         </form>
 
         <div class="login-help">
-          <strong>Need access?</strong>
-          <p>Sign in with your company employee account.</p>
+          <strong data-i18n="Need access?">Need access?</strong>
+          <p data-i18n="Sign in with your company employee account.">Sign in with your company employee account.</p>
         </div>
 
         <div class="system-status login-status">
@@ -47,16 +55,16 @@
         <div class="brand">
           <span class="brand-mark">TMS</span>
           <span>
-            <strong>Shipment Desk</strong>
-            <small>Operations portal</small>
+            <strong data-i18n="Shipment Desk">Shipment Desk</strong>
+            <small data-i18n="Operations portal">Operations portal</small>
           </span>
         </div>
         <nav class="nav">
-          <button class="nav-button active" data-view="dashboard">Dashboard</button>
-          <button class="nav-button" data-view="customers" id="customersNavButton">Customers</button>
-          <button class="nav-button" data-view="quote">New Quote</button>
-          <button class="nav-button" data-view="shipments">Shipments</button>
-          <button class="nav-button" data-view="invoices">Invoices</button>
+          <button class="nav-button active" data-view="dashboard" data-i18n="Dashboard">Dashboard</button>
+          <button class="nav-button" data-view="customers" id="customersNavButton" data-i18n="Customers">Customers</button>
+          <button class="nav-button" data-view="quote" data-i18n="New Quote">New Quote</button>
+          <button class="nav-button" data-view="shipments" data-i18n="Shipments">Shipments</button>
+          <button class="nav-button" data-view="invoices" data-i18n="Invoices">Invoices</button>
         </nav>
         <div class="system-status">
           <span class="status-dot" id="statusDot"></span>
@@ -67,13 +75,20 @@
       <main class="content">
         <section class="topbar">
           <div>
-            <h1 id="viewTitle">Dashboard</h1>
-            <p id="viewSubtitle">Watch quote activity, shipment status, and invoice drafts.</p>
+            <h1 id="viewTitle" data-i18n="Dashboard">Dashboard</h1>
+            <p id="viewSubtitle" data-i18n="Watch quote activity, shipment status, and invoice drafts.">Watch quote activity, shipment status, and invoice drafts.</p>
           </div>
           <div class="topbar-actions">
+            <label class="language-switch compact">
+              <span data-i18n="Language">Language</span>
+              <select id="appLanguageSelect" data-language-select>
+                <option value="en">English</option>
+                <option value="zh">中文</option>
+              </select>
+            </label>
             <div class="user-chip" id="userChip"></div>
-            <button class="secondary-action" id="logoutButton">Logout</button>
-            <button class="primary-action" id="refreshButton">Refresh</button>
+            <button class="secondary-action" id="logoutButton" data-i18n="Logout">Logout</button>
+            <button class="primary-action" id="refreshButton" data-i18n="Refresh">Refresh</button>
           </div>
         </section>
 
@@ -99,20 +114,20 @@
           <div class="two-column">
             <section class="panel">
               <div class="panel-heading">
-                <h2>Recent Shipments</h2>
+                <h2 data-i18n="Recent Shipments">Recent Shipments</h2>
               </div>
               <div id="recentShipments" class="table-list"></div>
             </section>
             <section class="panel">
               <div class="panel-heading">
-                <h2 id="dashboardSupportHeading">Next Setup Steps</h2>
+                <h2 id="dashboardSupportHeading" data-i18n="Next Setup Steps">Next Setup Steps</h2>
               </div>
               <div id="dashboardSupportBody">
                 <ul class="check-list">
-                  <li>Add real customers.</li>
-                  <li>Set customer markup rules.</li>
-                  <li>Add your SpeedShip LTL sandbox credentials to backend env.</li>
-                  <li>Run one LTL sandbox quote before expanding carrier options.</li>
+                  <li data-i18n="Add real customers.">Add real customers.</li>
+                  <li data-i18n="Set customer markup rules.">Set customer markup rules.</li>
+                  <li data-i18n="Add your SpeedShip LTL sandbox credentials to backend env.">Add your SpeedShip LTL sandbox credentials to backend env.</li>
+                  <li data-i18n="Run one LTL sandbox quote before expanding carrier options.">Run one LTL sandbox quote before expanding carrier options.</li>
                 </ul>
               </div>
             </section>
@@ -123,138 +138,138 @@
           <div class="two-column">
             <section class="panel">
               <div class="panel-heading">
-                <h2>Customer Accounts</h2>
+                <h2 data-i18n="Customer Accounts">Customer Accounts</h2>
               </div>
               <form id="customerForm" class="form-grid compact admin-only">
                 <label>
-                  Company name
-                  <input name="companyName" required placeholder="ABC Warehouse">
+                  <span data-i18n="Company name">Company name</span>
+                  <input name="companyName" required placeholder="ABC Warehouse" data-i18n-placeholder="ABC Warehouse">
                 </label>
                 <label>
-                  Billing email
-                  <input name="billingEmail" type="email" placeholder="billing@example.com">
+                  <span data-i18n="Billing email">Billing email</span>
+                  <input name="billingEmail" type="email" placeholder="billing@example.com" data-i18n-placeholder="billing@example.com">
                 </label>
                 <label>
-                  Payment terms
+                  <span data-i18n="Payment terms">Payment terms</span>
                   <input name="paymentTerms" value="Net 15">
                 </label>
                 <label>
-                  Company phone
-                  <input name="companyPhone" type="tel" inputmode="numeric" autocomplete="tel" placeholder="(555) 123-4567">
+                  <span data-i18n="Company phone">Company phone</span>
+                  <input name="companyPhone" type="tel" inputmode="numeric" autocomplete="tel" placeholder="(555) 123-4567" data-i18n-placeholder="(555) 123-4567">
                 </label>
                 <label class="span-2">
-                  Company street
-                  <input name="companyStreet" placeholder="123 Main St">
+                  <span data-i18n="Company street">Company street</span>
+                  <input name="companyStreet" placeholder="123 Main St" data-i18n-placeholder="123 Main St">
                 </label>
                 <label>
-                  Company city
-                  <input name="companyCity" placeholder="City">
+                  <span data-i18n="Company city">Company city</span>
+                  <input name="companyCity" placeholder="City" data-i18n-placeholder="City">
                 </label>
                 <label>
-                  Company state
-                  <input name="companyState" placeholder="CA" maxlength="2">
+                  <span data-i18n="Company state">Company state</span>
+                  <input name="companyState" placeholder="CA" maxlength="2" data-i18n-placeholder="CA">
                 </label>
                 <label>
-                  Company ZIP
-                  <input name="companyZip" data-zip-autofill="company" placeholder="ZIP">
+                  <span data-i18n="Company ZIP">Company ZIP</span>
+                  <input name="companyZip" data-zip-autofill="company" placeholder="ZIP" data-i18n-placeholder="ZIP">
                 </label>
                 <label>
-                  Open
+                  <span data-i18n="Open">Open</span>
                   <select name="companyOpenTime" data-time-select></select>
                 </label>
                 <label>
-                  Close
+                  <span data-i18n="Close">Close</span>
                   <select name="companyCloseTime" data-time-select></select>
                 </label>
                 <label class="span-2">
-                  Portal username
-                  <input name="portalEmail" type="text" placeholder="customer123">
+                  <span data-i18n="Portal username">Portal username</span>
+                  <input name="portalEmail" type="text" placeholder="customer123" data-i18n-placeholder="customer123">
                 </label>
                 <label class="span-2">
-                  Portal password
-                  <input name="portalPassword" type="password" placeholder="Leave blank if you do not need a login">
+                  <span data-i18n="Portal password">Portal password</span>
+                  <input name="portalPassword" type="password" placeholder="Leave blank if you do not need a login" data-i18n-placeholder="Leave blank if you do not need a login">
                 </label>
-                <button class="primary-action span-2" type="submit">Add Customer</button>
+                <button class="primary-action span-2" type="submit" data-i18n="Add Customer">Add Customer</button>
               </form>
               <div id="customerList" class="table-list"></div>
             </section>
 
             <section class="panel">
               <div class="panel-heading">
-                <h2>Tariff Rule</h2>
+                <h2 data-i18n="Tariff Rule">Tariff Rule</h2>
               </div>
               <form id="tariffForm" class="form-grid compact admin-only">
                 <label>
-                  Customer
+                  <span data-i18n="Customer">Customer</span>
                   <select name="customerId" id="tariffCustomerSelect"></select>
                 </label>
                 <label>
-                  Rule type
+                  <span data-i18n="Rule type">Rule type</span>
                   <select name="ruleType">
-                    <option value="fixed">Fixed markup</option>
-                    <option value="percentage">Percentage markup</option>
+                    <option value="fixed" data-i18n="Fixed markup">Fixed markup</option>
+                    <option value="percentage" data-i18n="Percentage markup">Percentage markup</option>
                   </select>
                 </label>
                 <label>
-                  Fixed amount
+                  <span data-i18n="Fixed amount">Fixed amount</span>
                   <input name="fixedAmount" type="number" min="0" step="0.01" value="50">
                 </label>
                 <label>
-                  Markup percent
+                  <span data-i18n="Markup percent">Markup percent</span>
                   <input name="markupPercentage" type="number" min="0" step="0.1" value="15">
                 </label>
                 <div class="span-2">
-                  <div class="field-label">Allowed carrier modes</div>
+                  <div class="field-label" data-i18n="Allowed carrier modes">Allowed carrier modes</div>
                   <div class="mode-checkbox-grid">
                     <label class="checkbox-wrap">
                       <input type="checkbox" name="allowedCarrierModes" value="mothershipSandbox" checked>
-                      <span>Mothership sandbox</span>
+                      <span data-i18n="Mothership sandbox">Mothership sandbox</span>
                     </label>
                     <label class="checkbox-wrap">
                       <input type="checkbox" name="allowedCarrierModes" value="speedshipLtl">
-                      <span>SpeedShip LTL</span>
+                      <span data-i18n="SpeedShip LTL">SpeedShip LTL</span>
                     </label>
                     <label class="checkbox-wrap">
                       <input type="checkbox" name="allowedCarrierModes" value="priority1Ltl">
-                      <span>Priority1 LTL</span>
+                      <span data-i18n="Priority1 LTL">Priority1 LTL</span>
                     </label>
                     <label class="checkbox-wrap">
                       <input type="checkbox" name="allowedCarrierModes" value="fedexFreight">
-                      <span>FedEx Freight</span>
+                      <span data-i18n="FedEx Freight">FedEx Freight</span>
                     </label>
                     <label class="checkbox-wrap">
                       <input type="checkbox" name="allowedCarrierModes" value="demo">
-                      <span>Demo rates</span>
+                      <span data-i18n="Demo rates">Demo rates</span>
                     </label>
                   </div>
-                  <div class="field-label">Allowed booking modes</div>
+                  <div class="field-label" data-i18n="Allowed booking modes">Allowed booking modes</div>
                   <div class="mode-checkbox-grid" id="bookingModeCheckboxGrid">
                     <label class="checkbox-wrap">
                       <input type="checkbox" name="allowedBookingCarrierModes" value="mothershipSandbox" checked>
-                      <span>Mothership sandbox</span>
+                      <span data-i18n="Mothership sandbox">Mothership sandbox</span>
                     </label>
                     <label class="checkbox-wrap">
                       <input type="checkbox" name="allowedBookingCarrierModes" value="speedshipLtl">
-                      <span>SpeedShip LTL</span>
+                      <span data-i18n="SpeedShip LTL">SpeedShip LTL</span>
                     </label>
                     <label class="checkbox-wrap">
                       <input type="checkbox" name="allowedBookingCarrierModes" value="priority1Ltl">
-                      <span>Priority1 LTL</span>
+                      <span data-i18n="Priority1 LTL">Priority1 LTL</span>
                     </label>
                     <label class="checkbox-wrap">
                       <input type="checkbox" name="allowedBookingCarrierModes" value="fedexFreight">
-                      <span>FedEx Freight</span>
+                      <span data-i18n="FedEx Freight">FedEx Freight</span>
                     </label>
                     <label class="checkbox-wrap">
                       <input type="checkbox" name="allowedBookingCarrierModes" value="demo">
-                      <span>Demo rates</span>
+                      <span data-i18n="Demo rates">Demo rates</span>
                     </label>
                   </div>
-                  <div class="helper-text">Customers can book only the selected carrier modes. Uncheck all to disable booking.</div>
+                  <div class="helper-text" data-i18n="Customers can book only the selected carrier modes. Uncheck all to disable booking.">Customers can book only the selected carrier modes. Uncheck all to disable booking.</div>
                   <div id="tariffFormError" class="form-error"></div>
-                  <div class="helper-text">Quotes for this customer will pull rates from every selected carrier mode.</div>
+                  <div class="helper-text" data-i18n="Quotes for this customer will pull rates from every selected carrier mode.">Quotes for this customer will pull rates from every selected carrier mode.</div>
                 </div>
-                <button class="primary-action" type="submit">Save Tariff</button>
+                <button class="primary-action" type="submit" data-i18n="Save Tariff">Save Tariff</button>
               </form>
             </section>
           </div>
@@ -264,7 +279,7 @@
           <form id="quoteForm" class="quote-layout" novalidate>
             <section class="panel" id="quoteMetaPanel">
               <div class="panel-heading">
-                <h2>Customer and Mode</h2>
+                <h2 data-i18n="Customer and Mode">Customer and Mode</h2>
               </div>
               <div id="quoteFormError" class="form-error quote-form-error" aria-live="polite"></div>
               <div class="form-grid compact quote-meta-grid">
@@ -272,99 +287,99 @@
                   Customer
                   <select name="customerId" id="quoteCustomerSelect" required></select>
                 </label>
-                <div class="helper-text span-2">If the selected customer has an address on file, pickup will prefill from it.</div>
-                <div class="helper-text span-2" id="carrierModeHint">Rates will use the carrier modes assigned to the selected customer.</div>
+                <div class="helper-text span-2" data-i18n="If the selected customer has an address on file, pickup will prefill from it.">If the selected customer has an address on file, pickup will prefill from it.</div>
+                <div class="helper-text span-2" id="carrierModeHint" data-i18n="Rates will use the carrier modes assigned to the selected customer.">Rates will use the carrier modes assigned to the selected customer.</div>
               </div>
             </section>
 
             <div class="quote-stops-grid">
               <section class="panel location-panel">
                 <div class="panel-heading">
-                  <h2>Pickup</h2>
+                  <h2 data-i18n="Pickup">Pickup</h2>
                 </div>
                 <div class="location-grid">
                   <section class="location-subsection quote-details-subsection">
-                    <h3>Quote details</h3>
+                    <h3 data-i18n="Quote details">Quote details</h3>
                     <div class="form-grid quote-details-grid">
                       <label>
-                        Reference / PO number
-                        <input name="referenceNumber" required placeholder="PO-1001">
+                        <span data-i18n="Reference / PO number">Reference / PO number</span>
+                        <input name="referenceNumber" required placeholder="PO-1001" data-i18n-placeholder="PO-1001">
                       </label>
                       <label>
-                        Pickup date
+                        <span data-i18n="Pickup date">Pickup date</span>
                         <input name="pickupDate" type="date" required>
                       </label>
                       <label>
-                        Ready time
+                        <span data-i18n="Ready time">Ready time</span>
                         <select name="pickupTime" data-time-select required></select>
                       </label>
                     </div>
                   </section>
                   <section class="location-subsection">
-                    <h3>Company and address</h3>
+                    <h3 data-i18n="Company and address">Company and address</h3>
                     <div class="form-grid location-address-grid">
                       <label>
-                        Company name
-                        <input name="pickupName" required placeholder="Company name">
+                        <span data-i18n="Company name">Company name</span>
+                        <input name="pickupName" required placeholder="Company name" data-i18n-placeholder="Company name">
                       </label>
                       <label>
-                        Street
-                        <input name="pickupStreet" required placeholder="Street">
+                        <span data-i18n="Street">Street</span>
+                        <input name="pickupStreet" required placeholder="Street" data-i18n-placeholder="Street">
                       </label>
                       <label>
-                        City
-                        <input name="pickupCity" required placeholder="City">
+                        <span data-i18n="City">City</span>
+                        <input name="pickupCity" required placeholder="City" data-i18n-placeholder="City">
                       </label>
                       <label>
-                        State
-                        <input name="pickupState" required placeholder="CA" maxlength="2">
+                        <span data-i18n="State">State</span>
+                        <input name="pickupState" required placeholder="CA" maxlength="2" data-i18n-placeholder="CA">
                       </label>
                       <label>
-                        ZIP
-                        <input name="pickupZip" data-zip-autofill="pickup" required placeholder="ZIP">
+                        <span data-i18n="ZIP">ZIP</span>
+                        <input name="pickupZip" data-zip-autofill="pickup" required placeholder="ZIP" data-i18n-placeholder="ZIP">
                       </label>
                     </div>
                   </section>
 
                   <section class="location-subsection">
-                    <h3>Contact and hours</h3>
+                    <h3 data-i18n="Contact and hours">Contact and hours</h3>
                     <div class="form-grid location-contact-grid">
                       <label class="span-2">
-                        Phone
-                        <input name="pickupPhone" type="tel" inputmode="numeric" autocomplete="tel" required placeholder="Phone">
+                        <span data-i18n="Phone">Phone</span>
+                        <input name="pickupPhone" type="tel" inputmode="numeric" autocomplete="tel" required placeholder="Phone" data-i18n-placeholder="Phone">
                       </label>
                       <label class="span-2">
-                        Email
-                        <input name="pickupEmail" type="email" placeholder="Email">
+                        <span data-i18n="Email">Email</span>
+                        <input name="pickupEmail" type="email" placeholder="Email" data-i18n-placeholder="Email">
                       </label>
                       <label>
-                        Open
+                        <span data-i18n="Open">Open</span>
                         <select name="pickupOpen" data-time-select required></select>
                       </label>
                       <label>
-                        Close
+                        <span data-i18n="Close">Close</span>
                         <select name="pickupClose" data-time-select required></select>
                       </label>
                     </div>
                   </section>
 
                   <section class="location-subsection">
-                    <h3>Accessorials</h3>
+                    <h3 data-i18n="Accessorials">Accessorials</h3>
                     <div class="accessorial-dropdown-shell">
                       <details class="accessorial-dropdown" data-accessorial-group="pickup">
-                        <summary><span class="accessorial-summary">Select accessorials</span></summary>
+                        <summary><span class="accessorial-summary" data-i18n="Select accessorials">Select accessorials</span></summary>
                         <div class="accessorial-menu">
-                          <label><input type="checkbox" name="pickupAccessorials" value="appointment" data-label="Appointment"> Appointment</label>
-                          <label><input type="checkbox" name="pickupAccessorials" value="liftgate" data-label="Liftgate"> Liftgate</label>
-                          <label><input type="checkbox" name="pickupAccessorials" value="inside" data-label="Inside"> Inside</label>
-                          <label><input type="checkbox" name="pickupAccessorials" value="limitedAccess" data-label="Limited access"> Limited access</label>
-                          <label><input type="checkbox" name="pickupAccessorials" value="residential" data-label="Residential"> Residential</label>
-                          <label><input type="checkbox" name="pickupAccessorials" value="crossDock" data-label="Cross dock"> Cross dock</label>
-                          <label><input type="checkbox" name="pickupAccessorials" value="cfs" data-label="Container freight station"> Container freight station</label>
-                          <label><input type="checkbox" name="pickupAccessorials" value="hazmat" data-label="Hazmat"> Hazmat</label>
-                          <label><input type="checkbox" name="pickupAccessorials" value="alcohol" data-label="Alcohol"> Alcohol</label>
-                          <label><input type="checkbox" name="pickupAccessorials" value="tobacco" data-label="Tobacco"> Tobacco</label>
-                          <label><input type="checkbox" name="pickupAccessorials" value="tradeshow" data-label="Tradeshow"> Tradeshow</label>
+                          <label><input type="checkbox" name="pickupAccessorials" value="appointment" data-label="Appointment"> <span data-i18n="Appointment">Appointment</span></label>
+                          <label><input type="checkbox" name="pickupAccessorials" value="liftgate" data-label="Liftgate"> <span data-i18n="Liftgate">Liftgate</span></label>
+                          <label><input type="checkbox" name="pickupAccessorials" value="inside" data-label="Inside"> <span data-i18n="Inside">Inside</span></label>
+                          <label><input type="checkbox" name="pickupAccessorials" value="limitedAccess" data-label="Limited access"> <span data-i18n="Limited access">Limited access</span></label>
+                          <label><input type="checkbox" name="pickupAccessorials" value="residential" data-label="Residential"> <span data-i18n="Residential">Residential</span></label>
+                          <label><input type="checkbox" name="pickupAccessorials" value="crossDock" data-label="Cross dock"> <span data-i18n="Cross dock">Cross dock</span></label>
+                          <label><input type="checkbox" name="pickupAccessorials" value="cfs" data-label="Container freight station"> <span data-i18n="Container freight station">Container freight station</span></label>
+                          <label><input type="checkbox" name="pickupAccessorials" value="hazmat" data-label="Hazmat"> <span data-i18n="Hazmat">Hazmat</span></label>
+                          <label><input type="checkbox" name="pickupAccessorials" value="alcohol" data-label="Alcohol"> <span data-i18n="Alcohol">Alcohol</span></label>
+                          <label><input type="checkbox" name="pickupAccessorials" value="tobacco" data-label="Tobacco"> <span data-i18n="Tobacco">Tobacco</span></label>
+                          <label><input type="checkbox" name="pickupAccessorials" value="tradeshow" data-label="Tradeshow"> <span data-i18n="Tradeshow">Tradeshow</span></label>
                         </div>
                       </details>
                     </div>
@@ -374,76 +389,76 @@
 
               <section class="panel location-panel">
                 <div class="panel-heading">
-                  <h2>Delivery</h2>
+                  <h2 data-i18n="Delivery">Delivery</h2>
                 </div>
                 <div class="location-grid">
                   <section class="location-subsection">
-                    <h3>Company and address</h3>
+                    <h3 data-i18n="Company and address">Company and address</h3>
                     <div class="form-grid location-address-grid">
                       <label>
-                        Company name
-                        <input name="deliveryName" required placeholder="Company name">
+                        <span data-i18n="Company name">Company name</span>
+                        <input name="deliveryName" required placeholder="Company name" data-i18n-placeholder="Company name">
                       </label>
                       <label>
-                        Street
-                        <input name="deliveryStreet" required placeholder="Street">
+                        <span data-i18n="Street">Street</span>
+                        <input name="deliveryStreet" required placeholder="Street" data-i18n-placeholder="Street">
                       </label>
                       <label>
-                        City
-                        <input name="deliveryCity" required placeholder="City">
+                        <span data-i18n="City">City</span>
+                        <input name="deliveryCity" required placeholder="City" data-i18n-placeholder="City">
                       </label>
                       <label>
-                        State
-                        <input name="deliveryState" required placeholder="CA" maxlength="2">
+                        <span data-i18n="State">State</span>
+                        <input name="deliveryState" required placeholder="CA" maxlength="2" data-i18n-placeholder="CA">
                       </label>
                       <label>
-                        ZIP
-                        <input name="deliveryZip" data-zip-autofill="delivery" required placeholder="ZIP">
+                        <span data-i18n="ZIP">ZIP</span>
+                        <input name="deliveryZip" data-zip-autofill="delivery" required placeholder="ZIP" data-i18n-placeholder="ZIP">
                       </label>
                     </div>
                   </section>
 
                   <section class="location-subsection">
-                    <h3>Contact and hours</h3>
+                    <h3 data-i18n="Contact and hours">Contact and hours</h3>
                     <div class="form-grid location-contact-grid">
                       <label class="span-2">
-                        Phone
-                        <input name="deliveryPhone" type="tel" inputmode="numeric" autocomplete="tel" required placeholder="Phone">
+                        <span data-i18n="Phone">Phone</span>
+                        <input name="deliveryPhone" type="tel" inputmode="numeric" autocomplete="tel" required placeholder="Phone" data-i18n-placeholder="Phone">
                       </label>
                       <label class="span-2">
-                        Email
-                        <input name="deliveryEmail" type="email" placeholder="Email">
+                        <span data-i18n="Email">Email</span>
+                        <input name="deliveryEmail" type="email" placeholder="Email" data-i18n-placeholder="Email">
                       </label>
                       <label>
-                        Open
+                        <span data-i18n="Open">Open</span>
                         <select name="deliveryOpen" data-time-select required></select>
                       </label>
                       <label>
-                        Close
+                        <span data-i18n="Close">Close</span>
                         <select name="deliveryClose" data-time-select required></select>
                       </label>
                     </div>
                   </section>
 
                   <section class="location-subsection">
-                    <h3>Accessorials</h3>
+                    <h3 data-i18n="Accessorials">Accessorials</h3>
                     <div class="accessorial-dropdown-shell">
                       <details class="accessorial-dropdown" data-accessorial-group="delivery">
-                        <summary><span class="accessorial-summary">Select accessorials</span></summary>
+                        <summary><span class="accessorial-summary" data-i18n="Select accessorials">Select accessorials</span></summary>
                         <div class="accessorial-menu">
-                          <label><input type="checkbox" name="deliveryAccessorials" value="appointment" data-label="Appointment"> Appointment</label>
-                          <label><input type="checkbox" name="deliveryAccessorials" value="liftgate" data-label="Liftgate"> Liftgate</label>
-                          <label><input type="checkbox" name="deliveryAccessorials" value="inside" data-label="Inside"> Inside</label>
-                          <label><input type="checkbox" name="deliveryAccessorials" value="limitedAccess" data-label="Limited access"> Limited access</label>
-                          <label><input type="checkbox" name="deliveryAccessorials" value="residential" data-label="Residential"> Residential</label>
-                          <label><input type="checkbox" name="deliveryAccessorials" value="scheduledDelivery" data-label="Scheduled delivery"> Scheduled delivery</label>
-                          <label><input type="checkbox" name="deliveryAccessorials" value="hazmat" data-label="Hazmat"> Hazmat</label>
-                          <label><input type="checkbox" name="deliveryAccessorials" value="alcohol" data-label="Alcohol"> Alcohol</label>
-                          <label><input type="checkbox" name="deliveryAccessorials" value="tobacco" data-label="Tobacco"> Tobacco</label>
-                          <label><input type="checkbox" name="deliveryAccessorials" value="tradeshow" data-label="Tradeshow"> Tradeshow</label>
+                          <label><input type="checkbox" name="deliveryAccessorials" value="appointment" data-label="Appointment"> <span data-i18n="Appointment">Appointment</span></label>
+                          <label><input type="checkbox" name="deliveryAccessorials" value="liftgate" data-label="Liftgate"> <span data-i18n="Liftgate">Liftgate</span></label>
+                          <label><input type="checkbox" name="deliveryAccessorials" value="inside" data-label="Inside"> <span data-i18n="Inside">Inside</span></label>
+                          <label><input type="checkbox" name="deliveryAccessorials" value="limitedAccess" data-label="Limited access"> <span data-i18n="Limited access">Limited access</span></label>
+                          <label><input type="checkbox" name="deliveryAccessorials" value="residential" data-label="Residential"> <span data-i18n="Residential">Residential</span></label>
+                          <label><input type="checkbox" name="deliveryAccessorials" value="scheduledDelivery" data-label="Scheduled delivery"> <span data-i18n="Scheduled delivery">Scheduled delivery</span></label>
+                          <label><input type="checkbox" name="deliveryAccessorials" value="hazmat" data-label="Hazmat"> <span data-i18n="Hazmat">Hazmat</span></label>
+                          <label><input type="checkbox" name="deliveryAccessorials" value="alcohol" data-label="Alcohol"> <span data-i18n="Alcohol">Alcohol</span></label>
+                          <label><input type="checkbox" name="deliveryAccessorials" value="tobacco" data-label="Tobacco"> <span data-i18n="Tobacco">Tobacco</span></label>
+                          <label><input type="checkbox" name="deliveryAccessorials" value="tradeshow" data-label="Tradeshow"> <span data-i18n="Tradeshow">Tradeshow</span></label>
                         </div>
                       </details>
-                      <span class="helper-text">Residential delivery requires scheduled delivery.</span>
+                      <span class="helper-text" data-i18n="Residential delivery requires scheduled delivery.">Residential delivery requires scheduled delivery.</span>
                     </div>
                   </section>
                 </div>
@@ -451,31 +466,32 @@
             </div>
 
             <section class="panel">
-                <div class="panel-heading">
-                  <h2>Freight</h2>
+              <div class="panel-heading">
+                  <h2 data-i18n="Freight">Freight</h2>
                 </div>
               <div id="freightRows" class="freight-rows"></div>
               <div class="freight-actions-row">
-                <button class="secondary-action" type="button" data-add-freight-row>Add Item</button>
+                <button class="secondary-action" type="button" data-apply-all-freight-suggestions data-i18n="Apply suggestions to all items">Apply suggestions to all items</button>
+                <button class="secondary-action" type="button" data-add-freight-row data-i18n="Add Item">Add Item</button>
               </div>
               <div class="button-row">
-                <button class="primary-action" type="submit">Get Rates</button>
+                <button class="primary-action" type="submit" data-i18n="Get Rates">Get Rates</button>
               </div>
             </section>
           </form>
 
           <section class="panel" id="quoteResultsPanel">
             <div class="panel-heading">
-              <h2>Quote Results</h2>
+              <h2 data-i18n="Quote Results">Quote Results</h2>
             </div>
-            <div id="quoteResults" class="rate-list empty-state">Submit a quote to see available rates.</div>
+            <div id="quoteResults" class="rate-list empty-state" data-i18n="Submit a quote to see available rates.">Submit a quote to see available rates.</div>
           </section>
         </section>
 
         <section class="view" id="shipmentsView">
           <section class="panel">
             <div class="panel-heading">
-              <h2>Shipments</h2>
+              <h2 data-i18n="Shipments">Shipments</h2>
             </div>
             <div id="shipmentList" class="table-list"></div>
           </section>
@@ -484,16 +500,16 @@
         <section class="view" id="invoicesView">
           <section class="panel">
             <div class="panel-heading">
-              <h2>Invoices</h2>
+              <h2 data-i18n="Invoices">Invoices</h2>
             </div>
             <div class="invoice-sync-bar admin-only">
               <div class="invoice-sync-copy">
-                <strong>Mothership invoice sync</strong>
-                <p class="helper-text">Pull existing carrier invoices into the admin invoice list.</p>
+                <strong data-i18n="Mothership invoice sync">Mothership invoice sync</strong>
+                <p class="helper-text" data-i18n="Pull existing carrier invoices into the admin invoice list.">Pull existing carrier invoices into the admin invoice list.</p>
               </div>
               <div class="invoice-sync-actions">
-                <span id="mothershipInvoiceSyncStatus" class="pill">Ready for sync</span>
-                <button class="primary-action" id="mothershipInvoiceSyncButton" type="button">Sync from Mothership</button>
+                <span id="mothershipInvoiceSyncStatus" class="pill" data-i18n="Ready for sync">Ready for sync</span>
+                <button class="primary-action" id="mothershipInvoiceSyncButton" type="button" data-i18n="Sync from Mothership">Sync from Mothership</button>
               </div>
             </div>
             <div id="invoiceList" class="table-list"></div>
@@ -506,8 +522,8 @@
     <div id="modalOverlay" class="modal-overlay hidden" aria-hidden="true">
       <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
         <div class="modal-header">
-          <h2 id="modalTitle">Details</h2>
-          <button id="modalCloseButton" class="secondary-action" type="button">Close</button>
+          <h2 id="modalTitle" data-i18n="Details">Details</h2>
+          <button id="modalCloseButton" class="secondary-action" type="button" data-i18n="Close">Close</button>
         </div>
         <div id="modalBody" class="modal-body"></div>
       </div>
@@ -516,57 +532,57 @@
       <section class="freight-row" data-freight-row>
         <div class="freight-row-header">
           <div class="freight-row-title">
-            <strong data-freight-row-title>Item 1</strong>
-            <span class="helper-text">One row equals one freight line.</span>
+            <strong data-freight-row-title data-i18n="Item 1">Item 1</strong>
+            <span class="helper-text" data-i18n="One row equals one freight line.">One row equals one freight line.</span>
           </div>
-          <button class="danger-action freight-row-remove" type="button" data-remove-freight-row>Remove</button>
+          <button class="danger-action freight-row-remove" type="button" data-remove-freight-row data-i18n="Remove">Remove</button>
         </div>
         <div class="form-grid freight-primary-grid">
           <label>
-            <span class="field-label">Quantity<span class="required-mark" aria-hidden="true">*</span></span>
-            <input data-freight-field="quantity" type="number" min="1" placeholder="# of pallets" required>
+            <span class="field-label" data-i18n="Quantity">Quantity<span class="required-mark" aria-hidden="true">*</span></span>
+            <input data-freight-field="quantity" type="number" min="1" placeholder="# of pallets" required data-i18n-placeholder="# of pallets">
           </label>
           <label>
-            <span class="field-label">Cargo type<span class="required-mark" aria-hidden="true">*</span></span>
+            <span class="field-label" data-i18n="Cargo type">Cargo type<span class="required-mark" aria-hidden="true">*</span></span>
             <select data-freight-field="type" required>
-              <option value="" selected disabled>Select type</option>
-              <option>Pallet</option>
-              <option>Box</option>
-              <option>Crate</option>
+              <option value="" selected disabled data-i18n="Select type">Select type</option>
+              <option data-i18n="Pallet">Pallet</option>
+              <option data-i18n="Box">Box</option>
+              <option data-i18n="Crate">Crate</option>
             </select>
           </label>
           <label>
-            Pieces per unit
-            <input data-freight-field="pieces" type="number" min="1" placeholder="# of pieces" value="1">
+            <span data-i18n="Pieces per unit">Pieces per unit</span>
+            <input data-freight-field="pieces" type="number" min="1" placeholder="# of pieces" value="1" data-i18n-placeholder="# of pieces">
           </label>
           <label>
-            <span class="field-label">Weight each (lbs)<span class="required-mark" aria-hidden="true">*</span></span>
-            <input data-freight-field="weight" type="number" min="1" placeholder="Weight" required>
+            <span class="field-label" data-i18n="Weight each (lbs)">Weight each (lbs)<span class="required-mark" aria-hidden="true">*</span></span>
+            <input data-freight-field="weight" type="number" min="1" placeholder="Weight" required data-i18n-placeholder="Weight">
           </label>
         </div>
         <div class="form-grid freight-secondary-grid">
           <label>
-            <span class="field-label">Length (in)<span class="required-mark" aria-hidden="true">*</span></span>
-            <input data-freight-field="length" type="number" min="1" placeholder="Length" required>
+            <span class="field-label" data-i18n="Length">Length (in)<span class="required-mark" aria-hidden="true">*</span></span>
+            <input data-freight-field="length" type="number" min="1" placeholder="Length" required data-i18n-placeholder="Length">
           </label>
           <label>
-            <span class="field-label">Width (in)<span class="required-mark" aria-hidden="true">*</span></span>
-            <input data-freight-field="width" type="number" min="1" placeholder="Width" required>
+            <span class="field-label" data-i18n="Width">Width (in)<span class="required-mark" aria-hidden="true">*</span></span>
+            <input data-freight-field="width" type="number" min="1" placeholder="Width" required data-i18n-placeholder="Width">
           </label>
           <label>
-            <span class="field-label">Height (in)<span class="required-mark" aria-hidden="true">*</span></span>
-            <input data-freight-field="height" type="number" min="1" placeholder="Height" required>
+            <span class="field-label" data-i18n="Height">Height (in)<span class="required-mark" aria-hidden="true">*</span></span>
+            <input data-freight-field="height" type="number" min="1" placeholder="Height" required data-i18n-placeholder="Height">
           </label>
           <label>
-            <span class="field-label">Description<span class="required-mark" aria-hidden="true">*</span></span>
-            <input data-freight-field="description" placeholder="Description" required>
+            <span class="field-label" data-i18n="Description">Description<span class="required-mark" aria-hidden="true">*</span></span>
+            <input data-freight-field="description" placeholder="Description" required data-i18n-placeholder="Description">
           </label>
         </div>
         <div class="form-grid freight-tertiary-grid">
           <label>
-            <span class="field-label">Freight class<span class="required-mark" aria-hidden="true">*</span></span>
+            <span class="field-label" data-i18n="Freight class">Freight class<span class="required-mark" aria-hidden="true">*</span></span>
             <select data-freight-field="freightClass" required>
-              <option value="" selected>Select class</option>
+              <option value="" selected data-i18n="Select class">Select class</option>
               <option value="50">50</option>
               <option value="55">55</option>
               <option value="60">60</option>
@@ -588,32 +604,31 @@
             </select>
           </label>
           <label>
-            NMFC
-            <input data-freight-field="nmfc" placeholder="Optional NMFC">
+            <span data-i18n="Optional NMFC">NMFC</span>
+            <input data-freight-field="nmfc" placeholder="Optional NMFC" data-i18n-placeholder="Optional NMFC">
           </label>
           <div class="freight-flags">
             <label class="checkbox-wrap">
               <input data-freight-flag="stackable" type="checkbox">
-              <span>Stackable</span>
+              <span data-i18n="Stackable">Stackable</span>
             </label>
             <label class="checkbox-wrap">
               <input data-freight-flag="hazmat" type="checkbox">
-              <span>Hazmat</span>
+              <span data-i18n="Hazmat">Hazmat</span>
             </label>
             <label class="checkbox-wrap">
               <input data-freight-flag="used" type="checkbox">
-              <span>Used</span>
+              <span data-i18n="Used">Used</span>
             </label>
             <label class="checkbox-wrap">
               <input data-freight-flag="machinery" type="checkbox">
-              <span>Machinery</span>
+              <span data-i18n="Machinery">Machinery</span>
             </label>
           </div>
         </div>
         <div class="freight-help-row">
           <div class="freight-suggestion">
-            <span class="helper-text" data-freight-suggestion>Suggested freight class: enter quantity, weight, and dimensions to calculate one.</span>
-            <button class="secondary-action freight-suggestion-button" type="button" data-apply-freight-suggestion disabled>Use suggestion</button>
+            <span class="helper-text" data-freight-suggestion data-i18n="Suggested freight class: enter quantity, weight, and dimensions to calculate one.">Suggested freight class: enter quantity, weight, and dimensions to calculate one.</span>
           </div>
         </div>
       </section>

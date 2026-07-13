@@ -69,6 +69,28 @@ button {
   margin-bottom: 18px;
 }
 
+.language-switch {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 16px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.language-switch.compact {
+  margin-bottom: 0;
+}
+
+.language-switch select {
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0 10px;
+  background: #ffffff;
+  color: var(--ink);
+}
+
 .login-form {
   display: grid;
   gap: 12px;
@@ -470,6 +492,8 @@ button.metric {
 .freight-actions-row {
   display: flex;
   justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
   padding: 0 16px 4px;
 }
 
