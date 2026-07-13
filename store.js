@@ -3,11 +3,6 @@ import crypto from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import pg from "pg";
-
-const { Pool, types } = pg;
-
-types.setTypeParser(1700, (value) => (value === null ? null : Number(value)));
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -26,6 +21,11 @@ function resolveDataFilePath(value) {
 }
 
 async function createPostgresStore(dbUrl) {
+  const pg = await import("pg");
+  const { Pool, types } = pg;
+
+  types.setTypeParser(1700, (value) => (value === null ? null : Number(value)));
+
   const pool = new Pool({
     connectionString: dbUrl,
     max: 10
