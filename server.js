@@ -3,11 +3,9 @@ import crypto from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { createAppStore } from "./store.js";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const __dirname = process.cwd();
 const port = Number(process.env.PORT || 3000);
 const publicDir = path.join(__dirname, "public");
 const sessionCookieName = "tms_session";
@@ -18,7 +16,7 @@ await loadLocalEnv();
 appSecret = process.env.APP_SECRET || appSecret;
 
 const store = await createAppStore({
-  dbUrl: process.env.DATABASE_URL,
+  dbUrl: process.env.FORCE_LOCAL_JSON_STORE === "1" ? "" : process.env.DATABASE_URL,
   dataFile: process.env.DATA_FILE_PATH || ".local-db.json"
 });
 
@@ -326,6 +324,7 @@ async function createQuote(req, res, currentUser) {
       carrier: run.carrier,
       carrierQuoteId: run.carrierQuoteId,
       carrierMessage: run.carrierMessage,
+      quoteMetadata: run.quoteMetadata || null,
       rateCount: Array.isArray(run.rates) ? run.rates.length : 0,
       request: run.carrierRequest,
       response: run.rawCarrierResponse
@@ -455,11 +454,54 @@ async function createShipment(req, res, currentUser) {
       return;
     }
 
+    const purchaseMetadata = findMothershipPurchaseMetadataFromQuote(quote, rate);
+    const purchaseSummary = summarizeMothershipPurchaseMetadata(purchaseMetadata);
+    if (purchaseSummary && purchaseSummary.purchasable === false) {
+      console.log("Mothership quote blocked before booking", {
+        quoteId: quote.id,
+        carrierQuoteId: rate.carrierQuoteId || quote.carrierQuoteId,
+        rateId: rate.carrierRateId || rate.id,
+        metadata: purchaseMetadata
+      });
+      sendJson(res, 400, {
+        error: "CARRIER_NOT_PURCHASABLE",
+        message: purchaseSummary.message || "This quote is not purchasable yet."
+      });
+      return;
+    }
+
     const carrierShipmentRequest = {
       quoteId: rate.carrierQuoteId || quote.carrierQuoteId,
       rateId: rate.carrierRateId || rate.id
     };
-    const carrierShipmentResponse = await requestMothershipShipment(carrierShipmentRequest);
+    console.log("Mothership shipment booking request", {
+      quoteId: carrierShipmentRequest.quoteId,
+      rateId: carrierShipmentRequest.rateId,
+      quoteIdSource: rate.carrierQuoteId || quote.carrierQuoteId ? "carrier" : "local",
+      rateIdSource: rate.carrierRateId || rate.id ? "carrier" : "local",
+      baseUrl: mothershipBaseUrl
+    });
+
+    let carrierShipmentResponse;
+    try {
+      carrierShipmentResponse = await requestMothershipShipment(carrierShipmentRequest);
+    } catch (error) {
+      console.error("Mothership shipment booking failed", {
+        quoteId: carrierShipmentRequest.quoteId,
+        rateId: carrierShipmentRequest.rateId,
+        status: error?.status,
+        code: error?.code,
+        message: error?.message,
+        baseUrl: mothershipBaseUrl
+      });
+      throw error;
+    }
+
+    console.log("Mothership shipment booking response", {
+      quoteId: carrierShipmentRequest.quoteId,
+      rateId: carrierShipmentRequest.rateId,
+      responseKeys: carrierShipmentResponse && typeof carrierShipmentResponse === "object" ? Object.keys(carrierShipmentResponse) : []
+    });
     carrierShipment = {
       request: carrierShipmentRequest,
       response: carrierShipmentResponse,
@@ -537,7 +579,7 @@ async function getTracking(res, shipmentId, currentUser) {
     shipment.carrier === "mothership" &&
     process.env.MOTHERSHIP_API_TOKEN
   ) {
-    const tracking = await requestMothershipShipmentDetails(shipment.carrierShipmentId);
+    const tracking = await requestMothershipTracking(shipment.carrierShipmentId);
     const events = normalizeTrackingEvents(tracking);
     await store.replaceTrackingEvents(shipment.id, events, tracking);
     sendJson(res, 200, { shipmentId: shipment.id, carrierShipmentId: shipment.carrierShipmentId, events });
@@ -661,6 +703,15 @@ async function getMothershipShipmentDocuments(res, entityId, currentUser) {
 }
 
 function buildMothershipQuoteRequest(input) {
+  const referenceNumber = requiredString(input.referenceNumber, "referenceNumber");
+  const pickup = {
+    ...normalizeStop(input.pickup, "pickup"),
+    referenceNumber
+  };
+  const delivery = {
+    ...normalizeStop(input.delivery, "delivery"),
+    referenceNumber
+  };
   const freight = normalizeFreight(input.freight).map((item) => ({
     quantity: item.quantity,
     type: item.type,
@@ -672,8 +723,8 @@ function buildMothershipQuoteRequest(input) {
   }));
 
   return {
-    pickup: normalizeStop(input.pickup, "pickup"),
-    delivery: normalizeStop(input.delivery, "delivery"),
+    pickup,
+    delivery,
     pickupReadyDate: {
       date: requiredString(input.pickupReadyDate?.date, "pickupReadyDate.date"),
       time: requiredString(input.pickupReadyDate?.time, "pickupReadyDate.time")
@@ -1001,6 +1052,95 @@ async function requestMothershipShipment(payload) {
   });
 }
 
+function extractMothershipQuoteMetadata(payload) {
+  const candidates = [
+    payload?.data?.metadata,
+    payload?.metadata,
+    payload?.data?.quote?.metadata,
+    payload?.quote?.metadata,
+    payload?.data?.quoteMetadata
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function summarizeMothershipPurchaseMetadata(metadata) {
+  if (!metadata || typeof metadata !== "object") {
+    return null;
+  }
+
+  const purchasable = Boolean(metadata.purchasable);
+  const invalidFields = Array.isArray(metadata.invalidFieldsRequiredForPurchase)
+    ? metadata.invalidFieldsRequiredForPurchase
+        .map((item) => {
+          const field = String(item?.field || "").trim();
+          const errorMessage = String(item?.errorMessage || item?.message || "").trim();
+          if (!field && !errorMessage) {
+            return null;
+          }
+          return [field, errorMessage].filter(Boolean).join(": ");
+        })
+        .filter(Boolean)
+    : [];
+  const pickupSuggestedAccessorials = Array.isArray(metadata.pickupLocationSuggestedAccessorials)
+    ? metadata.pickupLocationSuggestedAccessorials.filter(Boolean)
+    : [];
+  const deliverySuggestedAccessorials = Array.isArray(metadata.deliveryLocationSuggestedAccessorials)
+    ? metadata.deliveryLocationSuggestedAccessorials.filter(Boolean)
+    : [];
+
+  const messageParts = [];
+  if (!purchasable) {
+    messageParts.push("This quote is not purchasable yet.");
+  }
+  if (invalidFields.length > 0) {
+    messageParts.push(`Missing or invalid fields: ${invalidFields.join("; ")}`);
+  }
+  if (pickupSuggestedAccessorials.length > 0) {
+    messageParts.push(`Pickup suggested accessorials: ${pickupSuggestedAccessorials.join(", ")}`);
+  }
+  if (deliverySuggestedAccessorials.length > 0) {
+    messageParts.push(`Delivery suggested accessorials: ${deliverySuggestedAccessorials.join(", ")}`);
+  }
+
+  return {
+    purchasable,
+    invalidFields,
+    pickupSuggestedAccessorials,
+    deliverySuggestedAccessorials,
+    message: messageParts.join(" ").trim()
+  };
+}
+
+function findMothershipPurchaseMetadataFromQuote(quote, rate = null) {
+  const directMetadata = rate?.purchaseMetadata || rate?.mothershipMetadata || null;
+  if (directMetadata) {
+    return directMetadata;
+  }
+
+  const runs = Array.isArray(quote?.rawCarrierResponse) ? quote.rawCarrierResponse : [];
+  for (const run of runs) {
+    const isMothershipRun =
+      normalizeCarrierMode(run?.mode) === "mothershipSandbox" || String(run?.carrier || "").toLowerCase() === "mothership";
+    if (!isMothershipRun) {
+      continue;
+    }
+
+    const metadata = extractMothershipQuoteMetadata(run?.rawCarrierResponse || run?.response || run);
+    if (metadata) {
+      return metadata;
+    }
+  }
+
+  return null;
+}
+
 async function requestSpeedshipLtlQuote(primaryPayload, fallbackPayload) {
   const token = await getSpeedshipAccessToken();
   try {
@@ -1303,6 +1443,7 @@ async function getSpeedshipAccessToken() {
 
 function normalizeMothershipRates(payload) {
   const data = payload?.data || payload;
+  const metadata = extractMothershipQuoteMetadata(payload);
   const rates = data?.rates || data?.rateResults || data?.results || [];
 
   if (!Array.isArray(rates)) {
@@ -1328,7 +1469,8 @@ function normalizeMothershipRates(payload) {
     estimatedPickupDate: rate.estimatedPickupDate || null,
     estimatedDeliveryDate: rate.estimatedDeliveryDate || null,
     transitDays: rate.transitDays || null,
-    warnings: Array.isArray(rate.warnings) ? rate.warnings : []
+    warnings: Array.isArray(rate.warnings) ? rate.warnings : [],
+    purchaseMetadata: metadata
   }));
 }
 
@@ -1447,30 +1589,71 @@ function normalizeSpeedshipLtlRates(payload) {
 }
 
 function normalizeTrackingEvents(payload) {
-  const events = payload?.results || payload?.data?.trackingEvents || payload?.data || [];
-  if (Array.isArray(events)) {
+  const candidates = [
+    payload?.results,
+    payload?.data?.trackingEvents,
+    payload?.data?.events,
+    payload?.data?.results,
+    payload?.data,
+    payload?.events
+  ];
+  const events = candidates.find((value) => Array.isArray(value));
+  if (Array.isArray(events) && events.length > 0) {
     return events.map((event) => ({
-      status: event.status || event.type || "Updated",
-      eventTime: event.eventTime || event.timestamp || event.createdAt || new Date().toISOString(),
-      location: event.location || [event.city, event.state].filter(Boolean).join(", "),
-      description: event.description || event.message || "Tracking event received."
+      status:
+        String(
+          event.status ||
+          event.type ||
+          event.eventType ||
+          event.name ||
+          event.title ||
+          "Updated"
+        ).trim(),
+      eventTime:
+        event.eventTime ||
+        event.timestamp ||
+        event.createdAt ||
+        event.occurredAt ||
+        event.time ||
+        new Date().toISOString(),
+      location:
+        event.location ||
+        event.city ||
+        [event.city, event.state].filter(Boolean).join(", ") ||
+        [event.locationCity, event.locationState].filter(Boolean).join(", "),
+      description:
+        event.description ||
+        event.message ||
+        event.detail ||
+        event.notes ||
+        event.statusDescription ||
+        "Tracking event received."
     }));
   }
 
   const data = payload?.data || payload || {};
   return [
     {
-      status: data.status || "Updated",
+      status: String(data.status || data.type || "Updated").trim(),
       eventTime:
+        data.eventTime ||
+        data.timestamp ||
+        data.createdAt ||
+        data.updatedAt ||
         data.estimatedDeliveryDate ||
         data.earliestPickupDate ||
-        data.createdAt ||
         new Date().toISOString(),
       location:
-        data.estimatedLocation && typeof data.estimatedLocation === "object"
+        data.location ||
+        data.city ||
+        (data.estimatedLocation && typeof data.estimatedLocation === "object"
           ? `${data.estimatedLocation.latitude}, ${data.estimatedLocation.longitude}`
-          : "",
-      description: "Shipment details updated."
+          : ""),
+      description:
+        data.description ||
+        data.message ||
+        data.detail ||
+        "Shipment details updated."
     }
   ];
 }
@@ -1641,6 +1824,7 @@ async function requestCarrierQuoteForMode(mode, mothershipRequest, speedshipRequ
 
       const carrierQuote = await requestMothershipQuote(mothershipRequest);
       const rates = normalizeMothershipRates(carrierQuote);
+      const quoteMetadata = extractMothershipQuoteMetadata(carrierQuote);
       return {
         mode: normalizedMode,
         carrier: "mothership",
@@ -1648,7 +1832,8 @@ async function requestCarrierQuoteForMode(mode, mothershipRequest, speedshipRequ
         rates,
         carrierMessage: rates.length === 0 ? "Mothership sandbox returned no rates for this lane." : "",
         carrierRequest: mothershipRequest,
-        rawCarrierResponse: carrierQuote
+        rawCarrierResponse: carrierQuote,
+        quoteMetadata
       };
     }
 
@@ -2963,7 +3148,10 @@ function formatDocumentLabel(value, source) {
     return source === "speedship" ? "Bill of Lading" : "Document";
   }
 
-  const normalized = type.replace(/[_-]+/g, " ").toLowerCase();
+  const normalized = type
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .toLowerCase();
   if (normalized === "bill of lading" || normalized === "bol") {
     return "Bill of Lading";
   }

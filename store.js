@@ -2,10 +2,8 @@ import { existsSync } from "node:fs";
 import crypto from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const __dirname = process.cwd();
 
 export async function createAppStore({ dbUrl, dataFile }) {
   if (dbUrl) {
