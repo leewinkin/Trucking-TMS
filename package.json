@@ -7,7 +7,7 @@
     "pg": "^8.13.1"
   },
   "scripts": {
-    "build": "rm -rf dist && mkdir -p dist/public && cp server.js store.js package.json package-lock.json dist/ && cp -R public/. dist/public/",
+    "build": "rm -rf dist && mkdir -p dist/server/public dist/.openai && cp server.js dist/server/index.js && cp store.js dist/server/store.js && cp -R public/. dist/server/public/ && cp .openai/hosting.json dist/.openai/hosting.json",
     "dev": "node server.js",
     "start": "node server.js"
   }
