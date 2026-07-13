@@ -466,9 +466,16 @@
             </div>
 
             <section class="panel">
-              <div class="panel-heading">
-                  <h2 data-i18n="Freight">Freight</h2>
-                </div>
+              <div class="panel-heading freight-panel-heading">
+                <h2 data-i18n="Freight">Freight</h2>
+                <label class="freight-unit-switch">
+                  <span data-i18n="Freight units">Freight units</span>
+                  <select data-freight-unit-select>
+                    <option value="imperial" data-i18n="lb / in">lb / in</option>
+                    <option value="metric" data-i18n="kg / cm">kg / cm</option>
+                  </select>
+                </label>
+              </div>
               <div id="freightRows" class="freight-rows"></div>
               <div class="freight-actions-row">
                 <button class="secondary-action" type="button" data-apply-all-freight-suggestions data-i18n="Apply suggestions to all items">Apply suggestions to all items</button>
@@ -556,21 +563,21 @@
             <input data-freight-field="pieces" type="number" min="1" placeholder="# of pieces" value="1" data-i18n-placeholder="# of pieces">
           </label>
           <label>
-            <span class="field-label" data-i18n="Weight each (lbs)">Weight each (lbs)<span class="required-mark" aria-hidden="true">*</span></span>
+            <span class="field-label" data-freight-unit-label="weight">Weight each (lbs)<span class="required-mark" aria-hidden="true">*</span></span>
             <input data-freight-field="weight" type="number" min="1" placeholder="Weight" required data-i18n-placeholder="Weight">
           </label>
         </div>
         <div class="form-grid freight-secondary-grid">
           <label>
-            <span class="field-label" data-i18n="Length">Length (in)<span class="required-mark" aria-hidden="true">*</span></span>
+            <span class="field-label" data-freight-unit-label="length">Length (in)<span class="required-mark" aria-hidden="true">*</span></span>
             <input data-freight-field="length" type="number" min="1" placeholder="Length" required data-i18n-placeholder="Length">
           </label>
           <label>
-            <span class="field-label" data-i18n="Width">Width (in)<span class="required-mark" aria-hidden="true">*</span></span>
+            <span class="field-label" data-freight-unit-label="width">Width (in)<span class="required-mark" aria-hidden="true">*</span></span>
             <input data-freight-field="width" type="number" min="1" placeholder="Width" required data-i18n-placeholder="Width">
           </label>
           <label>
-            <span class="field-label" data-i18n="Height">Height (in)<span class="required-mark" aria-hidden="true">*</span></span>
+            <span class="field-label" data-freight-unit-label="height">Height (in)<span class="required-mark" aria-hidden="true">*</span></span>
             <input data-freight-field="height" type="number" min="1" placeholder="Height" required data-i18n-placeholder="Height">
           </label>
           <label>

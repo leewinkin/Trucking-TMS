@@ -513,6 +513,25 @@ button.metric {
   border-bottom: 1px solid var(--line);
 }
 
+.freight-panel-heading {
+  align-items: flex-end;
+}
+
+.freight-unit-switch {
+  display: grid;
+  gap: 4px;
+  justify-items: end;
+  min-width: 180px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.freight-unit-switch select {
+  width: 100%;
+  min-width: 180px;
+}
+
 .panel-heading.compact {
   padding: 0 0 10px;
   border-bottom: 0;
@@ -1374,6 +1393,21 @@ select:focus {
 
   .freight-row-header {
     flex-direction: column;
+  }
+
+  .freight-panel-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .freight-unit-switch {
+    min-width: 0;
+    justify-items: start;
+    width: 100%;
+  }
+
+  .freight-unit-switch select {
+    min-width: 0;
   }
 
   .freight-flags {

@@ -4,6 +4,7 @@ const money = new Intl.NumberFormat("en-US", {
 });
 
 const languageKey = "tms-language";
+const freightUnitsKey = "tms-freight-units";
 const translations = {
   zh: {
     "Shipment Desk": "货运工作台",
@@ -53,8 +54,8 @@ const translations = {
     "Company city": "公司城市",
     "Company state": "公司州",
     "Company ZIP": "公司邮编",
-    "Open": "开始",
-    "Close": "结束",
+    "Open": "上班时间",
+    "Close": "下班时间",
     "No billing email": "无账单邮箱",
     "No portal user": "无门户用户",
     "Your account": "你的账户",
@@ -100,7 +101,7 @@ const translations = {
     "Quote details": "报价详情",
     "Reference / PO number": "参考号 / PO 号",
     "Pickup date": "提货日期",
-    "Ready time": "准备时间",
+    "Ready time": "提货时间",
     "Company and address": "公司与地址",
     "Street": "街道",
     "City": "城市",
@@ -126,7 +127,7 @@ const translations = {
     "Scheduled delivery": "预约送货",
     "Residential delivery requires scheduled delivery.": "住宅送货需要预约送货。",
     "Freight": "货物",
-    "Apply suggestions to all items": "将建议应用到所有条目",
+    "Apply suggestions to all items": "运费等级智能输入",
     "Add Item": "添加条目",
     "Get Rates": "获取报价",
     "Quote Results": "报价结果",
@@ -147,25 +148,38 @@ const translations = {
     "Pallet": "托盘",
     "Box": "纸箱",
     "Crate": "木箱",
-    "Pieces per unit": "每单位件数",
-    "Weight each (lbs)": "单件重量（磅）",
+    "Freight units": "货物单位",
+    "lb / in": "磅 / 英寸",
+    "kg / cm": "千克 / 厘米",
+    "Pieces per unit": "单托箱数/件数",
+    "Weight each (lbs)": "单托重量（磅）",
+    "Weight each (kg)": "单托重量（千克）",
     "Length": "长度",
     "Width": "宽度",
     "Height": "高度",
-    "Description": "描述",
-    "Freight class": "货运等级",
+    "Length (in)": "长度（英寸）",
+    "Width (in)": "宽度（英寸）",
+    "Height (in)": "高度（英寸）",
+    "Length (cm)": "长度（厘米）",
+    "Width (cm)": "宽度（厘米）",
+    "Height (cm)": "高度（厘米）",
+    "Description": "货物描述",
+    "Freight class": "运费等级",
     "Select class": "选择等级",
     "Optional NMFC": "可选 NMFC",
     "Stackable": "可堆叠",
     "Used": "二手",
     "Machinery": "机械设备",
-    "Suggested freight class: enter quantity, weight, and dimensions to calculate one.": "建议货运等级：输入数量、重量和尺寸后即可计算。",
-    "Suggested freight class: calculating...": "建议货运等级：计算中...",
+    "Suggested freight class: enter quantity, weight, and dimensions to calculate one.": "建议运费等级：输入数量、重量和尺寸后即可计算。",
+    "Suggested freight class: calculating...": "建议运费等级：计算中...",
     "No freight details recorded.": "未记录货运明细。",
     "Class": "等级",
     "lbs each": "磅/件",
     "lbs total": "磅总计",
+    "kg each": "千克/件",
+    "kg total": "千克总计",
     "in": "英寸",
+    "cm": "厘米",
     "Sell price": "售价",
     "Server ready": "服务器已就绪",
     "Sign in to access the local TMS": "登录后即可访问本地 TMS",
@@ -211,11 +225,11 @@ const translations = {
     "Quote only": "仅报价",
     "Carrier mode": "承运商模式",
     "None": "无",
-    "Applying freight class suggestions to all items.": "正在将货运等级建议应用到所有条目。",
-    "Applied freight class suggestions to {count} item{suffix}.": "已将货运等级建议应用到 {count} 个条目{suffix}。",
-    "Add quantity, weight, and dimensions to calculate freight class suggestions.": "请填写数量、重量和尺寸以计算货运等级建议。",
-    "Suggested freight class: calculating...": "建议货运等级：计算中...",
-    "Suggested freight class: {value}": "建议货运等级：{value}",
+    "Applying freight class suggestions to all items.": "正在进行运费等级智能输入。",
+    "Applied freight class suggestions to {count} item{suffix}.": "已将运费等级智能输入应用到 {count} 个条目{suffix}。",
+    "Add quantity, weight, and dimensions to calculate freight class suggestions.": "请填写数量、重量和尺寸以计算运费等级智能输入。",
+    "Suggested freight class: calculating...": "建议运费等级：计算中...",
+    "Suggested freight class: {value}": "建议运费等级：{value}",
     "View Quote": "查看报价",
     "View Shipment": "查看发运",
     "Track": "跟踪",
@@ -368,6 +382,7 @@ function setLanguage(language) {
   document.documentElement.lang = normalized === "zh" ? "zh-CN" : "en";
   applyTranslations();
   syncLanguageSwitches();
+  updateFreightUnitLabels();
   renderHealth();
   renderDashboardSupportPanel();
   renderModal();
@@ -424,8 +439,168 @@ function syncLanguageSwitches() {
   });
 }
 
+function getPreferredFreightUnits() {
+  const saved = window.localStorage.getItem(freightUnitsKey);
+  return saved === "metric" ? "metric" : "imperial";
+}
+
+function normalizeFreightUnits(value) {
+  return value === "metric" ? "metric" : "imperial";
+}
+
+function syncFreightUnitSwitches() {
+  document.querySelectorAll("[data-freight-unit-select]").forEach((select) => {
+    select.value = state.freightUnits;
+  });
+}
+
+function setLabelTextWithRequiredMark(node, text) {
+  if (!node) {
+    return;
+  }
+
+  const requiredMark = node.querySelector(".required-mark");
+  node.textContent = text;
+  if (requiredMark) {
+    node.appendChild(requiredMark);
+  }
+}
+
+function getFreightUnitConfig(units = state.freightUnits) {
+  if (normalizeFreightUnits(units) === "metric") {
+    return {
+      system: "metric",
+      weightLabel: t("Weight each (kg)"),
+      lengthLabel: t("Length (cm)"),
+      widthLabel: t("Width (cm)"),
+      heightLabel: t("Height (cm)"),
+      weightSummaryUnit: t("kg each"),
+      totalWeightSummaryUnit: t("kg total"),
+      dimensionSummaryUnit: t("cm")
+    };
+  }
+
+  return {
+    system: "imperial",
+    weightLabel: t("Weight each (lbs)"),
+    lengthLabel: t("Length (in)"),
+    widthLabel: t("Width (in)"),
+    heightLabel: t("Height (in)"),
+    weightSummaryUnit: t("lbs each"),
+    totalWeightSummaryUnit: t("lbs total"),
+    dimensionSummaryUnit: t("in")
+  };
+}
+
+function updateFreightUnitLabels(root = document) {
+  const config = getFreightUnitConfig();
+  root.querySelectorAll("[data-freight-unit-label='weight']").forEach((node) => setLabelTextWithRequiredMark(node, config.weightLabel));
+  root.querySelectorAll("[data-freight-unit-label='length']").forEach((node) => setLabelTextWithRequiredMark(node, config.lengthLabel));
+  root.querySelectorAll("[data-freight-unit-label='width']").forEach((node) => setLabelTextWithRequiredMark(node, config.widthLabel));
+  root.querySelectorAll("[data-freight-unit-label='height']").forEach((node) => setLabelTextWithRequiredMark(node, config.heightLabel));
+}
+
+function convertFreightMeasurement(value, measurement, fromUnits, toUnits) {
+  if (value === "" || value == null) {
+    return value;
+  }
+
+  const text = String(value).trim();
+  if (!text) {
+    return value;
+  }
+
+  const numeric = Number(text);
+  if (!Number.isFinite(numeric)) {
+    return value;
+  }
+
+  const source = normalizeFreightUnits(fromUnits);
+  const target = normalizeFreightUnits(toUnits);
+  if (source === target) {
+    return numeric;
+  }
+
+  if (measurement === "weight") {
+    if (source === "metric" && target === "imperial") {
+      return numeric * 2.2046226218487757;
+    }
+    if (source === "imperial" && target === "metric") {
+      return numeric / 2.2046226218487757;
+    }
+  }
+
+  if (source === "metric" && target === "imperial") {
+    return numeric / 2.54;
+  }
+  if (source === "imperial" && target === "metric") {
+    return numeric * 2.54;
+  }
+
+  return numeric;
+}
+
+function formatFreightInputValue(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return "";
+  }
+
+  return String(Number(numeric.toFixed(2)));
+}
+
+function convertFreightRowValues(values, fromUnits, toUnits) {
+  const converted = { ...values };
+  ["weight", "length", "width", "height"].forEach((field) => {
+    if (converted[field] === "" || converted[field] == null) {
+      return;
+    }
+    converted[field] = convertFreightMeasurement(converted[field], field === "weight" ? "weight" : "dimension", fromUnits, toUnits);
+  });
+  return converted;
+}
+
+function convertFreightRowsForDisplay(rows, fromUnits, toUnits) {
+  if (!Array.isArray(rows)) {
+    return [];
+  }
+
+  return rows.map((row) => convertFreightRowValues(row, fromUnits, toUnits));
+}
+
+function convertFreightRowInputs(row, fromUnits, toUnits) {
+  ["weight", "length", "width", "height"].forEach((field) => {
+    const control = freightRowField(row, field);
+    if (!control) {
+      return;
+    }
+
+    const converted = convertFreightMeasurement(control.value, field === "weight" ? "weight" : "dimension", fromUnits, toUnits);
+    control.value = formatFreightInputValue(converted);
+  });
+}
+
+function setFreightUnits(units) {
+  const nextUnits = normalizeFreightUnits(units);
+  if (state.freightUnits === nextUnits) {
+    syncFreightUnitSwitches();
+    updateFreightUnitLabels();
+    return;
+  }
+
+  const previousUnits = state.freightUnits;
+  state.freightUnits = nextUnits;
+  window.localStorage.setItem(freightUnitsKey, nextUnits);
+
+  freightRows().forEach((row) => convertFreightRowInputs(row, previousUnits, nextUnits));
+  syncFreightUnitSwitches();
+  updateFreightUnitLabels();
+  updateFreightClassSuggestion();
+}
+
 const state = {
   language: getPreferredLanguage(),
+  freightUnits: getPreferredFreightUnits(),
   health: null,
   user: null,
   customers: [],
@@ -462,7 +637,10 @@ const viewMeta = {
 document.addEventListener("DOMContentLoaded", async () => {
   applyTranslations();
   syncLanguageSwitches();
+  syncFreightUnitSwitches();
+  updateFreightUnitLabels();
   wireLanguageSwitches();
+  wireFreightUnitSwitches();
   wireNavigation();
   wireForms();
   wireAuth();
@@ -479,6 +657,18 @@ function wireLanguageSwitches() {
       setLanguage(event.target.value);
     });
     select.dataset.languageBound = "true";
+  });
+}
+
+function wireFreightUnitSwitches() {
+  document.querySelectorAll("[data-freight-unit-select]").forEach((select) => {
+    if (select.dataset.freightUnitBound === "true") {
+      return;
+    }
+    select.addEventListener("change", (event) => {
+      setFreightUnits(event.target.value);
+    });
+    select.dataset.freightUnitBound = "true";
   });
 }
 
@@ -753,7 +943,7 @@ function wireForms() {
         method: "POST",
         body
       });
-      state.currentQuote = response.quote;
+      state.currentQuote = { ...response.quote, displayFreightUnits: state.freightUnits };
       showToast(t("Quote created."));
       renderQuoteResults(response.quote);
       await refreshAll({ keepQuoteResults: true });
@@ -1818,6 +2008,7 @@ function createFreightRow(values = {}) {
   });
 
   translateSubtree(row);
+  updateFreightUnitLabels(row);
 
   return row;
 }
@@ -1867,6 +2058,11 @@ function ensureFreightRows() {
 }
 
 function freightRowData(row) {
+  const raw = freightRowRawData(row);
+  return convertFreightRowValues(raw, state.freightUnits, "imperial");
+}
+
+function freightRowRawData(row) {
   const quantity = Number(freightRowField(row, "quantity")?.value || 0);
   const weight = Number(freightRowField(row, "weight")?.value || 0);
   const pieces = Number(freightRowField(row, "pieces")?.value || 0);
@@ -1898,13 +2094,14 @@ function freightSummary() {
     return "Add freight details";
   }
 
+  const config = getFreightUnitConfig();
   const parts = rows.map((row) => {
-    const data = freightRowData(row);
+    const data = freightRowRawData(row);
     const totalWeight = data.quantity && data.weight ? data.quantity * data.weight : 0;
     const quantityText = data.quantity ? `${data.quantity} ${String(data.type || "item").toLowerCase()}${data.quantity === 1 ? "" : "s"}` : "0 items";
     const classText = data.freightClass ? `Class ${data.freightClass}` : "Set class";
-    const weightText = data.weight ? `${data.weight} lbs each${totalWeight ? ` (${totalWeight} lbs total)` : ""}` : "Set weight";
-    const sizeText = data.length && data.width && data.height ? `${data.length} x ${data.width} x ${data.height} in` : "Set dimensions";
+    const weightText = data.weight ? `${data.weight} ${config.weightSummaryUnit}${totalWeight ? ` (${totalWeight} ${config.totalWeightSummaryUnit})` : ""}` : "Set weight";
+    const sizeText = data.length && data.width && data.height ? `${data.length} x ${data.width} x ${data.height} ${config.dimensionSummaryUnit}` : "Set dimensions";
     return `${quantityText} · ${classText} · ${weightText} · ${sizeText}`;
   });
 
@@ -2537,11 +2734,12 @@ function trackingTimelineHtml(events) {
   `;
 }
 
-function freightDetailLinesHtml(freight) {
+function freightDetailLinesHtml(freight, units = "imperial") {
   if (!Array.isArray(freight) || freight.length === 0) {
     return t("No freight details recorded.");
   }
 
+  const config = getFreightUnitConfig(units);
   return freight
     .map((item, index) => {
       const totalWeight = Number(item.quantity || 0) * Number(item.weight || 0);
@@ -2549,9 +2747,9 @@ function freightDetailLinesHtml(freight) {
       const parts = [
         `${item.quantity || ""} ${item.type || ""}`.trim(),
         item.freightClass ? `${t("Class")} ${item.freightClass}` : "",
-        item.weight ? `${item.weight} ${t("lbs each")}` : "",
-        totalWeight ? `(${totalWeight} ${t("lbs total")})` : "",
-        dimensions ? `${dimensions} ${t("in")}` : "",
+        item.weight ? `${item.weight} ${config.weightSummaryUnit}` : "",
+        totalWeight ? `(${totalWeight} ${config.totalWeightSummaryUnit})` : "",
+        dimensions ? `${dimensions} ${config.dimensionSummaryUnit}` : "",
         item.description || ""
       ].filter(Boolean);
 
@@ -2617,7 +2815,7 @@ function quoteDetailsHtml(quote) {
           ${customerView ? "" : `<p><strong>${t("Tariff")}:</strong> ${escapeHtml(quote.tariffRule?.ruleType || "n/a")} ${quote.tariffRule?.ruleType === "fixed" ? `· ${money.format(Number(quote.tariffRule?.fixedAmount || 0))}` : `· ${Number(quote.tariffRule?.markupPercentage || 0)}%`}</p>`}
           <p><strong>${t("Pickup")}:</strong> ${escapeHtml(quote.pickup?.name || "")}, ${escapeHtml(quote.pickup?.address?.street || "")}, ${escapeHtml(quote.pickup?.address?.city || "")}, ${escapeHtml(quote.pickup?.address?.state || "")}</p>
           <p><strong>${t("Delivery")}:</strong> ${escapeHtml(quote.delivery?.name || "")}, ${escapeHtml(quote.delivery?.address?.street || "")}, ${escapeHtml(quote.delivery?.address?.city || "")}, ${escapeHtml(quote.delivery?.address?.state || "")}</p>
-          <p><strong>${t("Freight")}:</strong><br>${freightDetailLinesHtml(quote.freight)}</p>
+          <p><strong>${t("Freight")}:</strong><br>${freightDetailLinesHtml(convertFreightRowsForDisplay(quote.freight, "imperial", quote.displayFreightUnits || "imperial"), quote.displayFreightUnits || "imperial")}</p>
         `
       )}
       ${customerView ? "" : detailSection(t("Quote Audit"), quoteAuditHtml(quote))}
@@ -2716,7 +2914,7 @@ function shipmentDetailsHtml(shipment, events = []) {
           ${latestDescription ? `<p>${escapeHtml(latestDescription)}</p>` : ""}
           <p><strong>${t("Pickup")}:</strong> ${escapeHtml(shipment.pickup?.name || "")}, ${escapeHtml(shipment.pickup?.address?.city || "")}, ${escapeHtml(shipment.pickup?.address?.state || "")}</p>
           <p><strong>${t("Delivery")}:</strong> ${escapeHtml(shipment.delivery?.name || "")}, ${escapeHtml(shipment.delivery?.address?.city || "")}, ${escapeHtml(shipment.delivery?.address?.state || "")}</p>
-          <p><strong>${t("Freight")}:</strong><br>${freightDetailLinesHtml(shipment.freight)}</p>
+          <p><strong>${t("Freight")}:</strong><br>${freightDetailLinesHtml(convertFreightRowsForDisplay(shipment.freight, "imperial", shipment.displayFreightUnits || "imperial"), shipment.displayFreightUnits || "imperial")}</p>
           <p><strong>${escapeHtml(priceLabel)}:</strong> ${money.format(shipment.sellPrice)}</p>
         `
       )}
@@ -3968,16 +4166,27 @@ function populateQuoteFormFromQuote(quote) {
   if (freightContainer) {
     freightContainer.innerHTML = "";
     freightItems.forEach((item) => {
+      const displayValues = convertFreightRowValues(
+        {
+          quantity: item.quantity ?? "",
+          weight: item.weight ?? "",
+          length: item.length ?? "",
+          width: item.width ?? "",
+          height: item.height ?? ""
+        },
+        "imperial",
+        state.freightUnits
+      );
       addFreightRow({
-        quantity: item.quantity ?? "",
+        quantity: displayValues.quantity ?? "",
         type: item.type || "",
         pieces: item.pieces ?? 1,
-        weight: item.weight ?? "",
+        weight: displayValues.weight ?? "",
         freightClass: item.freightClass || "",
         nmfc: item.nmfc || "",
-        length: item.length ?? "",
-        width: item.width ?? "",
-        height: item.height ?? "",
+        length: displayValues.length ?? "",
+        width: displayValues.width ?? "",
+        height: displayValues.height ?? "",
         description: item.description || "",
         stackable: item.stackable,
         hazmat: item.hazmat,
