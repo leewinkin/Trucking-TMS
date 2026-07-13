@@ -11,8 +11,11 @@ const publicDir = path.join(__dirname, "public");
 const sessionCookieName = "tms_session";
 const sessionTtlMs = 7 * 24 * 60 * 60 * 1000;
 let appSecret = "local-dev-secret";
+const isNodeRuntime = typeof process !== "undefined" && Boolean(process.versions?.node);
 
-await loadLocalEnv();
+if (isNodeRuntime) {
+  await loadLocalEnv();
+}
 appSecret = process.env.APP_SECRET || appSecret;
 
 const store = await createAppStore({
@@ -50,36 +53,128 @@ const contentTypes = {
   ".svg": "image/svg+xml; charset=utf-8"
 };
 
-const server = http.createServer(async (req, res) => {
-  try {
-    const url = new URL(req.url || "/", `http://${req.headers.host}`);
+const server = isNodeRuntime
+  ? http.createServer(async (req, res) => {
+      try {
+        const url = new URL(req.url || "/", `http://${req.headers.host}`);
 
+        if (url.pathname.startsWith("/api/")) {
+          await handleApi(req, res, url);
+          return;
+        }
+
+        await serveStatic(res, url.pathname);
+      } catch (error) {
+        if (error instanceof PublicError) {
+          sendJson(res, error.status, {
+            error: error.code,
+            message: error.message
+          });
+          return;
+        }
+
+        console.error(error);
+        sendJson(res, 500, {
+          error: "SERVER_ERROR",
+          message: "Something went wrong in the local TMS server."
+        });
+      }
+    })
+  : null;
+
+if (server) {
+  server.listen(port, () => {
+    console.log(`Trucking TMS prototype running at http://localhost:${port}`);
+  });
+}
+
+export default {
+  async fetch(request) {
+    return handleFetch(request);
+  }
+};
+
+async function handleFetch(request) {
+  const url = new URL(request.url);
+  const req = wrapFetchRequest(request);
+  const res = createResponseProxy();
+
+  try {
     if (url.pathname.startsWith("/api/")) {
       await handleApi(req, res, url);
-      return;
+    } else {
+      await serveStatic(res, url.pathname);
     }
-
-    await serveStatic(res, url.pathname);
   } catch (error) {
     if (error instanceof PublicError) {
       sendJson(res, error.status, {
         error: error.code,
         message: error.message
       });
-      return;
+    } else {
+      console.error(error);
+      sendJson(res, 500, {
+        error: "SERVER_ERROR",
+        message: "Something went wrong in the local TMS server."
+      });
     }
-
-    console.error(error);
-    sendJson(res, 500, {
-      error: "SERVER_ERROR",
-      message: "Something went wrong in the local TMS server."
-    });
   }
-});
 
-server.listen(port, () => {
-  console.log(`Trucking TMS prototype running at http://localhost:${port}`);
-});
+  return res.toResponse();
+}
+
+function wrapFetchRequest(request) {
+  const headers = {};
+  request.headers.forEach((value, key) => {
+    headers[key.toLowerCase()] = value;
+  });
+
+  return {
+    method: request.method,
+    url: request.url,
+    headers,
+    async text() {
+      return await request.text();
+    },
+    async json() {
+      return await request.json();
+    },
+    async *[Symbol.asyncIterator]() {
+      const body = await request.arrayBuffer();
+      yield new Uint8Array(body);
+    }
+  };
+}
+
+function createResponseProxy() {
+  const headers = new Headers();
+  let status = 200;
+  let body = "";
+
+  return {
+    writeHead(nextStatus, nextHeaders = {}) {
+      status = nextStatus;
+      Object.entries(nextHeaders).forEach(([name, value]) => {
+        this.setHeader(name, value);
+      });
+    },
+    setHeader(name, value) {
+      const key = String(name);
+      if (key.toLowerCase() === "set-cookie") {
+        const values = Array.isArray(value) ? value : [value];
+        values.filter(Boolean).forEach((entry) => headers.append(key, String(entry)));
+        return;
+      }
+      headers.set(key, String(value));
+    },
+    end(value = "") {
+      body = value;
+    },
+    toResponse() {
+      return new Response(body, { status, headers });
+    }
+  };
+}
 
 async function handleApi(req, res, url) {
   if (req.method === "GET" && url.pathname === "/api/health") {
@@ -3197,6 +3292,11 @@ function defaultTariffRule(customerId) {
 }
 
 async function readJson(req) {
+  if (req && typeof req.text === "function" && typeof req[Symbol.asyncIterator] !== "function") {
+    const text = await req.text();
+    return text ? JSON.parse(text) : {};
+  }
+
   const chunks = [];
   for await (const chunk of req) {
     chunks.push(chunk);
@@ -3351,7 +3451,10 @@ function hashSessionToken(token) {
 }
 
 function getSessionToken(req) {
-  const cookies = parseCookies(req.headers.cookie || "");
+  const cookieHeader = typeof req?.headers?.get === "function"
+    ? req.headers.get("cookie") || ""
+    : req?.headers?.cookie || "";
+  const cookies = parseCookies(cookieHeader);
   return cookies[sessionCookieName] || null;
 }
 
@@ -3420,10 +3523,12 @@ class PublicError extends Error {
   }
 }
 
-process.on("uncaughtException", (error) => {
-  if (error instanceof PublicError) {
-    console.error(`${error.code}: ${error.message}`);
-    return;
-  }
-  console.error(error);
-});
+if (isNodeRuntime && typeof process.on === "function") {
+  process.on("uncaughtException", (error) => {
+    if (error instanceof PublicError) {
+      console.error(`${error.code}: ${error.message}`);
+      return;
+    }
+    console.error(error);
+  });
+}
