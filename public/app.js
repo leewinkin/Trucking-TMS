@@ -223,6 +223,7 @@ const translations = {
     "{provider}: {count} rate(s) returned.": "{provider}：返回 {count} 条报价。",
     "No {provider} rates: {message}": "无 {provider} 报价：{message}",
     "No Mothership rates: pickup ready time is earlier than pickup opening time.": "无 Mothership 报价：提货准备时间早于提货开始时间。",
+    "No rates are currently available. Please contact customer service.": "当前暂无可用报价。请联系客服。",
     "Select a customer to see the carrier modes assigned by admin.": "选择客户后可查看管理员分配的承运商模式。",
     "Rates will use the carrier modes assigned to the selected customer.": "费率会使用所选客户已分配的承运商模式。",
     "Your quote uses the carrier modes assigned to your account: {label}.": "你的报价将使用分配到你账户的承运商模式：{label}。",
@@ -1194,7 +1195,7 @@ function applyPermissions() {
 }
 
 function isStaffUser() {
-  return ["admin", "operations"].includes(state.user?.role);
+  return ["admin", "operations", "staff"].includes(state.user?.role);
 }
 
 function isCustomerUser() {
@@ -1221,6 +1222,16 @@ function customerBookingAllowed(customerId = state.user?.customerId, carrierMode
     return customerAllowedBookingModes(customer).length > 0;
   }
   return customerAllowedBookingModes(customer).includes(normalizeCarrierModeValue(carrierMode));
+}
+
+function rateBookingAllowedForUser(quote, rate) {
+  if (!isCustomerUser()) {
+    return true;
+  }
+  if (typeof rate?.bookingAllowed === "boolean") {
+    return rate.bookingAllowed;
+  }
+  return customerBookingAllowed(quote?.customerId, rate?.carrierSource || quote?.carrierMode);
 }
 
 function customerAllowedBookingModes(customer) {
@@ -1494,7 +1505,7 @@ function openBookingConfirmation(quoteId, rateId) {
     return;
   }
 
-  if (isCustomerUser() && !customerBookingAllowed(quote.customerId, rate.carrierSource || quote.carrierMode)) {
+  if (isCustomerUser() && !rateBookingAllowedForUser(quote, rate)) {
     showToast(t("Shipment booking is disabled for this carrier."), true);
     return;
   }
@@ -1533,7 +1544,7 @@ async function confirmPendingBooking() {
     return;
   }
 
-  if (isCustomerUser() && !customerBookingAllowed(quote.customerId, rate.carrierSource || quote.carrierMode)) {
+  if (isCustomerUser() && !rateBookingAllowedForUser(quote, rate)) {
     cancelPendingBooking();
     showToast(t("Shipment booking is disabled for this carrier."), true);
     return;
@@ -2586,6 +2597,10 @@ function quoteAuditRows(quote) {
 }
 
 function quoteCarrierStatusHtml(quote) {
+  if (!isStaffUser()) {
+    return "";
+  }
+
   const modes = quoteCarrierModesList(quote);
   const rows = quoteAuditRows(quote);
   if (modes.length === 0 && rows.length === 0) {
@@ -2842,7 +2857,7 @@ function quoteDetailsHtml(quote) {
                 <div class="rate-title-row">
                   <strong>${escapeHtml(carrierNameLabel(rate, quote, customerView))}</strong>
                   <span class="service-badge">${escapeHtml(formatRateService(rate?.service))}</span>
-                  <span class="carrier-badge">${escapeHtml(carrierBadgeLabel(rate.provider, rate.carrierSource || quote.carrierMode, customerView))}</span>
+                  ${customerView ? "" : `<span class="carrier-badge">${escapeHtml(carrierBadgeLabel(rate.provider, rate.carrierSource || quote.carrierMode, customerView))}</span>`}
                 </div>
                 <div class="rate-meta-row">
                   ${customerView ? "" : `<span class="pill">${escapeHtml(rate.carrierSource ? carrierModeSummaryLabel(rate.carrierSource, false) : t("Carrier"))}</span>`}
@@ -2857,7 +2872,7 @@ function quoteDetailsHtml(quote) {
           `
         )
         .join("")
-    : `<div class="empty-state">${t("No rate details.")}</div>`;
+    : `<div class="empty-state">${customerView ? t("No rates are currently available. Please contact customer service.") : t("No rate details.")}</div>`;
   const carrierNotice = quote.carrierMessage
     ? `
       <div class="quote-status notice-state success-state">
@@ -3970,6 +3985,16 @@ function renderQuoteResults(quote) {
   const sortedRates = sortedQuoteRates(quote);
   const carrierStatus = quoteCarrierStatusHtml(quote);
   if (!Array.isArray(sortedRates) || sortedRates.length === 0) {
+    if (customerView) {
+      const notice = t("No rates are currently available. Please contact customer service.");
+      list.innerHTML = `
+        <div class="quote-status notice-state">
+          <p>${escapeHtml(notice)}</p>
+        </div>
+      `;
+      return;
+    }
+
     const notice = quote.carrierMessage || t("Carrier returned no rates for this lane.");
     list.innerHTML = `
       ${carrierStatus}
@@ -3986,14 +4011,14 @@ function renderQuoteResults(quote) {
     ${carrierStatus}
     ${visibleRates
     .map((rate) => {
-      const rateBookingAllowed = !customerView || customerBookingAllowed(quote.customerId, rate.carrierSource || quote.carrierMode);
+      const rateBookingAllowed = !customerView || rateBookingAllowedForUser(quote, rate);
       return `
       <article class="rate-item quote-rate-card">
         <div class="rate-main">
           <div class="rate-title-row">
             <strong>${escapeHtml(carrierNameLabel(rate, quote, customerView))}</strong>
             <span class="service-badge">${escapeHtml(formatRateService(rate?.service))}</span>
-            <span class="carrier-badge">${escapeHtml(carrierBadgeLabel(rate.provider, rate.carrierSource || quote.carrierMode, customerView))}</span>
+            ${customerView ? "" : `<span class="carrier-badge">${escapeHtml(carrierBadgeLabel(rate.provider, rate.carrierSource || quote.carrierMode, customerView))}</span>`}
           </div>
           <div class="rate-meta-row">
             ${hasDisplayValue(rate.transitDays) ? `<span class="pill">${t("Transit")} ${escapeHtml(formatTransitDays(rate.transitDays))}</span>` : ""}
@@ -4058,7 +4083,7 @@ function loadMoreQuoteRates() {
 async function finalizeBooking(quoteId, rateId) {
   const quote = state.currentQuote || state.quotes.find((item) => item.id === quoteId);
   const rate = quote && Array.isArray(quote.rates) ? quote.rates.find((item) => item.id === rateId) : null;
-  if (isCustomerUser() && quote && rate && !customerBookingAllowed(quote.customerId, rate.carrierSource || quote.carrierMode)) {
+  if (isCustomerUser() && quote && rate && !rateBookingAllowedForUser(quote, rate)) {
     showToast(t("Shipment booking is disabled for this carrier."), true);
     return;
   }

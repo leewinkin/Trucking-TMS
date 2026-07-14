@@ -306,11 +306,14 @@ async function handleApi(req, res, url) {
 
   if (req.method === "GET" && url.pathname === "/api/quotes") {
     const quotes = await store.listQuotes();
+    const quoteCustomer = currentUser.role === "customer" ? await store.getCustomer(currentUser.customerId) : null;
     sendJson(
       res,
       200,
       {
-        quotes: currentUser.role === "customer" ? quotes.filter((quote) => quote.customerId === currentUser.customerId) : quotes
+        quotes: quotes
+          .filter((quote) => currentUser.role !== "customer" || quote.customerId === currentUser.customerId)
+          .map((quote) => quoteForUser(quote, currentUser, quoteCustomer))
       }
     );
     return;
@@ -475,7 +478,7 @@ async function createQuote(req, res, currentUser) {
       };
 
     await store.createQuote(quote);
-    sendJson(res, 201, { quote });
+    sendJson(res, 201, { quote: quoteForUser(quote, currentUser, customer) });
     return;
   }
 
@@ -502,7 +505,7 @@ async function createQuote(req, res, currentUser) {
     };
 
   await store.createQuote(quote);
-  sendJson(res, 201, { quote });
+  sendJson(res, 201, { quote: quoteForUser(quote, currentUser, customer) });
 }
 
 async function createShipment(req, res, currentUser) {
@@ -3467,6 +3470,10 @@ function requireStaff(user) {
   }
 }
 
+function isInternalUser(user) {
+  return ["admin", "operations", "staff"].includes(user?.role);
+}
+
 function publicUser(user) {
   return {
     id: user.id,
@@ -3475,6 +3482,58 @@ function publicUser(user) {
     customerId: user.customerId || null,
     status: user.status
   };
+}
+
+function quoteForUser(quote, user, customer = null) {
+  if (isInternalUser(user)) {
+    return quote;
+  }
+  return sanitizeQuoteForCustomer(quote, customer);
+}
+
+function sanitizeQuoteForCustomer(quote, customer = null) {
+  if (!quote || typeof quote !== "object") {
+    return quote;
+  }
+
+  return {
+    id: quote.id,
+    customerId: quote.customerId,
+    customerName: quote.customerName,
+    referenceNumber: quote.referenceNumber,
+    pickup: quote.pickup,
+    delivery: quote.delivery,
+    freight: quote.freight,
+    pickupReadyDate: quote.pickupReadyDate,
+    rates: Array.isArray(quote.rates) ? quote.rates.map((rate) => sanitizeRateForCustomer(rate, quote, customer)) : [],
+    status: quote.status,
+    createdAt: quote.createdAt
+  };
+}
+
+function sanitizeRateForCustomer(rate, quote, customer = null) {
+  const carrierMode = rate?.carrierSource || quote?.carrierMode;
+  return {
+    id: rate?.id,
+    carrierName: safeCustomerCarrierName(rate),
+    service: rate?.service,
+    sellPrice: rate?.sellPrice,
+    estimatedPickupDate: rate?.estimatedPickupDate || null,
+    estimatedDeliveryDate: rate?.estimatedDeliveryDate || null,
+    transitDays: rate?.transitDays || null,
+    bookingAllowed: customer ? isCustomerAllowedToBookCarrier(customer, carrierMode) : false
+  };
+}
+
+function safeCustomerCarrierName(rate) {
+  const name = String(rate?.carrierName || "").trim();
+  if (name && !name.toLowerCase().includes("mothership")) {
+    return name;
+  }
+  if (name) {
+    return "Self-owned Truck";
+  }
+  return null;
 }
 
 function verifyPassword(password, salt, expectedHash) {
