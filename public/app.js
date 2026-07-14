@@ -1,3 +1,5 @@
+import { carrierStatusLine, pickupTimeErrorCodes, validatePickupReadyWindow } from "./quote-time-validation.js";
+
 const money = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD"
@@ -211,6 +213,16 @@ const translations = {
     "Delete {name}? This removes the customer and related data.": "删除 {name}？这会移除客户及相关数据。",
     "Please fill in the required fields.": "请填写必填字段。",
     "Select time": "选择时间",
+    "Pickup open time must be earlier than pickup close time.": "提货开始时间必须早于结束时间。",
+    "Pickup ready time must not be earlier than pickup opening time.": "提货准备时间不能早于提货开始时间。",
+    "Pickup ready time must be earlier than pickup close time.": "提货准备时间必须早于提货结束时间。",
+    "Enter valid pickup times.": "请输入有效的提货时间。",
+    "Use pickup opening time": "使用提货开始时间",
+    "Pickup ready time was adjusted to the pickup opening time.": "提货准备时间已调整为提货开始时间。",
+    "Carrier status": "承运商状态",
+    "{provider}: {count} rate(s) returned.": "{provider}：返回 {count} 条报价。",
+    "No {provider} rates: {message}": "无 {provider} 报价：{message}",
+    "No Mothership rates: pickup ready time is earlier than pickup opening time.": "无 Mothership 报价：提货准备时间早于提货开始时间。",
     "Select a customer to see the carrier modes assigned by admin.": "选择客户后可查看管理员分配的承运商模式。",
     "Rates will use the carrier modes assigned to the selected customer.": "费率会使用所选客户已分配的承运商模式。",
     "Your quote uses the carrier modes assigned to your account: {label}.": "你的报价将使用分配到你账户的承运商模式：{label}。",
@@ -926,6 +938,22 @@ function wireForms() {
   quoteForm.addEventListener("change", () => {
     clearQuoteFormErrors(quoteForm);
     updateFreightClassSuggestion();
+  });
+  quoteForm.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-use-pickup-opening-time]");
+    if (!button) {
+      return;
+    }
+
+    const pickupOpen = quoteForm.elements.pickupOpen;
+    const pickupTime = quoteForm.elements.pickupTime;
+    if (!pickupOpen || !pickupTime || !pickupOpen.value) {
+      return;
+    }
+
+    pickupTime.value = pickupOpen.value;
+    clearQuoteFormErrors(quoteForm);
+    showToast(t("Pickup ready time was adjusted to the pickup opening time."));
   });
   quoteForm.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -2557,6 +2585,47 @@ function quoteAuditRows(quote) {
   return [];
 }
 
+function quoteCarrierStatusHtml(quote) {
+  const modes = quoteCarrierModesList(quote);
+  const rows = quoteAuditRows(quote);
+  if (modes.length === 0 && rows.length === 0) {
+    return "";
+  }
+
+  const customerView = isCustomerUser();
+  const rates = Array.isArray(quote?.rates) ? quote.rates : [];
+  const rowsByMode = new Map(rows.map((row) => [normalizeCarrierModeValue(row.mode || row.carrier), row]));
+  const displayModes = modes.length > 0 ? modes : rows.map((row) => normalizeCarrierModeValue(row.mode || row.carrier)).filter(Boolean);
+  const items = Array.from(new Set(displayModes)).map((mode) => {
+    const row = rowsByMode.get(normalizeCarrierModeValue(mode)) || null;
+    const provider = carrierModeSummaryLabel(mode, customerView);
+    const rateCount = Number.isFinite(Number(row?.rateCount))
+      ? Number(row.rateCount)
+      : rates.filter((rate) => normalizeCarrierModeValue(rate.carrierSource || quote.carrierMode) === normalizeCarrierModeValue(mode)).length;
+    const text = carrierStatusLine(
+      {
+        provider,
+        rateCount,
+        message: row?.carrierMessage || t("Carrier returned no rates for this lane."),
+        isMothership: isMothershipAuditRow(row) || normalizeCarrierModeValue(mode) === "mothershipSandbox"
+      },
+      t
+    );
+    return `<li>${escapeHtml(text)}</li>`;
+  });
+
+  if (items.length === 0) {
+    return "";
+  }
+
+  return `
+    <div class="carrier-status-strip" aria-live="polite">
+      <strong>${t("Carrier status")}</strong>
+      <ul>${items.join("")}</ul>
+    </div>
+  `;
+}
+
 function auditJsonBlock(value, emptyLabel = t("No data recorded.")) {
   if (value == null || (typeof value === "object" && Object.keys(value).length === 0)) {
     return `<div class="empty-state audit-empty">${escapeHtml(emptyLabel)}</div>`;
@@ -2763,6 +2832,7 @@ function quoteDetailsHtml(quote) {
   const bookingAllowed = customerView ? customerBookingAllowed(quote.customerId) : true;
   const quoteCarrierModes = quoteCarrierModesList(quote);
   const sortedRates = sortedQuoteRates(quote);
+  const carrierStatus = quoteCarrierStatusHtml(quote);
   const rateCards = sortedRates.length
     ? sortedRates
         .map(
@@ -2811,6 +2881,7 @@ function quoteDetailsHtml(quote) {
         `
           ${carrierNotice}
           ${bookingNotice}
+          ${carrierStatus}
           <p><strong>${t("Reference / PO")}:</strong> ${escapeHtml(quote.referenceNumber || "")}</p>
           ${customerView ? "" : `<p><strong>${t("Tariff")}:</strong> ${escapeHtml(quote.tariffRule?.ruleType || "n/a")} ${quote.tariffRule?.ruleType === "fixed" ? `· ${money.format(Number(quote.tariffRule?.fixedAmount || 0))}` : `· ${Number(quote.tariffRule?.markupPercentage || 0)}%`}</p>`}
           <p><strong>${t("Pickup")}:</strong> ${escapeHtml(quote.pickup?.name || "")}, ${escapeHtml(quote.pickup?.address?.street || "")}, ${escapeHtml(quote.pickup?.address?.city || "")}, ${escapeHtml(quote.pickup?.address?.state || "")}</p>
@@ -3615,6 +3686,17 @@ function validateQuoteForm(form) {
   });
 
   if (invalidControls.length === 0) {
+    const pickupTimeValidation = validateQuotePickupTimes(form);
+    if (!pickupTimeValidation.valid) {
+      const control = form.elements[pickupTimeValidation.field];
+      if (control) {
+        invalidControls.push(control);
+      }
+      showPickupTimeValidationError(form, pickupTimeValidation);
+    }
+  }
+
+  if (invalidControls.length === 0) {
     if (error) {
       error.textContent = "";
     }
@@ -3632,19 +3714,67 @@ function validateQuoteForm(form) {
 
   if (error) {
       const phoneInvalid = invalidControls.some((control) => control.name === "pickupPhone" || control.name === "deliveryPhone");
-      error.textContent = phoneInvalid
+      error.textContent = error.textContent || (phoneInvalid
         ? "Phone numbers must be 10 digits and the highlighted fields must be completed before getting rates."
-        : "Please fill in the highlighted required fields before getting rates.";
+        : "Please fill in the highlighted required fields before getting rates.");
     }
 
   invalidControls[0].focus();
-  showToast(t("Please fill in the required fields."), true);
+  showToast(error?.textContent || t("Please fill in the required fields."), true);
   return false;
+}
+
+function validateQuotePickupTimes(form) {
+  return validatePickupReadyWindow({
+    openTime: form.elements.pickupOpen?.value,
+    readyTime: form.elements.pickupTime?.value,
+    closeTime: form.elements.pickupClose?.value
+  });
+}
+
+function pickupTimeValidationMessage(code) {
+  switch (code) {
+    case pickupTimeErrorCodes.invalidHours:
+      return t("Pickup open time must be earlier than pickup close time.");
+    case pickupTimeErrorCodes.readyBeforeOpen:
+      return t("Pickup ready time must not be earlier than pickup opening time.");
+    case pickupTimeErrorCodes.readyAfterClose:
+      return t("Pickup ready time must be earlier than pickup close time.");
+    default:
+      return t("Enter valid pickup times.");
+  }
+}
+
+function showPickupTimeValidationError(form, validation) {
+  const control = form.elements[validation.field];
+  const message = pickupTimeValidationMessage(validation.code);
+  if (control) {
+    control.setCustomValidity(message);
+    control.classList.add("field-invalid");
+    control.setAttribute("aria-invalid", "true");
+    control.closest("label")?.classList.add("field-invalid");
+  }
+
+  const target = form.querySelector(`[data-field-error-for='${validation.field}']`);
+  if (target) {
+    const action = validation.code === pickupTimeErrorCodes.readyBeforeOpen
+      ? ` <button class="inline-link-button" type="button" data-use-pickup-opening-time>${t("Use pickup opening time")}</button>`
+      : "";
+    target.innerHTML = `${escapeHtml(message)}${action}`;
+  }
+
+  const error = document.getElementById("quoteFormError");
+  if (error) {
+    error.textContent = message;
+  }
 }
 
 function clearQuoteFormErrors(form) {
   form.querySelectorAll(".field-invalid").forEach((element) => {
     element.classList.remove("field-invalid");
+  });
+  form.querySelectorAll("[data-field-error-for]").forEach((element) => {
+    element.textContent = "";
   });
   form.querySelectorAll("[aria-invalid='true']").forEach((element) => {
     element.removeAttribute("aria-invalid");
@@ -3838,9 +3968,11 @@ function renderQuoteResults(quote) {
     ? t("Carriers")
     : carrierModeSummaryLabel(quoteCarrierModes[0], customerView);
   const sortedRates = sortedQuoteRates(quote);
+  const carrierStatus = quoteCarrierStatusHtml(quote);
   if (!Array.isArray(sortedRates) || sortedRates.length === 0) {
     const notice = quote.carrierMessage || t("Carrier returned no rates for this lane.");
     list.innerHTML = `
+      ${carrierStatus}
       <div class="quote-status notice-state success-state">
         <strong>${escapeHtml(quoteCarrierModes.length > 1 ? t("Carrier request completed") : `${carrierLabel} ${t("connection succeeded")}`)}</strong>
         <p>${escapeHtml(notice)}</p>
@@ -3851,6 +3983,7 @@ function renderQuoteResults(quote) {
   const visibleRates = sortedRates.slice(0, visibleCount || sortedRates.length);
   const canLoadMore = visibleRates.length < sortedRates.length;
   list.innerHTML = `
+    ${carrierStatus}
     ${visibleRates
     .map((rate) => {
       const rateBookingAllowed = !customerView || customerBookingAllowed(quote.customerId, rate.carrierSource || quote.carrierMode);

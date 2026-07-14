@@ -170,8 +170,8 @@ Optional fields to support later:
 Reference / PO handling:
 
 - The TMS stores the customer-entered `referenceNumber` on the quote, shipment, and invoice records.
-- Mothership's current public `POST /quotes` documentation does not list a Reference / PO field.
-- Mothership's published shipment create API currently documents `quoteId` and `rateId` only, so the app keeps the TMS Reference / PO on local records.
+- Mothership's current public `POST /quotes` documentation does not list a quote-level Reference / PO field, but the nested pickup and delivery objects expose `referenceNumber`, so we send the value there and keep it locally as well.
+- Mothership's published shipment create API currently documents `quoteId` and `rateId` only, so the app keeps the TMS Reference / PO on local records after booking.
 - Keep the value in the TMS and show it in staff audit views as well, so staff can verify what was sent.
 
 ## Quote Response Handling
@@ -188,6 +188,13 @@ Mothership returns a quote ID and available rates. Each rate can include:
 - warnings
 - purchase eligibility metadata
 
+For Mothership quotes, the response metadata can include:
+
+- `purchasable`
+- `invalidFieldsRequiredForPurchase`
+- `pickupLocationSuggestedAccessorials`
+- `deliveryLocationSuggestedAccessorials`
+
 Our TMS should store:
 
 - Mothership quote ID
@@ -198,6 +205,8 @@ Our TMS should store:
 - margin
 - warnings
 - whether the rate is bookable
+
+If Mothership says the quote is not purchasable, the UI should show the missing fields and block booking until the quote is valid.
 
 Customer should see:
 

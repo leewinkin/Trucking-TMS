@@ -312,6 +312,7 @@
                       <label>
                         <span data-i18n="Ready time">Ready time</span>
                         <select name="pickupTime" data-time-select required></select>
+                        <span class="field-error-message" data-field-error-for="pickupTime" aria-live="polite"></span>
                       </label>
                     </div>
                   </section>
@@ -355,10 +356,12 @@
                       <label>
                         <span data-i18n="Open">Open</span>
                         <select name="pickupOpen" data-time-select required></select>
+                        <span class="field-error-message" data-field-error-for="pickupOpen" aria-live="polite"></span>
                       </label>
                       <label>
                         <span data-i18n="Close">Close</span>
                         <select name="pickupClose" data-time-select required></select>
+                        <span class="field-error-message" data-field-error-for="pickupClose" aria-live="polite"></span>
                       </label>
                     </div>
                   </section>
@@ -640,6 +643,6 @@
         </div>
       </section>
     </template>
-    <script src="/app.js"></script>
+    <script type="module" src="/app.js"></script>
   </body>
 </html>

@@ -693,6 +693,26 @@ select:focus {
   padding-top: 12px;
 }
 
+.field-error-message {
+  display: block;
+  min-height: 16px;
+  margin-top: 4px;
+  color: var(--red);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.inline-link-button {
+  border: 0;
+  background: transparent;
+  color: var(--blue);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 800;
+  padding: 0;
+  text-decoration: underline;
+}
+
 .quote-meta-grid .helper-text {
   grid-column: 1 / -1;
 }
@@ -1204,6 +1224,23 @@ select:focus {
 .success-state {
   border-color: #a7f3d0;
   background: #ecfdf5;
+}
+
+.carrier-status-strip {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #f8fafc;
+  font-size: 13px;
+}
+
+.carrier-status-strip ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
 }
 
 @keyframes spin {

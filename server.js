@@ -4,6 +4,12 @@ import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { createAppStore } from "./store.js";
+import {
+  isMothershipPickupReadyBeforeOpenFailure,
+  mothershipPickupReadyBeforeOpenMessage,
+  pickupTimeErrorCodes,
+  validatePickupReadyWindow
+} from "./public/quote-time-validation.js";
 
 const __dirname = process.cwd();
 const port = Number(process.env.PORT || 3000);
@@ -406,6 +412,7 @@ async function createQuote(req, res, currentUser) {
   const tariffRule = tariffs.find((rule) => rule.status === "active") || defaultTariffRule(customer.id);
   const referenceNumber = requiredString(input.referenceNumber, "referenceNumber");
   const allowedCarrierModes = normalizeAllowedCarrierModes(customer.allowedCarrierModes);
+  validatePickupTimesForQuote(input);
   const mothershipRequest = buildMothershipQuoteRequest(input);
   const speedshipRequests = buildSpeedshipLtlQuoteRequests(input);
   const priority1Request = buildPriority1QuoteRequest(input);
@@ -1092,6 +1099,29 @@ function normalizeStop(stop, label) {
     closeTime: requiredString(stop?.closeTime, `${label}.closeTime`),
     accessorials: Array.isArray(stop?.accessorials) ? stop.accessorials.filter(Boolean) : []
   };
+}
+
+function validatePickupTimesForQuote(input) {
+  const result = validatePickupReadyWindow({
+    openTime: input?.pickup?.openTime,
+    readyTime: input?.pickupReadyDate?.time,
+    closeTime: input?.pickup?.closeTime
+  });
+
+  if (result.valid) {
+    return;
+  }
+
+  switch (result.code) {
+    case pickupTimeErrorCodes.invalidHours:
+      throw new PublicError(400, result.code, "Pickup open time must be earlier than pickup close time.");
+    case pickupTimeErrorCodes.readyBeforeOpen:
+      throw new PublicError(400, result.code, "Pickup ready time must not be earlier than pickup opening time.");
+    case pickupTimeErrorCodes.readyAfterClose:
+      throw new PublicError(400, result.code, "Pickup ready time must be earlier than pickup close time.");
+    default:
+      throw new PublicError(400, "VALIDATION_ERROR", "Enter valid pickup times.");
+  }
 }
 
 function normalizeFreight(freight) {
@@ -2037,7 +2067,7 @@ async function requestCarrierQuoteForMode(mode, mothershipRequest, speedshipRequ
               : "demo",
       carrierQuoteId: createId(`${normalizedMode}Quote`),
       rates: [],
-      carrierMessage: error?.message || "Carrier request failed.",
+      carrierMessage: readableCarrierFailureMessage(normalizedMode, error),
       carrierRequest:
         normalizedMode === "speedshipLtl"
           ? speedshipRequests
@@ -2048,10 +2078,21 @@ async function requestCarrierQuoteForMode(mode, mothershipRequest, speedshipRequ
               : mothershipRequest,
       rawCarrierResponse: {
         error: error?.code || "CARRIER_REQUEST_FAILED",
-        message: error?.message || "Carrier request failed."
+        message: readableCarrierFailureMessage(normalizedMode, error)
       }
     };
   }
+}
+
+function readableCarrierFailureMessage(mode, error) {
+  const message = String(error?.message || "").trim();
+  if (
+    normalizeCarrierMode(mode) === "mothershipSandbox" &&
+    isMothershipPickupReadyBeforeOpenFailure(message)
+  ) {
+    return mothershipPickupReadyBeforeOpenMessage;
+  }
+  return message || "Carrier request failed.";
 }
 
 function isSpeedshipConfigured() {
