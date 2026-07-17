@@ -13,12 +13,20 @@ import {
 
 const __dirname = process.cwd();
 
-export async function createAppStore({ dbUrl, dataFile }) {
+export async function createAppStore({ dbUrl, dataFile, runOrganizationMigrationOnStartup = process.env.RUN_ORGANIZATION_MIGRATION_ON_STARTUP === "1" }) {
   if (dbUrl) {
-    return await createPostgresStore(dbUrl);
+    return await createPostgresStore(dbUrl, { runOrganizationMigrationOnStartup });
   }
 
-  return await createJsonStore(resolveDataFilePath(dataFile));
+  return await createJsonStore(resolveDataFilePath(dataFile), { runOrganizationMigrationOnStartup });
+}
+
+export async function runOrganizationMigration({ dbUrl, dataFile }) {
+  if (dbUrl) {
+    return await runPostgresOrganizationMigration(dbUrl);
+  }
+
+  return await runJsonOrganizationMigration(resolveDataFilePath(dataFile));
 }
 
 function resolveDataFilePath(value) {
@@ -26,7 +34,7 @@ function resolveDataFilePath(value) {
   return path.isAbsolute(filePath) ? filePath : path.join(__dirname, filePath);
 }
 
-async function createPostgresStore(dbUrl) {
+async function createPostgresStore(dbUrl, { runOrganizationMigrationOnStartup = false } = {}) {
   const pg = await import("pg");
   const { Pool, types } = pg;
 
@@ -40,8 +48,12 @@ async function createPostgresStore(dbUrl) {
   await pool.query("SELECT 1");
   await ensureSchema(pool);
   await seedPostgres(pool);
-  const organizationMigrationSummary = await migratePostgresOrganizations(pool);
-  console.log("Organization migration summary", organizationMigrationSummary);
+  const organizationMigrationSummary = runOrganizationMigrationOnStartup
+    ? await migratePostgresOrganizations(pool)
+    : createOrganizationMigrationSummary();
+  if (runOrganizationMigrationOnStartup) {
+    console.log("Organization migration summary", organizationMigrationSummary);
+  }
 
   return {
     kind: "postgres",
@@ -1046,6 +1058,27 @@ async function seedPostgresUsers(pool) {
   }
 }
 
+async function runPostgresOrganizationMigration(dbUrl) {
+  const pg = await import("pg");
+  const { Pool, types } = pg;
+
+  types.setTypeParser(1700, (value) => (value === null ? null : Number(value)));
+
+  const pool = new Pool({
+    connectionString: dbUrl,
+    max: 10
+  });
+
+  try {
+    await pool.query("SELECT 1");
+    await ensureSchema(pool);
+    await seedPostgres(pool);
+    return await migratePostgresOrganizations(pool);
+  } finally {
+    await pool.end();
+  }
+}
+
 async function migratePostgresOrganizations(pool) {
   const summary = createOrganizationMigrationSummary();
   const now = nowIso();
@@ -1318,14 +1351,16 @@ async function getPostgresOrganizationContextForUser(pool, user) {
   );
 }
 
-async function createJsonStore(filePath) {
-  const initialDb = await readJsonDb(filePath);
-  const { db: migratedDb, summary: organizationMigrationSummary } = migrateJsonOrganizations(initialDb, {
-    createId,
-    nowIso
-  });
-  await writeJsonDb(filePath, migratedDb);
-  console.log("Organization migration summary", organizationMigrationSummary);
+async function createJsonStore(filePath, { runOrganizationMigrationOnStartup = false } = {}) {
+  const organizationMigrationSummary = runOrganizationMigrationOnStartup
+    ? await runJsonOrganizationMigration(filePath)
+    : createOrganizationMigrationSummary();
+  if (!runOrganizationMigrationOnStartup) {
+    await readJsonDb(filePath);
+  }
+  if (runOrganizationMigrationOnStartup) {
+    console.log("Organization migration summary", organizationMigrationSummary);
+  }
 
   return {
     kind: "json",
@@ -1843,6 +1878,16 @@ async function createJsonStore(filePath) {
       await writeJsonDb(filePath, db);
     }
   };
+}
+
+async function runJsonOrganizationMigration(filePath) {
+  const initialDb = await readJsonDb(filePath);
+  const { db: migratedDb, summary } = migrateJsonOrganizations(initialDb, {
+    createId,
+    nowIso
+  });
+  await writeJsonDb(filePath, migratedDb);
+  return summary;
 }
 
 async function readJsonDb(filePath) {

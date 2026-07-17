@@ -65,7 +65,7 @@ try {
     "utf8"
   );
 
-  const store = await createAppStore({ dataFile });
+  const store = await createAppStore({ dataFile, runOrganizationMigrationOnStartup: true });
   const firstSummary = await store.getOrganizationMigrationSummary();
   const migrated = await readJson(dataFile);
 
@@ -93,7 +93,7 @@ try {
   assert.ok(migrated.invoices.find((invoice) => invoice.id === "inv_valid").customerOrganizationId);
   assert.equal(migrated.invoices.find((invoice) => invoice.id === "inv_missing").customerOrganizationId, undefined);
 
-  await createAppStore({ dataFile });
+  await createAppStore({ dataFile, runOrganizationMigrationOnStartup: true });
   const migratedAgain = await readJson(dataFile);
   assert.equal(migratedAgain.organizations.filter((organization) => organization.type === "internal").length, 1);
   assert.equal(migratedAgain.organizations.filter((organization) => organization.type === "customer").length, 2);
