@@ -272,6 +272,32 @@
                 <button class="primary-action" type="submit" data-i18n="Save Tariff">Save Tariff</button>
               </form>
             </section>
+
+            <section class="panel admin-only" id="carrierBlacklistPanel">
+              <div class="panel-heading">
+                <h2 data-i18n="Blocked Carriers">Blocked Carriers</h2>
+              </div>
+              <form id="carrierPreferenceForm" class="form-grid compact">
+                <label>
+                  <span data-i18n="Customer">Customer</span>
+                  <select name="customerId" id="carrierPreferenceCustomerSelect"></select>
+                </label>
+                <label>
+                  <span data-i18n="Carrier code or name">Carrier code or name</span>
+                  <input name="carrierKey" placeholder="XPOL or XPO Logistics" data-i18n-placeholder="XPOL or XPO Logistics" required>
+                </label>
+                <label>
+                  <span data-i18n="Display name">Display name</span>
+                  <input name="carrierName" placeholder="XPO Logistics" data-i18n-placeholder="XPO Logistics">
+                </label>
+                <label>
+                  <span data-i18n="Reason">Reason</span>
+                  <input name="reason" placeholder="Optional internal reason" data-i18n-placeholder="Optional internal reason">
+                </label>
+                <button class="primary-action" type="submit" data-i18n="Block Carrier">Block Carrier</button>
+              </form>
+              <div id="carrierPreferenceList" class="table-list"></div>
+            </section>
           </div>
         </section>
 

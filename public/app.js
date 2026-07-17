@@ -80,6 +80,15 @@ const translations = {
     "Tariff Rule": "费率规则",
     "Tariff rule": "费率规则",
     "Tariff": "费率",
+    "Blocked Carriers": "屏蔽承运商",
+    "Carrier code or name": "承运商代码或名称",
+    "Display name": "显示名称",
+    "Reason": "原因",
+    "Optional internal reason": "可选内部原因",
+    "Block Carrier": "屏蔽承运商",
+    "Blocked carrier added.": "已添加屏蔽承运商。",
+    "Blocked carrier removed.": "已移除屏蔽承运商。",
+    "No blocked carriers.": "暂无屏蔽承运商。",
     "Rule type": "规则类型",
     "Fixed markup": "固定加价",
     "Percentage markup": "百分比加价",
@@ -643,6 +652,7 @@ const state = {
   customers: [],
   tariffs: [],
   addressBookEntries: [],
+  carrierPreferences: [],
   quotes: [],
   shipments: [],
   invoices: [],
@@ -811,6 +821,12 @@ function wireNavigation() {
       return;
     }
 
+    const deleteCarrierPreferenceButton = event.target.closest("[data-delete-carrier-preference]");
+    if (deleteCarrierPreferenceButton) {
+      deleteCarrierPreference(deleteCarrierPreferenceButton.dataset.deleteCarrierPreference);
+      return;
+    }
+
     const applyAllFreightSuggestionsButton = event.target.closest("[data-apply-all-freight-suggestions]");
     if (applyAllFreightSuggestionsButton) {
       applyAllFreightClassSuggestions();
@@ -956,6 +972,32 @@ function wireForms() {
     await refreshAll();
   });
 
+  document.getElementById("carrierPreferenceForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!isStaffUser()) {
+      return;
+    }
+    const form = new FormData(event.currentTarget);
+    const customerId = form.get("customerId");
+    await api("/api/carrier-preferences", {
+      method: "POST",
+      body: {
+        customerId,
+        carrierKey: form.get("carrierKey"),
+        carrierName: form.get("carrierName") || form.get("carrierKey"),
+        preference: "blocked",
+        reason: form.get("reason")
+      }
+    });
+    event.currentTarget.reset();
+    const select = document.getElementById("carrierPreferenceCustomerSelect");
+    if (select) {
+      select.value = customerId;
+    }
+    showToast(t("Blocked carrier added."));
+    await refreshCarrierPreferences();
+  });
+
   const quoteForm = document.getElementById("quoteForm");
   quoteForm.addEventListener("input", () => {
     clearQuoteFormErrors(quoteForm);
@@ -1097,6 +1139,7 @@ async function refreshAll(options = {}) {
     renderHealth();
     renderUserChip();
     renderCustomerOptions();
+    await refreshCarrierPreferences({ silent: true });
     renderAddressBookControls();
     renderCustomers();
     renderDashboard();
@@ -1234,6 +1277,7 @@ function applyPermissions() {
   if (!isStaff && document.querySelector(".nav-button.active")?.dataset.view === "customers") {
     setView("dashboard");
   }
+  renderCarrierPreferences();
   renderUserChip();
   renderDashboardSupportPanel();
 }
@@ -3931,8 +3975,88 @@ function renderCustomerOptions() {
       autofillPickupFromCustomer(quoteSelect.value, false);
     }
   }
+  const carrierPreferenceSelect = document.getElementById("carrierPreferenceCustomerSelect");
+  if (carrierPreferenceSelect) {
+    const previousCarrierPreferenceCustomerId = carrierPreferenceSelect.value || "";
+    carrierPreferenceSelect.innerHTML = options;
+    if (previousCarrierPreferenceCustomerId && state.customers.some((customer) => customer.id === previousCarrierPreferenceCustomerId)) {
+      carrierPreferenceSelect.value = previousCarrierPreferenceCustomerId;
+    }
+    if (!carrierPreferenceSelect.dataset.preferenceBound) {
+      carrierPreferenceSelect.addEventListener("change", () => refreshCarrierPreferences());
+      carrierPreferenceSelect.dataset.preferenceBound = "true";
+    }
+  }
   syncCarrierControls();
   updateFreightClassSuggestion();
+}
+
+async function refreshCarrierPreferences(options = {}) {
+  if (!isStaffUser()) {
+    state.carrierPreferences = [];
+    renderCarrierPreferences();
+    return;
+  }
+  const select = document.getElementById("carrierPreferenceCustomerSelect");
+  const customerId = select?.value || state.customers[0]?.id || "";
+  if (!customerId) {
+    state.carrierPreferences = [];
+    renderCarrierPreferences();
+    return;
+  }
+  try {
+    const response = await api(`/api/carrier-preferences?customerId=${encodeURIComponent(customerId)}`);
+    state.carrierPreferences = response.preferences || [];
+    renderCarrierPreferences();
+  } catch (error) {
+    state.carrierPreferences = [];
+    renderCarrierPreferences();
+    if (!options.silent) {
+      showToast(error.message, true);
+    }
+  }
+}
+
+function renderCarrierPreferences() {
+  const panel = document.getElementById("carrierBlacklistPanel");
+  const list = document.getElementById("carrierPreferenceList");
+  if (panel) {
+    panel.classList.toggle("hidden", !isStaffUser());
+  }
+  if (!list) {
+    return;
+  }
+  if (!isStaffUser()) {
+    list.innerHTML = "";
+    return;
+  }
+  if (state.carrierPreferences.length === 0) {
+    list.innerHTML = `<div class="empty-state">${t("No blocked carriers.")}</div>`;
+    return;
+  }
+  list.innerHTML = state.carrierPreferences
+    .map((preference) => `
+      <article class="row-item">
+        <div>
+          <strong>${escapeHtml(preference.carrierName || preference.carrierKey)}</strong>
+          <small>${escapeHtml(preference.carrierKey)}${preference.reason ? ` · ${escapeHtml(preference.reason)}` : ""}</small>
+        </div>
+        <button class="danger-action" type="button" data-delete-carrier-preference="${escapeHtml(preference.id)}">${t("Remove")}</button>
+      </article>
+    `)
+    .join("");
+}
+
+async function deleteCarrierPreference(id) {
+  if (!isStaffUser()) {
+    return;
+  }
+  const customerId = document.getElementById("carrierPreferenceCustomerSelect")?.value || "";
+  await api(`/api/carrier-preferences/${encodeURIComponent(id)}?customerId=${encodeURIComponent(customerId)}`, {
+    method: "DELETE"
+  });
+  showToast(t("Blocked carrier removed."));
+  await refreshCarrierPreferences();
 }
 
 function renderCustomers() {
@@ -4682,7 +4806,9 @@ function enhanceAccessorialDropdowns() {
       if (button.dataset.helpBound === "true") {
         return;
       }
-      button.addEventListener("click", () => {
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
         const option = button.closest(".accessorial-option");
         const expanded = option?.classList.toggle("is-help-open") || false;
         button.setAttribute("aria-expanded", expanded ? "true" : "false");

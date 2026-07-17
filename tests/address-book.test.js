@@ -53,7 +53,7 @@ try {
 
   const created = await store.createAddressBookEntry({
     customerId: "cust_a",
-    customerOrganizationId: "org_a",
+    customerOrganizationId: "org_b",
     label: "A Delivery",
     usageType: "delivery",
     companyName: "Customer A Receiver",
@@ -72,7 +72,7 @@ try {
     createdByUserId: "user_staff"
   });
   assert.equal(created.customerId, "cust_a");
-  assert.equal(created.customerOrganizationId, "org_a");
+  assert.equal(created.customerOrganizationId, "org_a", "store should derive address organization from customer ownership");
   assert.equal(created.state, "TX");
   assert.deepEqual(created.defaultAccessorials, ["appointment", "liftgate"]);
 
@@ -99,6 +99,51 @@ try {
   assert.equal(updated.isDefaultPickup, true);
   assert.deepEqual(updated.defaultAccessorials, ["appointment"]);
 
+  const pickupDefaultA = await store.createAddressBookEntry({
+    customerId: "cust_a",
+    label: "A Pickup 1",
+    usageType: "pickup",
+    companyName: "Customer A Pickup 1",
+    street: "11 Pickup Rd",
+    city: "Austin",
+    state: "TX",
+    zip: "78701",
+    country: "US",
+    phone: "5125550101",
+    openTime: "0900",
+    closeTime: "1700",
+    defaultAccessorials: [],
+    isDefaultPickup: true,
+    isDefaultDelivery: true,
+    createdByUserId: "user_staff"
+  });
+  assert.equal(pickupDefaultA.isDefaultPickup, true);
+  assert.equal(pickupDefaultA.isDefaultDelivery, false, "pickup-only addresses cannot become default delivery");
+
+  const pickupDefaultB = await store.createAddressBookEntry({
+    customerId: "cust_a",
+    label: "A Pickup 2",
+    usageType: "pickup",
+    companyName: "Customer A Pickup 2",
+    street: "12 Pickup Rd",
+    city: "Austin",
+    state: "TX",
+    zip: "78701",
+    country: "US",
+    phone: "5125550102",
+    openTime: "0900",
+    closeTime: "1700",
+    defaultAccessorials: [],
+    isDefaultPickup: true,
+    createdByUserId: "user_staff"
+  });
+  const defaultPickupEntries = await store.listAddressBookEntries({ customerId: "cust_a" });
+  assert.deepEqual(
+    defaultPickupEntries.filter((entry) => entry.isDefaultPickup).map((entry) => entry.id),
+    [pickupDefaultB.id],
+    "creating a new default pickup should clear the old default"
+  );
+
   await store.deleteAddressBookEntry(created.id);
   const afterDelete = await store.listAddressBookEntries({ customerId: "cust_a" });
   assert.equal(afterDelete.some((entry) => entry.id === created.id), false, "deleted entries should not list");
@@ -110,7 +155,7 @@ try {
 
   const preference = await store.createCarrierPreference({
     customerId: "cust_a",
-    customerOrganizationId: "org_a",
+    customerOrganizationId: "org_b",
     carrierKey: "XPOL",
     carrierName: "XPO Logistics",
     preference: "blocked",
@@ -118,13 +163,40 @@ try {
     createdByUserId: "user_staff"
   });
   assert.equal(preference.customerId, "cust_a");
+  assert.equal(preference.customerOrganizationId, "org_a", "store should derive preference organization from customer ownership");
   assert.equal(preference.preference, "blocked");
+  assert.equal((await store.getCarrierPreference(preference.id)).id, preference.id);
   const preferencesA = await store.listCarrierPreferences({ customerId: "cust_a" });
   const preferencesB = await store.listCarrierPreferences({ customerId: "cust_b" });
   assert.equal(preferencesA.length, 1);
   assert.equal(preferencesB.length, 0);
   await store.deleteCarrierPreference(preference.id);
   assert.equal((await store.listCarrierPreferences({ customerId: "cust_a" })).length, 0);
+
+  const quote = await store.createQuote({
+    id: "quote_audit",
+    customerId: "cust_a",
+    customerName: "Customer A",
+    carrierMode: "demo",
+    carrierModes: ["demo"],
+    carrier: "Demo",
+    carrierQuoteId: "quote_audit",
+    referenceNumber: "REF-AUDIT",
+    pickup: {},
+    delivery: {},
+    freight: [],
+    pickupReadyDate: {},
+    tariffRule: {},
+    rates: [],
+    status: "quoted",
+    carrierMessage: "",
+    carrierAudit: [],
+    rawCarrierResponse: {},
+    createdAt: now,
+    rateAvailability: { status: "none", messageCode: "NO_RATES_AVAILABLE" },
+    carrierExclusionAudit: [{ carrierName: "XPO Logistics", reason: "Blocked" }]
+  });
+  assert.equal(quote.carrierExclusionAudit.length, 1, "JSON quote storage should persist carrier exclusion audit");
 
   console.log("address book tests passed");
 } finally {

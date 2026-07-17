@@ -71,6 +71,8 @@ for (const key of requiredKeys.filter((key) => !["crossDock", "cfs"].includes(ke
 const app = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
 const styles = await readFile(new URL("../public/styles.css", import.meta.url), "utf8");
 assert.match(app, /data-accessorial-help-toggle/, "help controls should be clickable/tappable");
+assert.match(app, /event\.preventDefault\(\)/, "help controls should not activate checkbox labels");
+assert.match(app, /event\.stopPropagation\(\)/, "help controls should not bubble into checkbox labels");
 assert.match(app, /aria-expanded/, "help controls should expose expanded state");
 assert.match(app, /aria-describedby/, "help controls should link to help text");
 assert.match(styles, /focus-within/, "help text should be keyboard accessible through focus");

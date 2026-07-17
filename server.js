@@ -319,11 +319,11 @@ async function handleApi(req, res, url) {
   if (req.method === "POST" && url.pathname === "/api/address-book") {
     const input = await readJson(req);
     const customerId = await addressBookCustomerIdForRequest(currentUser, input.customerId);
-    const organizationContext = await store.getOrganizationContextForUser(currentUser);
+    const customerOrganizationId = await store.getCustomerOrganizationId(customerId);
     const entry = await store.createAddressBookEntry({
       ...normalizeAddressBookInput(input),
       customerId,
-      customerOrganizationId: currentUser.role === "customer" ? organizationContext?.customerOrganizationId || null : input.customerOrganizationId || null,
+      customerOrganizationId: customerOrganizationId || null,
       createdByUserId: currentUser.id
     });
     sendJson(res, 201, { entry });
@@ -379,7 +379,17 @@ async function handleApi(req, res, url) {
   const carrierPreferenceMatch = url.pathname.match(/^\/api\/carrier-preferences\/([^/]+)$/);
   if (carrierPreferenceMatch && req.method === "DELETE") {
     requireStaff(currentUser);
-    await store.deleteCarrierPreference(carrierPreferenceMatch[1]);
+    const customerId = await addressBookCustomerIdForRequest(currentUser, url.searchParams.get("customerId"));
+    const preference = await store.getCarrierPreference(carrierPreferenceMatch[1]);
+    if (!preference || preference.status !== "active") {
+      sendJson(res, 404, { error: "CARRIER_PREFERENCE_NOT_FOUND", message: "Carrier preference was not found." });
+      return;
+    }
+    if (preference.customerId !== customerId) {
+      sendJson(res, 403, { error: "FORBIDDEN", message: "Carrier preference does not belong to this customer." });
+      return;
+    }
+    await store.deleteCarrierPreference(preference.id);
     sendJson(res, 200, { ok: true });
     return;
   }
