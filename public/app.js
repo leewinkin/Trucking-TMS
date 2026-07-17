@@ -155,7 +155,7 @@ const translations = {
     "Tradeshow": "展会",
     "Delivery": "送货",
     "Scheduled delivery": "预约送货",
-    "Residential delivery requires scheduled delivery.": "住宅送货需要预约送货。",
+    "Residential delivery may require an appointment or other accessorial services. Select them based on the actual delivery requirements.": "住宅派送可能需要预约或其他附加服务，请根据实际派送要求选择。",
     "Freight": "货物",
     "Apply suggestions to all items": "运费等级智能输入",
     "Add Item": "添加条目",
@@ -672,6 +672,10 @@ const zipLookupTimers = new WeakMap();
 const zipLookupTokens = new WeakMap();
 const freightSuggestionTimers = new WeakMap();
 const freightSuggestionTokens = new WeakMap();
+const accessorialTooltipState = {
+  button: null,
+  dismissalBound: false
+};
 
 const viewMeta = {
   dashboard: () =>
@@ -4582,9 +4586,6 @@ function fillAddressFromEntry(usage, entry) {
     }
   });
   setQuoteCheckboxGroup(`${prefix}Accessorials`, entry.defaultAccessorials || []);
-  if (prefix === "delivery") {
-    enforceDeliveryAccessorialDependencies(document.querySelector("[data-accessorial-group='delivery']"));
-  }
   document.querySelectorAll(".accessorial-dropdown").forEach((details) => syncAccessorialDropdown(details));
   const labelInput = document.querySelector(`[data-address-book-label='${prefix}']`);
   if (labelInput) {
@@ -4684,9 +4685,6 @@ function populateQuoteFormFromQuote(quote) {
   setCheckboxGroup("pickupAccessorials", quote.pickup?.accessorials || []);
   setCheckboxGroup("deliveryAccessorials", quote.delivery?.accessorials || []);
   document.querySelectorAll(".accessorial-dropdown").forEach((details) => {
-    if (details.dataset.accessorialGroup === "delivery") {
-      enforceDeliveryAccessorialDependencies(details);
-    }
     syncAccessorialDropdown(details);
   });
 
@@ -4714,11 +4712,7 @@ function triggerZipAutofillField(name, root = document) {
 }
 
 function normalizeDeliveryAccessorials(accessorials) {
-  const normalized = Array.from(new Set(accessorials.filter(Boolean)));
-  if (normalized.includes("residential") && !normalized.includes("scheduledDelivery")) {
-    normalized.push("scheduledDelivery");
-  }
-  return normalized;
+  return Array.from(new Set(accessorials.filter(Boolean)));
 }
 
 function normalizePhoneNumber(value) {
@@ -4759,9 +4753,6 @@ function wireAccessorialDropdowns() {
   enhanceAccessorialDropdowns();
   document.querySelectorAll(".accessorial-dropdown").forEach((details) => {
     const update = () => {
-      if (details.dataset.accessorialGroup === "delivery") {
-        enforceDeliveryAccessorialDependencies(details);
-      }
       syncAccessorialDropdown(details);
     };
 
@@ -4783,7 +4774,6 @@ function enhanceAccessorialDropdowns() {
       const key = checkbox.value;
       const labelText = accessorialLabel(key, state.language);
       const helpText = accessorialExplanation(key, group, state.language);
-      const helpId = `${group}-accessorial-${key}-help`;
       checkbox.dataset.label = labelText;
       label.classList.add("accessorial-option");
       label.innerHTML = "";
@@ -4794,24 +4784,51 @@ function enhanceAccessorialDropdowns() {
           <span class="accessorial-option-body">
             <span class="accessorial-option-line">
               <span class="accessorial-option-label">${escapeHtml(labelText)}</span>
-              <button class="accessorial-help-button" type="button" aria-label="${escapeHtml(labelText)} ${escapeHtml(t("Details"))}" aria-expanded="false" aria-describedby="${escapeHtml(helpId)}" data-accessorial-help-toggle>i</button>
+              <button class="accessorial-help-button" type="button" aria-label="${escapeHtml(labelText)} ${escapeHtml(t("Details"))}" aria-expanded="false" aria-describedby="accessorialTooltip" data-accessorial-help-toggle>i</button>
             </span>
-            <span class="accessorial-help-text" id="${escapeHtml(helpId)}" role="note">${escapeHtml(helpText)}</span>
           </span>
         `
       );
+      const button = label.querySelector("[data-accessorial-help-toggle]");
+      if (button) {
+        button.dataset.tooltipText = helpText;
+      }
     });
 
     details.querySelectorAll("[data-accessorial-help-toggle]").forEach((button) => {
       if (button.dataset.helpBound === "true") {
         return;
       }
+      button.addEventListener("pointerdown", (event) => {
+        button.dataset.lastPointerType = event.pointerType || "";
+      });
+      button.addEventListener("pointerenter", (event) => {
+        if (event.pointerType !== "touch") {
+          showAccessorialTooltip(button);
+        }
+      });
+      button.addEventListener("pointerleave", (event) => {
+        if (event.pointerType !== "touch") {
+          hideAccessorialTooltip(button);
+        }
+      });
+      button.addEventListener("focus", () => {
+        if (button.dataset.lastPointerType === "touch") {
+          return;
+        }
+        showAccessorialTooltip(button);
+      });
+      button.addEventListener("blur", () => {
+        hideAccessorialTooltip(button);
+      });
       button.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
-        const option = button.closest(".accessorial-option");
-        const expanded = option?.classList.toggle("is-help-open") || false;
-        button.setAttribute("aria-expanded", expanded ? "true" : "false");
+        if (accessorialTooltipState.button === button && button.dataset.lastPointerType === "touch") {
+          hideAccessorialTooltip(button);
+          return;
+        }
+        showAccessorialTooltip(button);
       });
       button.dataset.helpBound = "true";
     });
@@ -4829,6 +4846,99 @@ function enhanceAccessorialDropdowns() {
       }
     }
   });
+  setupAccessorialTooltipDismissal();
+}
+
+function accessorialTooltipElement() {
+  let tooltip = document.getElementById("accessorialTooltip");
+  if (!tooltip) {
+    tooltip = document.createElement("div");
+    tooltip.id = "accessorialTooltip";
+    tooltip.className = "accessorial-tooltip hidden";
+    tooltip.setAttribute("role", "tooltip");
+    document.body.appendChild(tooltip);
+  }
+  return tooltip;
+}
+
+function showAccessorialTooltip(button) {
+  const tooltip = accessorialTooltipElement();
+  if (accessorialTooltipState.button && accessorialTooltipState.button !== button) {
+    accessorialTooltipState.button.setAttribute("aria-expanded", "false");
+  }
+  accessorialTooltipState.button = button;
+  tooltip.textContent = button.dataset.tooltipText || "";
+  tooltip.classList.remove("hidden");
+  button.setAttribute("aria-expanded", "true");
+  positionAccessorialTooltip(button, tooltip);
+}
+
+function hideAccessorialTooltip(button = null) {
+  if (button && accessorialTooltipState.button !== button) {
+    return;
+  }
+  const tooltip = document.getElementById("accessorialTooltip");
+  if (accessorialTooltipState.button) {
+    accessorialTooltipState.button.setAttribute("aria-expanded", "false");
+  }
+  accessorialTooltipState.button = null;
+  if (tooltip) {
+    tooltip.classList.add("hidden");
+  }
+}
+
+function positionAccessorialTooltip(button, tooltip) {
+  const rect = button.getBoundingClientRect();
+  const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+  const margin = 12;
+  const gap = 8;
+  tooltip.style.maxWidth = "320px";
+  tooltip.style.left = "0px";
+  tooltip.style.top = "0px";
+  const tooltipRect = tooltip.getBoundingClientRect();
+  const width = tooltipRect.width || 280;
+  const height = tooltipRect.height || 40;
+  let left = rect.left + rect.width / 2 - width / 2;
+  left = Math.max(margin, Math.min(left, viewportWidth - width - margin));
+  const belowTop = rect.bottom + gap;
+  const aboveTop = rect.top - height - gap;
+  const top = belowTop + height + margin <= viewportHeight ? belowTop : Math.max(margin, aboveTop);
+  tooltip.style.left = `${Math.round(left)}px`;
+  tooltip.style.top = `${Math.round(top)}px`;
+}
+
+function setupAccessorialTooltipDismissal() {
+  if (accessorialTooltipState.dismissalBound) {
+    return;
+  }
+  document.addEventListener("pointerdown", (event) => {
+    const tooltip = document.getElementById("accessorialTooltip");
+    const button = accessorialTooltipState.button;
+    if (!button) {
+      return;
+    }
+    if (button.contains(event.target) || tooltip?.contains(event.target)) {
+      return;
+    }
+    hideAccessorialTooltip();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      hideAccessorialTooltip();
+    }
+  });
+  window.addEventListener("scroll", () => {
+    if (accessorialTooltipState.button) {
+      positionAccessorialTooltip(accessorialTooltipState.button, accessorialTooltipElement());
+    }
+  }, true);
+  window.addEventListener("resize", () => {
+    if (accessorialTooltipState.button) {
+      positionAccessorialTooltip(accessorialTooltipState.button, accessorialTooltipElement());
+    }
+  });
+  accessorialTooltipState.dismissalBound = true;
 }
 
 function syncAccessorialDropdown(details) {
@@ -4851,18 +4961,6 @@ function syncAccessorialDropdown(details) {
   }
 
   summary.textContent = `${selectedLabels.slice(0, 2).join(", ")} +${selectedLabels.length - 2} more`;
-}
-
-function enforceDeliveryAccessorialDependencies(details) {
-  const residential = details.querySelector("input[value='residential']");
-  const scheduledDelivery = details.querySelector("input[value='scheduledDelivery']");
-  if (!residential || !scheduledDelivery) {
-    return;
-  }
-
-  if (residential.checked) {
-    scheduledDelivery.checked = true;
-  }
 }
 
 function setDefaultPickupDate() {
