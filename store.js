@@ -503,6 +503,42 @@ async function createPostgresStore(dbUrl, { runOrganizationMigrationOnStartup = 
       );
       return result.rowCount > 0;
     },
+    async listCarrierPreferences({ customerId }) {
+      const { rows } = await pool.query(
+        "SELECT * FROM customer_carrier_preferences WHERE customer_id = $1 AND status = 'active' ORDER BY carrier_name ASC, created_at ASC",
+        [customerId]
+      );
+      return rows.map(mapCarrierPreferenceRow);
+    },
+    async createCarrierPreference(input) {
+      const customerOrganizationId = input.customerOrganizationId || await getPostgresCustomerOrganizationId(pool, input.customerId);
+      const now = nowIso();
+      const { rows } = await pool.query(
+        `INSERT INTO customer_carrier_preferences
+         (id, customer_organization_id, customer_id, carrier_key, carrier_name, preference, reason, status, created_by_user_id, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', $8, $9, $9)
+         RETURNING *`,
+        [
+          createId("cpref"),
+          customerOrganizationId || null,
+          input.customerId,
+          String(input.carrierKey || "").trim(),
+          String(input.carrierName || "").trim(),
+          input.preference === "preferred" ? "preferred" : "blocked",
+          normalizeNullableString(input.reason),
+          input.createdByUserId || null,
+          now
+        ]
+      );
+      return mapCarrierPreferenceRow(rows[0]);
+    },
+    async deleteCarrierPreference(id) {
+      const result = await pool.query(
+        "UPDATE customer_carrier_preferences SET status = 'deleted', updated_at = $2 WHERE id = $1",
+        [id, nowIso()]
+      );
+      return result.rowCount > 0;
+    },
     async listQuotes() {
       const { rows } = await pool.query("SELECT * FROM quotes ORDER BY created_at DESC");
       return rows.map(mapQuoteRow);
@@ -967,6 +1003,19 @@ async function ensureSchema(pool) {
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
     )`,
+    `CREATE TABLE IF NOT EXISTS customer_carrier_preferences (
+      id text PRIMARY KEY,
+      customer_organization_id text REFERENCES organizations(id),
+      customer_id text NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+      carrier_key text NOT NULL,
+      carrier_name text NOT NULL,
+      preference text NOT NULL DEFAULT 'blocked',
+      reason text,
+      status text NOT NULL DEFAULT 'active',
+      created_by_user_id text REFERENCES users(id),
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )`,
       `CREATE TABLE IF NOT EXISTS quotes (
       id text PRIMARY KEY,
       customer_id text NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
@@ -1090,7 +1139,9 @@ async function ensureSchema(pool) {
     "CREATE INDEX IF NOT EXISTS idx_agent_customer_relationships_agent ON agent_customer_relationships(agent_organization_id)",
     "CREATE INDEX IF NOT EXISTS idx_agent_customer_relationships_customer ON agent_customer_relationships(customer_organization_id)",
     "CREATE INDEX IF NOT EXISTS idx_address_book_entries_customer_id ON address_book_entries(customer_id)",
-    "CREATE INDEX IF NOT EXISTS idx_address_book_entries_customer_organization_id ON address_book_entries(customer_organization_id)"
+    "CREATE INDEX IF NOT EXISTS idx_address_book_entries_customer_organization_id ON address_book_entries(customer_organization_id)",
+    "CREATE INDEX IF NOT EXISTS idx_customer_carrier_preferences_customer_id ON customer_carrier_preferences(customer_id)",
+    "CREATE INDEX IF NOT EXISTS idx_customer_carrier_preferences_customer_organization_id ON customer_carrier_preferences(customer_organization_id)"
   ];
 
   for (const statement of statements) {
@@ -1831,6 +1882,40 @@ async function createJsonStore(filePath, { runOrganizationMigrationOnStartup = f
       await writeJsonDb(filePath, db);
       return true;
     },
+    async listCarrierPreferences({ customerId }) {
+      const db = await readJsonDb(filePath);
+      return db.carrierPreferences.filter((preference) => preference.customerId === customerId && preference.status === "active");
+    },
+    async createCarrierPreference(input) {
+      const db = await readJsonDb(filePath);
+      const now = nowIso();
+      const preference = normalizeCarrierPreferenceRecord({
+        ...input,
+        id: createId("cpref"),
+        customerOrganizationId:
+          input.customerOrganizationId ||
+          customerOrganizationIdByLegacyCustomerId(db.organizations, input.customerId) ||
+          null,
+        preference: input.preference === "preferred" ? "preferred" : "blocked",
+        status: "active",
+        createdAt: now,
+        updatedAt: now
+      });
+      db.carrierPreferences.push(preference);
+      await writeJsonDb(filePath, db);
+      return preference;
+    },
+    async deleteCarrierPreference(id) {
+      const db = await readJsonDb(filePath);
+      const preference = db.carrierPreferences.find((item) => item.id === id);
+      if (!preference) {
+        return false;
+      }
+      preference.status = "deleted";
+      preference.updatedAt = nowIso();
+      await writeJsonDb(filePath, db);
+      return true;
+    },
     async listQuotes() {
       const db = await readJsonDb(filePath);
       return db.quotes.slice().reverse();
@@ -2342,6 +2427,22 @@ function mapAddressBookEntryRow(row) {
   };
 }
 
+function mapCarrierPreferenceRow(row) {
+  return {
+    id: row.id,
+    customerOrganizationId: row.customer_organization_id || null,
+    customerId: row.customer_id,
+    carrierKey: row.carrier_key,
+    carrierName: row.carrier_name,
+    preference: row.preference,
+    reason: row.reason || null,
+    status: row.status,
+    createdByUserId: row.created_by_user_id || null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
 function mapQuoteRow(row) {
   const carrierModes =
     Array.isArray(row.carrier_modes) && row.carrier_modes.length > 0
@@ -2544,6 +2645,7 @@ function normalizeJsonDb(db) {
     organizationUsers: Array.isArray(db.organizationUsers) ? db.organizationUsers.map(normalizeOrganizationUserRecord) : [],
     agentCustomerRelationships: Array.isArray(db.agentCustomerRelationships) ? db.agentCustomerRelationships : [],
     addressBookEntries: Array.isArray(db.addressBookEntries) ? db.addressBookEntries.map(normalizeAddressBookRecord) : [],
+    carrierPreferences: Array.isArray(db.carrierPreferences) ? db.carrierPreferences.map(normalizeCarrierPreferenceRecord) : [],
     quotes: Array.isArray(db.quotes) ? db.quotes : [],
     shipments: Array.isArray(db.shipments) ? db.shipments : [],
     invoices: Array.isArray(db.invoices) ? db.invoices : [],
@@ -2621,6 +2723,22 @@ function normalizeAddressBookRecord(entry) {
     createdByUserId: entry?.createdByUserId || entry?.created_by_user_id || null,
     createdAt: entry?.createdAt || entry?.created_at || nowIso(),
     updatedAt: entry?.updatedAt || entry?.updated_at || nowIso()
+  };
+}
+
+function normalizeCarrierPreferenceRecord(preference) {
+  return {
+    id: String(preference?.id || "").trim(),
+    customerOrganizationId: preference?.customerOrganizationId || preference?.customer_organization_id || null,
+    customerId: preference?.customerId || preference?.customer_id || "",
+    carrierKey: String(preference?.carrierKey || preference?.carrier_key || "").trim(),
+    carrierName: String(preference?.carrierName || preference?.carrier_name || "").trim(),
+    preference: preference?.preference === "preferred" ? "preferred" : "blocked",
+    reason: preference?.reason || null,
+    status: preference?.status === "deleted" ? "deleted" : "active",
+    createdByUserId: preference?.createdByUserId || preference?.created_by_user_id || null,
+    createdAt: preference?.createdAt || preference?.created_at || nowIso(),
+    updatedAt: preference?.updatedAt || preference?.updated_at || nowIso()
   };
 }
 

@@ -30,6 +30,7 @@ try {
           address("addr_a", "cust_a", "org_a", "A Dock"),
           address("addr_b", "cust_b", "org_b", "B Dock")
         ],
+        carrierPreferences: [],
         quotes: [],
         shipments: [],
         invoices: [],
@@ -106,6 +107,24 @@ try {
   assert.match(app, /data-save-address/, "address save should require an explicit save control");
   assert.match(app, /data-update-address/, "address update should require an explicit update control");
   assert.doesNotMatch(app, /autosaveAddress|autoSaveAddress/, "address book must not autosave");
+
+  const preference = await store.createCarrierPreference({
+    customerId: "cust_a",
+    customerOrganizationId: "org_a",
+    carrierKey: "XPOL",
+    carrierName: "XPO Logistics",
+    preference: "blocked",
+    reason: "Customer requested block",
+    createdByUserId: "user_staff"
+  });
+  assert.equal(preference.customerId, "cust_a");
+  assert.equal(preference.preference, "blocked");
+  const preferencesA = await store.listCarrierPreferences({ customerId: "cust_a" });
+  const preferencesB = await store.listCarrierPreferences({ customerId: "cust_b" });
+  assert.equal(preferencesA.length, 1);
+  assert.equal(preferencesB.length, 0);
+  await store.deleteCarrierPreference(preference.id);
+  assert.equal((await store.listCarrierPreferences({ customerId: "cust_a" })).length, 0);
 
   console.log("address book tests passed");
 } finally {

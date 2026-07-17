@@ -243,6 +243,7 @@ const translations = {
     "No {provider} rates: {message}": "无 {provider} 报价：{message}",
     "No Mothership rates: pickup ready time is earlier than pickup opening time.": "无 Mothership 报价：提货准备时间早于提货开始时间。",
     "No rates are currently available. Please contact customer service.": "当前暂无可用报价。请联系客服。",
+    "No rates are available based on your current carrier preferences.": "根据您当前的承运商偏好，暂无可用报价。",
     "Some rates are temporarily unavailable. The available results are shown below. Please try again later or contact customer service.": "部分报价暂时未能返回，以下为目前可用的报价。请稍后重试或联系客服。",
     "Contracted Carrier": "合作承运商",
     "Select a customer to see the carrier modes assigned by admin.": "选择客户后可查看管理员分配的承运商模式。",
@@ -2928,7 +2929,7 @@ function quoteDetailsHtml(quote) {
           `
         )
         .join("")
-    : `<div class="empty-state">${customerView ? t("No rates are currently available. Please contact customer service.") : t("No rate details.")}</div>`;
+    : `<div class="empty-state">${customerView ? t(quote.rateAvailability?.messageCode === "NO_RATES_AVAILABLE_BY_PREFERENCE" ? "No rates are available based on your current carrier preferences." : "No rates are currently available. Please contact customer service.") : t("No rate details.")}</div>`;
   const carrierNotice = quote.carrierMessage
     ? `
       <div class="quote-status notice-state success-state">
@@ -4047,7 +4048,9 @@ function renderQuoteResults(quote) {
   const availabilityNotice = customerView ? rateAvailabilityNoticeHtml(quote.rateAvailability) : "";
   if (!Array.isArray(sortedRates) || sortedRates.length === 0) {
     if (customerView) {
-      const notice = t("No rates are currently available. Please contact customer service.");
+      const notice = quote.rateAvailability?.messageCode === "NO_RATES_AVAILABLE_BY_PREFERENCE"
+        ? t("No rates are available based on your current carrier preferences.")
+        : t("No rates are currently available. Please contact customer service.");
       list.innerHTML = `
         <div class="quote-status notice-state">
           <p>${escapeHtml(notice)}</p>

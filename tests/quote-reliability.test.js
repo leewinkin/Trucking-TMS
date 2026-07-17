@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import {
   applyActualCarrierNames,
+  applyCarrierExclusions,
   customerRateAvailability,
   knownCarrierCodeMappings,
   normalizePackagingType,
@@ -110,5 +111,23 @@ assert.deepEqual(customerRateAvailability([{ mode: "speedshipLtl", rates: [{ id:
   status: "complete",
   messageCode: null
 });
+
+const exclusionRates = [
+  { id: "rate_tf", providerScac: "TFWW", actualCarrierName: "TForce Freight", carrierCost: 100, sellPrice: 125 },
+  { id: "rate_xpo", providerScac: "XPOL", actualCarrierName: "XPO Logistics", carrierCost: 90, sellPrice: 115 },
+  { id: "rate_saia", actualCarrierName: "SAIA", carrierCost: 80, sellPrice: 105 }
+];
+const scacBlocked = applyCarrierExclusions(exclusionRates, [
+  { carrierKey: "XPOL", carrierName: "XPO Logistics", preference: "blocked", status: "active", reason: "Customer preference" }
+]);
+assert.deepEqual(scacBlocked.blockedRates.map((item) => item.rate.id), ["rate_xpo"], "blocking by SCAC should remove the matching carrier");
+assert.deepEqual(scacBlocked.allowedRates.map((rate) => rate.id), ["rate_tf", "rate_saia"], "allowed rate order should be unchanged");
+assert.equal(scacBlocked.allowedRates[0].sellPrice, 125, "allowed rate pricing should be unchanged");
+
+const nameBlocked = applyCarrierExclusions(exclusionRates, [
+  { carrierKey: "saia", carrierName: "SAIA", preference: "blocked", status: "active" }
+]);
+assert.deepEqual(nameBlocked.blockedRates.map((item) => item.rate.id), ["rate_saia"], "fallback blocking by normalized name should work");
+assert.equal(nameBlocked.allowedRates.length, 2);
 
 console.log("quote reliability tests passed");

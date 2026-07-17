@@ -173,6 +173,59 @@ export function sanitizeRateForCustomerDisplay(rate = {}, options = {}) {
   };
 }
 
+export function normalizedCarrierIdentity(value) {
+  return String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+export function carrierIdentityCandidates(rate = {}) {
+  const codeValues = [
+    rate.scac,
+    rate.providerScac,
+    rate.carrierCode,
+    rate.vendorId
+  ].map((value) => String(value || "").trim().toUpperCase()).filter(Boolean);
+  const name = resolveActualCarrierName(rate);
+  const names = [name, rate.actualCarrierName, rate.carrierName]
+    .map(normalizedCarrierIdentity)
+    .filter(Boolean);
+  return Array.from(new Set([...codeValues, ...names]));
+}
+
+export function applyCarrierExclusions(rates = [], preferences = []) {
+  const activeBlocked = preferences.filter((preference) => preference?.status !== "deleted" && preference?.preference === "blocked");
+  const blockedKeys = new Set(
+    activeBlocked
+      .flatMap((preference) => [preference.carrierKey, preference.carrierName])
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+      .flatMap((value) => [value.toUpperCase(), normalizedCarrierIdentity(value)])
+  );
+  const allowedRates = [];
+  const blockedRates = [];
+
+  for (const rate of rates) {
+    const candidates = carrierIdentityCandidates(rate);
+    const matched = candidates.find((candidate) => blockedKeys.has(candidate) || blockedKeys.has(normalizedCarrierIdentity(candidate)));
+    if (matched) {
+      const preference = activeBlocked.find((item) =>
+        [item.carrierKey, item.carrierName]
+          .map((value) => String(value || "").trim())
+          .some((value) => value.toUpperCase() === matched || normalizedCarrierIdentity(value) === normalizedCarrierIdentity(matched))
+      );
+      blockedRates.push({
+        rate,
+        carrierName: resolveActualCarrierName(rate),
+        carrierKey: matched,
+        reason: preference?.reason || null
+      });
+      continue;
+    }
+    allowedRates.push(rate);
+  }
+
+  return { allowedRates, blockedRates };
+}
+
 function firstText(values) {
   for (const value of values) {
     const text = String(value || "").trim();

@@ -7,7 +7,9 @@ import { createAppStore } from "./store.js";
 import { buildPublicUser } from "./server/auth/public-user.js";
 import {
   applyActualCarrierNames,
+  applyCarrierExclusions,
   customerRateAvailability,
+  carrierIdentityCandidates,
   normalizePackagingType,
   packagingTypeForProvider,
   resolveActualCarrierName
@@ -350,6 +352,38 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/carrier-preferences") {
+    requireStaff(currentUser);
+    const customerId = await addressBookCustomerIdForRequest(currentUser, url.searchParams.get("customerId"));
+    const preferences = await store.listCarrierPreferences({ customerId });
+    sendJson(res, 200, { preferences });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/carrier-preferences") {
+    requireStaff(currentUser);
+    const input = await readJson(req);
+    const customerId = await addressBookCustomerIdForRequest(currentUser, input.customerId);
+    const preference = await store.createCarrierPreference({
+      customerId,
+      carrierKey: requiredString(input.carrierKey || input.carrierName, "carrierKey"),
+      carrierName: requiredString(input.carrierName || input.carrierKey, "carrierName"),
+      preference: input.preference === "preferred" ? "preferred" : "blocked",
+      reason: String(input.reason || "").trim() || null,
+      createdByUserId: currentUser.id
+    });
+    sendJson(res, 201, { preference });
+    return;
+  }
+
+  const carrierPreferenceMatch = url.pathname.match(/^\/api\/carrier-preferences\/([^/]+)$/);
+  if (carrierPreferenceMatch && req.method === "DELETE") {
+    requireStaff(currentUser);
+    await store.deleteCarrierPreference(carrierPreferenceMatch[1]);
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
   if (req.method === "POST" && url.pathname === "/api/quotes") {
     await createQuote(req, res, currentUser);
     return;
@@ -463,6 +497,7 @@ async function createQuote(req, res, currentUser) {
   }
 
   const tariffs = await store.listTariffs(customer.id);
+  const carrierPreferences = await store.listCarrierPreferences({ customerId: customer.id });
   const tariffRule = tariffs.find((rule) => rule.status === "active") || defaultTariffRule(customer.id);
   const referenceNumber = requiredString(input.referenceNumber, "referenceNumber");
   const allowedCarrierModes = normalizeAllowedCarrierModes(customer.allowedCarrierModes);
@@ -505,10 +540,23 @@ async function createQuote(req, res, currentUser) {
       ...pricing
     };
     });
-  const carrierNotice = normalizedRates.length === 0 ? carrierMessage || "Carrier returned no rates for this lane." : "";
-  const rateAvailability = customerRateAvailability(carrierRuns, normalizedRates);
+  const exclusionResult = applyCarrierExclusions(normalizedRates, carrierPreferences);
+  const visibleRates = exclusionResult.allowedRates;
+  const carrierNotice = visibleRates.length === 0
+    ? exclusionResult.blockedRates.length > 0 && normalizedRates.length > 0
+      ? "No rates are available based on your current carrier preferences."
+      : carrierMessage || "Carrier returned no rates for this lane."
+    : "";
+  const rateAvailability = visibleRates.length === 0 && exclusionResult.blockedRates.length > 0 && normalizedRates.length > 0
+    ? { status: "none", messageCode: "NO_RATES_AVAILABLE_BY_PREFERENCE" }
+    : customerRateAvailability(carrierRuns, visibleRates);
+  const carrierExclusionAudit = exclusionResult.blockedRates.map((blocked) => ({
+    carrierName: blocked.carrierName,
+    carrierKey: blocked.carrierKey,
+    reason: blocked.reason
+  }));
 
-  if (normalizedRates.length === 0) {
+  if (visibleRates.length === 0) {
     const quote = {
       id: createId("quote"),
       customerId: customer.id,
@@ -528,6 +576,7 @@ async function createQuote(req, res, currentUser) {
         status: "carrier_connected_no_rates",
         carrierMessage: carrierNotice,
         carrierAudit,
+        carrierExclusionAudit,
         rawCarrierResponse: carrierRuns,
         customerOrganizationId: organizationContext?.customerOrganizationId || null,
         agentOrganizationId: organizationContext?.agentOrganizationId || null,
@@ -555,11 +604,12 @@ async function createQuote(req, res, currentUser) {
     freight: canonicalFreight,
     pickupReadyDate: mothershipRequest.pickupReadyDate,
       tariffRule,
-      rates: normalizedRates,
+      rates: visibleRates,
       rateAvailability,
       status: "quoted",
       carrierMessage: carrierNotice,
       carrierAudit,
+      carrierExclusionAudit,
       rawCarrierResponse: carrierRuns,
       customerOrganizationId: organizationContext?.customerOrganizationId || null,
       agentOrganizationId: organizationContext?.agentOrganizationId || null,
@@ -590,6 +640,14 @@ async function createShipment(req, res, currentUser) {
   const rate = quote.rates.find((item) => item.id === input.rateId);
   if (!rate) {
     sendJson(res, 404, { error: "RATE_NOT_FOUND", message: "Selected rate was not found." });
+    return;
+  }
+  const bookingPreferences = await store.listCarrierPreferences({ customerId: quote.customerId });
+  if (applyCarrierExclusions([rate], bookingPreferences).blockedRates.length > 0) {
+    sendJson(res, 403, {
+      error: "CARRIER_BLOCKED",
+      message: "This carrier is not available for this customer."
+    });
     return;
   }
 
