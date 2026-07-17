@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { createAppStore } from "./store.js";
+import { buildPublicUser } from "./server/auth/public-user.js";
 import {
   isMothershipPickupReadyBeforeOpenFailure,
   mothershipPickupReadyBeforeOpenMessage,
@@ -219,7 +220,7 @@ async function handleApi(req, res, url) {
       return;
     }
 
-    sendJson(res, 200, { user: publicUser(currentUser) });
+    sendJson(res, 200, { user: await publicUserWithOrganizationContext(currentUser) });
     return;
   }
 
@@ -415,6 +416,7 @@ async function createQuote(req, res, currentUser) {
   const tariffRule = tariffs.find((rule) => rule.status === "active") || defaultTariffRule(customer.id);
   const referenceNumber = requiredString(input.referenceNumber, "referenceNumber");
   const allowedCarrierModes = normalizeAllowedCarrierModes(customer.allowedCarrierModes);
+  const organizationContext = await store.getOrganizationContextForUser(currentUser);
   validatePickupTimesForQuote(input);
   const mothershipRequest = buildMothershipQuoteRequest(input);
   const speedshipRequests = buildSpeedshipLtlQuoteRequests(input);
@@ -474,6 +476,10 @@ async function createQuote(req, res, currentUser) {
         carrierMessage: carrierNotice,
         carrierAudit,
         rawCarrierResponse: carrierRuns,
+        customerOrganizationId: organizationContext?.customerOrganizationId || null,
+        agentOrganizationId: organizationContext?.agentOrganizationId || null,
+        createdByUserId: currentUser.id,
+        createdByOrganizationId: organizationContext?.organizationId || null,
         createdAt: new Date().toISOString()
       };
 
@@ -501,6 +507,10 @@ async function createQuote(req, res, currentUser) {
       carrierMessage: carrierNotice,
       carrierAudit,
       rawCarrierResponse: carrierRuns,
+      customerOrganizationId: organizationContext?.customerOrganizationId || null,
+      agentOrganizationId: organizationContext?.agentOrganizationId || null,
+      createdByUserId: currentUser.id,
+      createdByOrganizationId: organizationContext?.organizationId || null,
       createdAt: new Date().toISOString()
     };
 
@@ -511,6 +521,7 @@ async function createQuote(req, res, currentUser) {
 async function createShipment(req, res, currentUser) {
   const input = await readJson(req);
   const quote = await store.getQuote(input.quoteId);
+  const organizationContext = await store.getOrganizationContextForUser(currentUser);
 
   if (!quote) {
     sendJson(res, 404, { error: "QUOTE_NOT_FOUND", message: "Quote was not found." });
@@ -647,6 +658,10 @@ async function createShipment(req, res, currentUser) {
     status: shouldBookCarrier ? "booked_with_carrier" : "local_booking",
     pickupDate: quote.pickupReadyDate,
     carrierShipment,
+    customerOrganizationId: quote.customerOrganizationId || organizationContext?.customerOrganizationId || null,
+    agentOrganizationId: quote.agentOrganizationId || organizationContext?.agentOrganizationId || null,
+    createdByUserId: currentUser.id,
+    createdByOrganizationId: organizationContext?.organizationId || null,
     createdAt: new Date().toISOString()
   };
 
@@ -659,6 +674,8 @@ async function createShipment(req, res, currentUser) {
     status: "draft",
     issuedAt: null,
     dueAt: null,
+    customerOrganizationId: quote.customerOrganizationId || organizationContext?.customerOrganizationId || null,
+    agentOrganizationId: quote.agentOrganizationId || organizationContext?.agentOrganizationId || null,
     createdAt: new Date().toISOString()
   };
 
@@ -3431,7 +3448,7 @@ async function login(req, res) {
     expiresAt
   });
   setSessionCookie(res, sessionToken, expiresAt);
-  sendJson(res, 200, { user: publicUser(user) });
+  sendJson(res, 200, { user: await publicUserWithOrganizationContext(user) });
 }
 
 async function logout(req, res) {
@@ -3475,13 +3492,11 @@ function isInternalUser(user) {
 }
 
 function publicUser(user) {
-  return {
-    id: user.id,
-    email: user.email,
-    role: user.role,
-    customerId: user.customerId || null,
-    status: user.status
-  };
+  return buildPublicUser(user);
+}
+
+async function publicUserWithOrganizationContext(user) {
+  return buildPublicUser(user, await store.getOrganizationContextForUser(user));
 }
 
 function quoteForUser(quote, user, customer = null) {

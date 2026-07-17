@@ -28,6 +28,35 @@ Use PostgreSQL locally by setting `DATABASE_URL` in `.env.local`. The app will a
 
 If you are still setting up PostgreSQL, the app can temporarily fall back to `.local-db.json`, but that should only be a bridge while you get the database running.
 
+## Organization Compatibility Layer
+
+The app now starts with an additive Phase 1 organization migration for both PostgreSQL and the JSON fallback. It creates:
+
+- `organizations`
+- `organization_users`
+- `agent_customer_relationships`
+
+It also backfills nullable organization ownership fields onto quotes, shipments, and invoices while keeping legacy `customer_id` and `role` fields in place. Current production behavior still uses the legacy fields for authorization during Phase 1.
+
+`/api/me` continues returning the existing user fields and now also includes:
+
+```json
+{
+  "organizationContext": {
+    "organizationId": "org_...",
+    "organizationType": "internal",
+    "role": "admin",
+    "customerOrganizationId": null,
+    "agentOrganizationId": null,
+    "source": "membership"
+  }
+}
+```
+
+The startup log prints an `Organization migration summary` with created, updated, skipped, and unresolved counts. Unresolved records have missing or invalid legacy customer ownership and should be reviewed internally. The migration is safe to run repeatedly and should not create duplicates.
+
+Rollback during Phase 1 means ignoring `organizationContext` and continuing to use the existing legacy fields. Do not remove the new tables or fields until the compatibility period is complete.
+
 ## Local Sign-In
 
 The app now starts on a login screen.

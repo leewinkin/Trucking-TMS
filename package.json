@@ -7,9 +7,9 @@
     "pg": "^8.13.1"
   },
   "scripts": {
-    "build": "rm -rf dist && mkdir -p dist/server/public dist/.openai && cp server.js dist/server/index.js && cp store.js dist/server/store.js && cp -R public/. dist/server/public/ && cp .openai/hosting.json dist/.openai/hosting.json",
+    "build": "rm -rf dist && mkdir -p dist/server/public dist/.openai && cp server.js dist/server/index.js && cp store.js dist/server/store.js && cp -R server dist/server/server && cp -R public/. dist/server/public/ && cp .openai/hosting.json dist/.openai/hosting.json",
     "dev": "node server.js",
     "start": "node server.js",
-    "test": "node tests/quote-time-validation.test.js"
+    "test": "node tests/quote-time-validation.test.js && node tests/organization-migration.test.js"
   }
 }

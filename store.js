@@ -2,15 +2,23 @@ import { existsSync } from "node:fs";
 import crypto from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { resolveOrganizationContextForUser } from "./server/auth/context.js";
+import {
+  createOrganizationMigrationSummary,
+  customerOrganizationIdByLegacyCustomerId,
+  internalLegacyRoles,
+  internalOrganizationName,
+  migrateJsonOrganizations
+} from "./server/migrations/organizations.js";
 
 const __dirname = process.cwd();
 
 export async function createAppStore({ dbUrl, dataFile }) {
   if (dbUrl) {
-    return createPostgresStore(dbUrl);
+    return await createPostgresStore(dbUrl);
   }
 
-  return createJsonStore(resolveDataFilePath(dataFile));
+  return await createJsonStore(resolveDataFilePath(dataFile));
 }
 
 function resolveDataFilePath(value) {
@@ -32,9 +40,17 @@ async function createPostgresStore(dbUrl) {
   await pool.query("SELECT 1");
   await ensureSchema(pool);
   await seedPostgres(pool);
+  const organizationMigrationSummary = await migratePostgresOrganizations(pool);
+  console.log("Organization migration summary", organizationMigrationSummary);
 
   return {
     kind: "postgres",
+    async getOrganizationMigrationSummary() {
+      return organizationMigrationSummary;
+    },
+    async getOrganizationContextForUser(user) {
+      return getPostgresOrganizationContextForUser(pool, user);
+    },
     async listCustomers() {
       const { rows } = await pool.query(
         `SELECT c.*, u.email AS portal_email
@@ -101,6 +117,21 @@ async function createPostgresStore(dbUrl) {
         );
 
         const customer = customerResult.rows[0];
+        const customerOrganizationId = createId("org");
+        await client.query(
+          `INSERT INTO organizations (id, type, name, status, legacy_customer_id, billing_email, phone, created_at, updated_at)
+           VALUES ($1, 'customer', $2, $3, $4, $5, $6, $7, $7)
+           ON CONFLICT DO NOTHING`,
+          [
+            customerOrganizationId,
+            customer.company_name || customer.id,
+            customer.status,
+            customer.id,
+            customer.billing_email || null,
+            customer.company_phone || null,
+            nowIso()
+          ]
+        );
         await client.query(
           `INSERT INTO tariff_rules
            (id, customer_id, rule_type, fixed_amount, markup_percentage, status, created_at)
@@ -121,12 +152,24 @@ async function createPostgresStore(dbUrl) {
           if (!password) {
             throw new Error("PORTAL_PASSWORD_REQUIRED");
           }
-          await insertUser(client, {
+          const portalUser = await insertUser(client, {
             email: input.portalEmail,
             password,
             role: "customer",
             customerId: customer.id
           });
+          await client.query(
+            `INSERT INTO organization_users (id, organization_id, user_id, role, status, created_at, updated_at)
+             VALUES ($1, $2, $3, 'customer_admin', $4, $5, $5)
+             ON CONFLICT DO NOTHING`,
+            [
+              createId("orguser"),
+              customerOrganizationId,
+              portalUser.id,
+              portalUser.status === "disabled" ? "disabled" : "active",
+              nowIso()
+            ]
+          );
         }
 
         await client.query("COMMIT");
@@ -360,10 +403,11 @@ async function createPostgresStore(dbUrl) {
       return rows[0] ? mapQuoteRow(rows[0]) : null;
     },
     async createQuote(quote) {
+      const customerOrganizationId = quote.customerOrganizationId || await getPostgresCustomerOrganizationId(pool, quote.customerId);
       const result = await pool.query(
         `INSERT INTO quotes
-         (id, customer_id, customer_name, carrier_mode, carrier_modes, carrier, carrier_quote_id, reference_number, pickup, delivery, freight, pickup_ready_date, tariff_rule, rates, status, carrier_message, carrier_audit, raw_carrier_response, created_at)
-         VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9::jsonb, $10::jsonb, $11::jsonb, $12::jsonb, $13::jsonb, $14::jsonb, $15, $16, $17::jsonb, $18::jsonb, $19)
+         (id, customer_id, customer_name, carrier_mode, carrier_modes, carrier, carrier_quote_id, reference_number, pickup, delivery, freight, pickup_ready_date, tariff_rule, rates, status, carrier_message, carrier_audit, raw_carrier_response, created_at, customer_organization_id, agent_organization_id, created_by_user_id, created_by_organization_id)
+         VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9::jsonb, $10::jsonb, $11::jsonb, $12::jsonb, $13::jsonb, $14::jsonb, $15, $16, $17::jsonb, $18::jsonb, $19, $20, $21, $22, $23)
          RETURNING *`,
         [
           quote.id,
@@ -384,7 +428,11 @@ async function createPostgresStore(dbUrl) {
           quote.carrierMessage || "",
           JSON.stringify(quote.carrierAudit || []),
           JSON.stringify(quote.rawCarrierResponse),
-          quote.createdAt
+          quote.createdAt,
+          customerOrganizationId || null,
+          quote.agentOrganizationId || null,
+          quote.createdByUserId || null,
+          quote.createdByOrganizationId || null
         ]
       );
       return mapQuoteRow(result.rows[0]);
@@ -408,11 +456,33 @@ async function createPostgresStore(dbUrl) {
         if (quoteUpdate.rowCount === 0) {
           throw new Error("QUOTE_NOT_FOUND");
         }
+        const ownershipResult = await client.query(
+          `SELECT q.customer_organization_id,
+                  q.agent_organization_id,
+                  q.created_by_user_id,
+                  q.created_by_organization_id,
+                  o.id AS mapped_customer_organization_id
+           FROM quotes q
+           LEFT JOIN organizations o
+             ON o.type = 'customer' AND o.legacy_customer_id = q.customer_id
+           WHERE q.id = $1`,
+          [payload.quoteId]
+        );
+        const ownership = ownershipResult.rows[0] || {};
+        const customerOrganizationId =
+          payload.shipment.customerOrganizationId ||
+          ownership.customer_organization_id ||
+          ownership.mapped_customer_organization_id ||
+          null;
+        const agentOrganizationId = payload.shipment.agentOrganizationId || ownership.agent_organization_id || null;
+        const createdByUserId = payload.shipment.createdByUserId || ownership.created_by_user_id || null;
+        const createdByOrganizationId =
+          payload.shipment.createdByOrganizationId || ownership.created_by_organization_id || null;
 
         const shipmentResult = await client.query(
           `INSERT INTO shipments
-           (id, customer_id, customer_name, quote_id, carrier, carrier_name, carrier_shipment_id, carrier_entity_id, confirmation_number, reference_number, pickup, delivery, freight, carrier_cost, sell_price, margin, provider, service, status, pickup_date, carrier_shipment, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13::jsonb, $14, $15, $16, $17, $18, $19, $20::jsonb, $21::jsonb, $22)
+           (id, customer_id, customer_name, quote_id, carrier, carrier_name, carrier_shipment_id, carrier_entity_id, confirmation_number, reference_number, pickup, delivery, freight, carrier_cost, sell_price, margin, provider, service, status, pickup_date, carrier_shipment, created_at, customer_organization_id, agent_organization_id, created_by_user_id, created_by_organization_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13::jsonb, $14, $15, $16, $17, $18, $19, $20::jsonb, $21::jsonb, $22, $23, $24, $25, $26)
            RETURNING *`,
           [
             payload.shipment.id,
@@ -436,14 +506,18 @@ async function createPostgresStore(dbUrl) {
             payload.shipment.status,
             JSON.stringify(payload.shipment.pickupDate),
             JSON.stringify(payload.shipment.carrierShipment),
-            payload.shipment.createdAt
+            payload.shipment.createdAt,
+            customerOrganizationId,
+            agentOrganizationId,
+            createdByUserId,
+            createdByOrganizationId
           ]
         );
 
         const invoiceResult = await client.query(
           `INSERT INTO invoices
-           (shipment_id, customer_id, customer_name, reference_number, amount, status, issued_at, due_at, created_at, carrier_entity_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+           (shipment_id, customer_id, customer_name, reference_number, amount, status, issued_at, due_at, created_at, carrier_entity_id, customer_organization_id, agent_organization_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
            RETURNING *`,
           [
             shipmentResult.rows[0].id,
@@ -455,7 +529,9 @@ async function createPostgresStore(dbUrl) {
             payload.invoice.issuedAt,
             payload.invoice.dueAt,
             payload.invoice.createdAt,
-            payload.shipment.carrierEntityId || null
+            payload.shipment.carrierEntityId || null,
+            payload.invoice.customerOrganizationId || customerOrganizationId,
+            payload.invoice.agentOrganizationId || agentOrganizationId
           ]
         );
 
@@ -498,6 +574,7 @@ async function createPostgresStore(dbUrl) {
           );
 
           if (existing.rowCount > 0) {
+            const customerOrganizationId = invoice.customerOrganizationId || await getPostgresCustomerOrganizationId(client, invoice.customerId);
             await client.query(
               `UPDATE invoices
                SET shipment_id = $2,
@@ -515,7 +592,9 @@ async function createPostgresStore(dbUrl) {
                    carrier_shipment_id = $14,
                    carrier_entity_id = $15,
                    raw_carrier_response = $16::jsonb,
-                   synced_at = $17
+                   synced_at = $17,
+                   customer_organization_id = COALESCE($18, customer_organization_id),
+                   agent_organization_id = COALESCE($19, agent_organization_id)
                WHERE external_invoice_id = $1`,
               [
                 invoice.externalInvoiceId,
@@ -534,17 +613,20 @@ async function createPostgresStore(dbUrl) {
                 invoice.carrierShipmentId || null,
                 invoice.carrierEntityId || null,
                 JSON.stringify(invoice.rawCarrierResponse || {}),
-                invoice.syncedAt || nowIso()
+                invoice.syncedAt || nowIso(),
+                customerOrganizationId || null,
+                invoice.agentOrganizationId || null
               ]
             );
             summary.updated += 1;
             continue;
           }
 
+          const customerOrganizationId = invoice.customerOrganizationId || await getPostgresCustomerOrganizationId(client, invoice.customerId);
           await client.query(
             `INSERT INTO invoices
-             (shipment_id, customer_id, customer_name, invoice_number, reference_number, amount, status, issued_at, due_at, created_at, source, external_invoice_id, carrier_name, carrier_shipment_id, carrier_entity_id, raw_carrier_response, synced_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb, $17)`,
+             (shipment_id, customer_id, customer_name, invoice_number, reference_number, amount, status, issued_at, due_at, created_at, source, external_invoice_id, carrier_name, carrier_shipment_id, carrier_entity_id, raw_carrier_response, synced_at, customer_organization_id, agent_organization_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb, $17, $18, $19)`,
             [
               invoice.shipmentId || null,
               invoice.customerId || null,
@@ -562,7 +644,9 @@ async function createPostgresStore(dbUrl) {
               invoice.carrierShipmentId || null,
               invoice.carrierEntityId || null,
               JSON.stringify(invoice.rawCarrierResponse || {}),
-              invoice.syncedAt || nowIso()
+              invoice.syncedAt || nowIso(),
+              customerOrganizationId || null,
+              invoice.agentOrganizationId || null
             ]
           );
           summary.created += 1;
@@ -720,6 +804,34 @@ async function ensureSchema(pool) {
       expires_at timestamptz NOT NULL,
       created_at timestamptz NOT NULL DEFAULT now()
     )`,
+    `CREATE TABLE IF NOT EXISTS organizations (
+      id text PRIMARY KEY,
+      type text NOT NULL,
+      name text NOT NULL,
+      status text NOT NULL DEFAULT 'active',
+      legacy_customer_id text,
+      billing_email text,
+      phone text,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )`,
+    `CREATE TABLE IF NOT EXISTS organization_users (
+      id text PRIMARY KEY,
+      organization_id text NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      role text NOT NULL,
+      status text NOT NULL DEFAULT 'active',
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )`,
+    `CREATE TABLE IF NOT EXISTS agent_customer_relationships (
+      id text PRIMARY KEY,
+      agent_organization_id text NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      customer_organization_id text NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      status text NOT NULL DEFAULT 'active',
+      created_at timestamptz NOT NULL DEFAULT now(),
+      ended_at timestamptz
+    )`,
       `CREATE TABLE IF NOT EXISTS quotes (
       id text PRIMARY KEY,
       customer_id text NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
@@ -799,9 +911,17 @@ async function ensureSchema(pool) {
     "ALTER TABLE quotes ADD COLUMN IF NOT EXISTS carrier_modes jsonb NOT NULL DEFAULT '[]'::jsonb",
     "ALTER TABLE quotes ADD COLUMN IF NOT EXISTS carrier_message text NOT NULL DEFAULT ''",
     "ALTER TABLE quotes ADD COLUMN IF NOT EXISTS carrier_audit jsonb NOT NULL DEFAULT '[]'::jsonb",
+    "ALTER TABLE quotes ADD COLUMN IF NOT EXISTS customer_organization_id text REFERENCES organizations(id)",
+    "ALTER TABLE quotes ADD COLUMN IF NOT EXISTS agent_organization_id text REFERENCES organizations(id)",
+    "ALTER TABLE quotes ADD COLUMN IF NOT EXISTS created_by_user_id text REFERENCES users(id)",
+    "ALTER TABLE quotes ADD COLUMN IF NOT EXISTS created_by_organization_id text REFERENCES organizations(id)",
     "ALTER TABLE shipments ADD COLUMN IF NOT EXISTS reference_number text NOT NULL DEFAULT ''",
     "ALTER TABLE shipments ADD COLUMN IF NOT EXISTS carrier_name text NOT NULL DEFAULT ''",
     "ALTER TABLE shipments ADD COLUMN IF NOT EXISTS carrier_entity_id text",
+    "ALTER TABLE shipments ADD COLUMN IF NOT EXISTS customer_organization_id text REFERENCES organizations(id)",
+    "ALTER TABLE shipments ADD COLUMN IF NOT EXISTS agent_organization_id text REFERENCES organizations(id)",
+    "ALTER TABLE shipments ADD COLUMN IF NOT EXISTS created_by_user_id text REFERENCES users(id)",
+    "ALTER TABLE shipments ADD COLUMN IF NOT EXISTS created_by_organization_id text REFERENCES organizations(id)",
     "ALTER TABLE invoices ALTER COLUMN shipment_id DROP NOT NULL",
     "ALTER TABLE invoices ALTER COLUMN customer_id DROP NOT NULL",
     "ALTER TABLE invoices ALTER COLUMN customer_name SET DEFAULT ''",
@@ -813,15 +933,26 @@ async function ensureSchema(pool) {
     "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS carrier_entity_id text",
     "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS raw_carrier_response jsonb NOT NULL DEFAULT '{}'::jsonb",
     "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS synced_at timestamptz",
+    "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS customer_organization_id text REFERENCES organizations(id)",
+    "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS agent_organization_id text REFERENCES organizations(id)",
     "CREATE INDEX IF NOT EXISTS idx_tariff_rules_customer_id ON tariff_rules(customer_id)",
     "CREATE INDEX IF NOT EXISTS idx_quotes_customer_id ON quotes(customer_id)",
+    "CREATE INDEX IF NOT EXISTS idx_quotes_customer_organization_id ON quotes(customer_organization_id)",
     "CREATE INDEX IF NOT EXISTS idx_shipments_customer_id ON shipments(customer_id)",
+    "CREATE INDEX IF NOT EXISTS idx_shipments_customer_organization_id ON shipments(customer_organization_id)",
     "CREATE INDEX IF NOT EXISTS idx_shipments_quote_id ON shipments(quote_id)",
     "CREATE INDEX IF NOT EXISTS idx_tracking_events_shipment_id ON tracking_events(shipment_id)",
     "CREATE INDEX IF NOT EXISTS idx_invoices_shipment_id ON invoices(shipment_id)",
+    "CREATE INDEX IF NOT EXISTS idx_invoices_customer_organization_id ON invoices(customer_organization_id)",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_external_invoice_id ON invoices(external_invoice_id)",
     "CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash)",
-    "CREATE INDEX IF NOT EXISTS idx_users_customer_id ON users(customer_id)"
+    "CREATE INDEX IF NOT EXISTS idx_users_customer_id ON users(customer_id)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_organizations_internal_once ON organizations(type) WHERE type = 'internal'",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_organizations_customer_legacy ON organizations(legacy_customer_id) WHERE type = 'customer' AND legacy_customer_id IS NOT NULL",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_organization_users_one_active ON organization_users(user_id) WHERE status = 'active'",
+    "CREATE INDEX IF NOT EXISTS idx_organization_users_organization_id ON organization_users(organization_id)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_customer_relationships_agent ON agent_customer_relationships(agent_organization_id)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_customer_relationships_customer ON agent_customer_relationships(customer_organization_id)"
   ];
 
   for (const statement of statements) {
@@ -915,9 +1046,300 @@ async function seedPostgresUsers(pool) {
   }
 }
 
-function createJsonStore(filePath) {
+async function migratePostgresOrganizations(pool) {
+  const summary = createOrganizationMigrationSummary();
+  const now = nowIso();
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+    const internalResult = await client.query("SELECT * FROM organizations WHERE type = 'internal' ORDER BY created_at ASC");
+    let internalOrganization = internalResult.rows[0] || null;
+    if (!internalOrganization) {
+      const created = await client.query(
+        `INSERT INTO organizations (id, type, name, status, legacy_customer_id, billing_email, phone, created_at, updated_at)
+         VALUES ($1, 'internal', $2, 'active', NULL, NULL, NULL, $3, $3)
+         RETURNING *`,
+        ["org_internal", internalOrganizationName, now]
+      );
+      internalOrganization = created.rows[0];
+      markPostgresCreated(summary, "organizationsCreated");
+    } else if (internalResult.rows.length > 1) {
+      markPostgresUnresolved(summary, "organizations", "internal", "Multiple internal organizations exist.");
+    } else {
+      markPostgresSkipped(summary);
+    }
+
+    const customers = await client.query("SELECT * FROM customers ORDER BY created_at ASC");
+    for (const customer of customers.rows) {
+      const existing = await client.query(
+        "SELECT * FROM organizations WHERE type = 'customer' AND legacy_customer_id = $1 LIMIT 1",
+        [customer.id]
+      );
+      if (existing.rowCount === 0) {
+        await client.query(
+          `INSERT INTO organizations (id, type, name, status, legacy_customer_id, billing_email, phone, created_at, updated_at)
+           VALUES ($1, 'customer', $2, $3, $4, $5, $6, $7, $8)`,
+          [
+            createId("org"),
+            customer.company_name || customer.id,
+            customer.status === "disabled" ? "disabled" : "active",
+            customer.id,
+            customer.billing_email || null,
+            customer.company_phone || null,
+            customer.created_at || now,
+            now
+          ]
+        );
+        markPostgresCreated(summary, "organizationsCreated");
+        continue;
+      }
+
+      const updated = await client.query(
+        `UPDATE organizations
+         SET name = $2,
+             status = $3,
+             billing_email = $4,
+             phone = $5,
+             updated_at = $6
+         WHERE id = $1
+           AND (
+             name IS DISTINCT FROM $2 OR
+             status IS DISTINCT FROM $3 OR
+             billing_email IS DISTINCT FROM $4 OR
+             phone IS DISTINCT FROM $5
+           )`,
+        [
+          existing.rows[0].id,
+          customer.company_name || customer.id,
+          customer.status === "disabled" ? "disabled" : "active",
+          customer.billing_email || null,
+          customer.company_phone || null,
+          now
+        ]
+      );
+      if (updated.rowCount > 0) {
+        markPostgresUpdated(summary);
+      } else {
+        markPostgresSkipped(summary);
+      }
+    }
+
+    const customerOrganizations = await client.query(
+      "SELECT id, legacy_customer_id FROM organizations WHERE type = 'customer' AND legacy_customer_id IS NOT NULL"
+    );
+    const customerOrganizationByLegacyId = new Map(
+      customerOrganizations.rows.map((row) => [row.legacy_customer_id, row.id])
+    );
+    const users = await client.query("SELECT * FROM users ORDER BY created_at ASC");
+    for (const user of users.rows) {
+      const target = postgresOrganizationTargetForLegacyUser(user, internalOrganization, customerOrganizationByLegacyId);
+      if (!target?.organizationId) {
+        markPostgresUnresolved(summary, "users", user.id, "User cannot be mapped to an organization.");
+        continue;
+      }
+
+      const activeMemberships = await client.query(
+        "SELECT * FROM organization_users WHERE user_id = $1 AND status = 'active' ORDER BY created_at ASC",
+        [user.id]
+      );
+      if (activeMemberships.rowCount > 1) {
+        markPostgresUnresolved(summary, "organization_users", user.id, "User has multiple active organization memberships.");
+        continue;
+      }
+      if (activeMemberships.rowCount === 1 && activeMemberships.rows[0].organization_id !== target.organizationId) {
+        markPostgresUnresolved(summary, "organization_users", user.id, "User already has an active membership in another organization.");
+        continue;
+      }
+
+      if (activeMemberships.rowCount === 0) {
+        await client.query(
+          `INSERT INTO organization_users (id, organization_id, user_id, role, status, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $6)`,
+          [
+            createId("orguser"),
+            target.organizationId,
+            user.id,
+            target.role,
+            user.status === "disabled" ? "disabled" : "active",
+            now
+          ]
+        );
+        markPostgresCreated(summary, "membershipsCreated");
+        continue;
+      }
+
+      const membership = activeMemberships.rows[0];
+      const updated = await client.query(
+        `UPDATE organization_users
+         SET role = $2,
+             status = $3,
+             updated_at = $4
+         WHERE id = $1
+           AND (role IS DISTINCT FROM $2 OR status IS DISTINCT FROM $3)`,
+        [
+          membership.id,
+          target.role,
+          user.status === "disabled" ? "disabled" : "active",
+          now
+        ]
+      );
+      if (updated.rowCount > 0) {
+        markPostgresUpdated(summary);
+      } else {
+        markPostgresSkipped(summary);
+      }
+    }
+
+    await backfillPostgresOrganizationOwnership(client, summary);
+    await client.query("COMMIT");
+    return summary;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function getPostgresCustomerOrganizationId(queryable, legacyCustomerId) {
+  const id = String(legacyCustomerId || "").trim();
+  if (!id) {
+    return "";
+  }
+  const { rows } = await queryable.query(
+    "SELECT id FROM organizations WHERE type = 'customer' AND legacy_customer_id = $1 LIMIT 1",
+    [id]
+  );
+  return rows[0]?.id || "";
+}
+
+function postgresOrganizationTargetForLegacyUser(user, internalOrganization, customerOrganizationByLegacyId) {
+  if (internalLegacyRoles.has(user.role)) {
+    return {
+      organizationId: internalOrganization?.id || "",
+      role: user.role
+    };
+  }
+  if (user.role === "customer") {
+    return {
+      organizationId: customerOrganizationByLegacyId.get(user.customer_id) || "",
+      role: "customer_admin"
+    };
+  }
+  return null;
+}
+
+async function backfillPostgresOrganizationOwnership(client, summary) {
+  const quoteUpdate = await client.query(
+    `UPDATE quotes q
+     SET customer_organization_id = o.id
+     FROM organizations o
+     WHERE o.type = 'customer'
+       AND o.legacy_customer_id = q.customer_id
+       AND q.customer_organization_id IS NULL`
+  );
+  markPostgresBackfilled(summary, quoteUpdate.rowCount);
+
+  const shipmentUpdate = await client.query(
+    `UPDATE shipments s
+     SET customer_organization_id = o.id
+     FROM organizations o
+     WHERE o.type = 'customer'
+       AND o.legacy_customer_id = s.customer_id
+       AND s.customer_organization_id IS NULL`
+  );
+  markPostgresBackfilled(summary, shipmentUpdate.rowCount);
+
+  const invoiceUpdate = await client.query(
+    `UPDATE invoices i
+     SET customer_organization_id = o.id
+     FROM organizations o
+     WHERE o.type = 'customer'
+       AND o.legacy_customer_id = i.customer_id
+       AND i.customer_organization_id IS NULL`
+  );
+  markPostgresBackfilled(summary, invoiceUpdate.rowCount);
+
+  await reportUnresolvedPostgresOwnership(client, summary, "quotes");
+  await reportUnresolvedPostgresOwnership(client, summary, "shipments");
+  await reportUnresolvedPostgresOwnership(client, summary, "invoices");
+}
+
+async function reportUnresolvedPostgresOwnership(client, summary, table) {
+  const result = await client.query(
+    `SELECT record.id
+     FROM ${table} record
+     WHERE record.customer_organization_id IS NULL
+       AND (
+         record.customer_id IS NULL OR
+         NOT EXISTS (
+           SELECT 1
+           FROM organizations o
+           WHERE o.type = 'customer'
+             AND o.legacy_customer_id = record.customer_id
+         )
+       )
+     LIMIT 100`
+  );
+  for (const row of result.rows) {
+    markPostgresUnresolved(summary, table, row.id, "Record has missing or invalid customer ownership.");
+  }
+}
+
+async function getPostgresOrganizationContextForUser(pool, user) {
+  if (!user?.id) {
+    return null;
+  }
+
+  const memberships = await pool.query(
+    `SELECT id, organization_id, user_id, role, status, created_at, updated_at
+     FROM organization_users
+     WHERE user_id = $1
+     ORDER BY created_at ASC`,
+    [user.id]
+  );
+  const organizations = await pool.query(
+    `SELECT id, type, name, status, legacy_customer_id, billing_email, phone, created_at, updated_at
+     FROM organizations
+     WHERE id = ANY($1::text[])
+        OR type = 'internal'
+        OR legacy_customer_id = $2`,
+    [
+      memberships.rows.map((row) => row.organization_id),
+      user.customerId || user.customer_id || ""
+    ]
+  );
+
+  return resolveOrganizationContextForUser(
+    user,
+    memberships.rows.map(mapOrganizationUserRow),
+    organizations.rows.map(mapOrganizationRow)
+  );
+}
+
+async function createJsonStore(filePath) {
+  const initialDb = await readJsonDb(filePath);
+  const { db: migratedDb, summary: organizationMigrationSummary } = migrateJsonOrganizations(initialDb, {
+    createId,
+    nowIso
+  });
+  await writeJsonDb(filePath, migratedDb);
+  console.log("Organization migration summary", organizationMigrationSummary);
+
   return {
     kind: "json",
+    async getOrganizationMigrationSummary() {
+      return organizationMigrationSummary;
+    },
+    async getOrganizationContextForUser(user) {
+      const db = await readJsonDb(filePath);
+      return resolveOrganizationContextForUser(
+        user,
+        db.organizationUsers.filter((membership) => membership.userId === user?.id),
+        db.organizations
+      );
+    },
     async listCustomers() {
       const db = await readJsonDb(filePath);
       return db.customers.map((customer) => ({
@@ -965,18 +1387,40 @@ function createJsonStore(filePath) {
         createdAt: nowIso()
       };
       db.customers.push(customer);
+      const customerOrganization = {
+        id: createId("org"),
+        type: "customer",
+        name: customer.companyName,
+        status: customer.status,
+        legacyCustomerId: customer.id,
+        billingEmail: customer.billingEmail || null,
+        phone: customer.companyPhone || null,
+        createdAt: customer.createdAt,
+        updatedAt: nowIso()
+      };
+      db.organizations.push(customerOrganization);
       db.tariffRules.push(defaultTariffRule(customer.id));
       if (String(input.portalEmail || "").trim()) {
         const password = String(input.portalPassword || "").trim();
         if (!password) {
           throw new Error("PORTAL_PASSWORD_REQUIRED");
         }
-        db.users.push(createUserRecord({
+        const portalUser = createUserRecord({
           email: input.portalEmail,
           password,
           role: "customer",
           customerId: customer.id
-        }));
+        });
+        db.users.push(portalUser);
+        db.organizationUsers.push({
+          id: createId("orguser"),
+          organizationId: customerOrganization.id,
+          userId: portalUser.id,
+          role: "customer_admin",
+          status: portalUser.status,
+          createdAt: nowIso(),
+          updatedAt: nowIso()
+        });
       }
       await writeJsonDb(filePath, db);
       return {
@@ -1174,9 +1618,19 @@ function createJsonStore(filePath) {
     },
     async createQuote(quote) {
       const db = await readJsonDb(filePath);
-      db.quotes.push(quote);
+      const storedQuote = {
+        ...quote,
+        customerOrganizationId:
+          quote.customerOrganizationId ||
+          customerOrganizationIdByLegacyCustomerId(db.organizations, quote.customerId) ||
+          null,
+        agentOrganizationId: quote.agentOrganizationId || null,
+        createdByUserId: quote.createdByUserId || null,
+        createdByOrganizationId: quote.createdByOrganizationId || null
+      };
+      db.quotes.push(storedQuote);
       await writeJsonDb(filePath, db);
-      return quote;
+      return storedQuote;
     },
     async listShipments() {
       const db = await readJsonDb(filePath);
@@ -1188,7 +1642,22 @@ function createJsonStore(filePath) {
     },
     async createShipment(payload) {
       const db = await readJsonDb(filePath);
-      const shipment = payload.shipment;
+      const quote = db.quotes.find((item) => item.id === payload.quoteId);
+      const customerOrganizationId =
+        payload.shipment.customerOrganizationId ||
+        quote?.customerOrganizationId ||
+        customerOrganizationIdByLegacyCustomerId(db.organizations, payload.shipment.customerId) ||
+        null;
+      const agentOrganizationId = payload.shipment.agentOrganizationId || quote?.agentOrganizationId || null;
+      const createdByUserId = payload.shipment.createdByUserId || quote?.createdByUserId || null;
+      const createdByOrganizationId = payload.shipment.createdByOrganizationId || quote?.createdByOrganizationId || null;
+      const shipment = {
+        ...payload.shipment,
+        customerOrganizationId,
+        agentOrganizationId,
+        createdByUserId,
+        createdByOrganizationId
+      };
         const invoice = {
         id: createId("inv"),
         shipmentId: shipment.id,
@@ -1206,12 +1675,13 @@ function createJsonStore(filePath) {
         carrierName: shipment.carrierName || "",
         carrierEntityId: shipment.carrierEntityId || null,
         rawCarrierResponse: {},
-        syncedAt: null
+        syncedAt: null,
+        customerOrganizationId,
+        agentOrganizationId
       };
 
       db.shipments.push(shipment);
       db.invoices.push(invoice);
-      const quote = db.quotes.find((item) => item.id === payload.quoteId);
       if (quote) {
         quote.status = "booked";
       }
@@ -1254,10 +1724,20 @@ function createJsonStore(filePath) {
           existing.carrierEntityId = invoice.carrierEntityId || null;
           existing.rawCarrierResponse = invoice.rawCarrierResponse || {};
           existing.syncedAt = invoice.syncedAt || nowIso();
+          existing.customerOrganizationId =
+            invoice.customerOrganizationId ||
+            existing.customerOrganizationId ||
+            customerOrganizationIdByLegacyCustomerId(db.organizations, invoice.customerId) ||
+            null;
+          existing.agentOrganizationId = invoice.agentOrganizationId || existing.agentOrganizationId || null;
           summary.updated += 1;
           continue;
         }
 
+        const customerOrganizationId =
+          invoice.customerOrganizationId ||
+          customerOrganizationIdByLegacyCustomerId(db.organizations, invoice.customerId) ||
+          null;
         db.invoices.push({
           id: createId("inv"),
           shipmentId: invoice.shipmentId || null,
@@ -1276,7 +1756,9 @@ function createJsonStore(filePath) {
           carrierShipmentId: invoice.carrierShipmentId || null,
           carrierEntityId: invoice.carrierEntityId || null,
           rawCarrierResponse: invoice.rawCarrierResponse || {},
-          syncedAt: invoice.syncedAt || nowIso()
+          syncedAt: invoice.syncedAt || nowIso(),
+          customerOrganizationId,
+          agentOrganizationId: invoice.agentOrganizationId || null
         });
         summary.created += 1;
       }
@@ -1624,6 +2106,10 @@ function mapQuoteRow(row) {
     carrierMessage: row.carrier_message || "",
     carrierAudit: Array.isArray(row.carrier_audit) ? row.carrier_audit : row.carrier_audit || [],
     rawCarrierResponse: row.raw_carrier_response,
+    customerOrganizationId: row.customer_organization_id || null,
+    agentOrganizationId: row.agent_organization_id || null,
+    createdByUserId: row.created_by_user_id || null,
+    createdByOrganizationId: row.created_by_organization_id || null,
     createdAt: row.created_at
   };
 }
@@ -1651,6 +2137,10 @@ function mapShipmentRow(row) {
     status: row.status,
     pickupDate: row.pickup_date,
     carrierShipment: row.carrier_shipment,
+    customerOrganizationId: row.customer_organization_id || null,
+    agentOrganizationId: row.agent_organization_id || null,
+    createdByUserId: row.created_by_user_id || null,
+    createdByOrganizationId: row.created_by_organization_id || null,
     createdAt: row.created_at
   };
 }
@@ -1674,7 +2164,9 @@ function mapInvoiceRow(row) {
     carrierShipmentId: row.carrier_shipment_id || null,
     carrierEntityId: row.carrier_entity_id || null,
     rawCarrierResponse: row.raw_carrier_response || {},
-    syncedAt: row.synced_at || null
+    syncedAt: row.synced_at || null,
+    customerOrganizationId: row.customer_organization_id || null,
+    agentOrganizationId: row.agent_organization_id || null
   };
 }
 
@@ -1721,12 +2213,73 @@ function mapSessionRow(row) {
   };
 }
 
+function mapOrganizationRow(row) {
+  return {
+    id: row.id,
+    type: row.type,
+    name: row.name,
+    status: row.status,
+    legacyCustomerId: row.legacy_customer_id || null,
+    billingEmail: row.billing_email || null,
+    phone: row.phone || null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function mapOrganizationUserRow(row) {
+  return {
+    id: row.id,
+    organizationId: row.organization_id,
+    userId: row.user_id,
+    role: row.role,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function markPostgresCreated(summary, detailKey) {
+  summary.created += 1;
+  if (detailKey) {
+    summary.details[detailKey] += 1;
+  }
+}
+
+function markPostgresUpdated(summary) {
+  summary.updated += 1;
+}
+
+function markPostgresBackfilled(summary, count) {
+  if (!count) {
+    return;
+  }
+  summary.updated += count;
+  summary.details.recordsBackfilled += count;
+}
+
+function markPostgresSkipped(summary) {
+  summary.skipped += 1;
+}
+
+function markPostgresUnresolved(summary, collection, id, reason) {
+  summary.unresolved += 1;
+  summary.details.unresolvedRecords.push({
+    collection,
+    id: String(id || ""),
+    reason
+  });
+}
+
 function normalizeJsonDb(db) {
   return {
     customers: Array.isArray(db.customers) ? db.customers.map(normalizeCustomerRecord) : [],
     tariffRules: Array.isArray(db.tariffRules) ? db.tariffRules : [],
     users: Array.isArray(db.users) ? db.users : [],
     sessions: Array.isArray(db.sessions) ? db.sessions : [],
+    organizations: Array.isArray(db.organizations) ? db.organizations.map(normalizeOrganizationRecord) : [],
+    organizationUsers: Array.isArray(db.organizationUsers) ? db.organizationUsers.map(normalizeOrganizationUserRecord) : [],
+    agentCustomerRelationships: Array.isArray(db.agentCustomerRelationships) ? db.agentCustomerRelationships : [],
     quotes: Array.isArray(db.quotes) ? db.quotes : [],
     shipments: Array.isArray(db.shipments) ? db.shipments : [],
     invoices: Array.isArray(db.invoices) ? db.invoices : [],
@@ -1746,6 +2299,32 @@ function normalizeCustomerRecord(customer) {
       allowedCarrierModes,
       allowedBooking
     )
+  };
+}
+
+function normalizeOrganizationRecord(organization) {
+  return {
+    id: String(organization?.id || "").trim(),
+    type: String(organization?.type || "").trim(),
+    name: String(organization?.name || "").trim(),
+    status: organization?.status === "disabled" ? "disabled" : "active",
+    legacyCustomerId: organization?.legacyCustomerId || organization?.legacy_customer_id || null,
+    billingEmail: organization?.billingEmail || organization?.billing_email || null,
+    phone: organization?.phone || null,
+    createdAt: organization?.createdAt || organization?.created_at || nowIso(),
+    updatedAt: organization?.updatedAt || organization?.updated_at || nowIso()
+  };
+}
+
+function normalizeOrganizationUserRecord(membership) {
+  return {
+    id: String(membership?.id || "").trim(),
+    organizationId: membership?.organizationId || membership?.organization_id || "",
+    userId: membership?.userId || membership?.user_id || "",
+    role: String(membership?.role || "").trim(),
+    status: membership?.status === "disabled" ? "disabled" : "active",
+    createdAt: membership?.createdAt || membership?.created_at || nowIso(),
+    updatedAt: membership?.updatedAt || membership?.updated_at || nowIso()
   };
 }
 
