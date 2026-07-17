@@ -307,6 +307,49 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/address-book") {
+    const customerId = await addressBookCustomerIdForRequest(currentUser, url.searchParams.get("customerId"));
+    const entries = await store.listAddressBookEntries({ customerId });
+    sendJson(res, 200, { entries });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/address-book") {
+    const input = await readJson(req);
+    const customerId = await addressBookCustomerIdForRequest(currentUser, input.customerId);
+    const organizationContext = await store.getOrganizationContextForUser(currentUser);
+    const entry = await store.createAddressBookEntry({
+      ...normalizeAddressBookInput(input),
+      customerId,
+      customerOrganizationId: currentUser.role === "customer" ? organizationContext?.customerOrganizationId || null : input.customerOrganizationId || null,
+      createdByUserId: currentUser.id
+    });
+    sendJson(res, 201, { entry });
+    return;
+  }
+
+  const addressBookMatch = url.pathname.match(/^\/api\/address-book\/([^/]+)$/);
+  if (addressBookMatch && req.method === "PATCH") {
+    const existing = await store.getAddressBookEntry(addressBookMatch[1]);
+    await requireAddressBookAccess(currentUser, existing);
+    const input = await readJson(req);
+    const entry = await store.updateAddressBookEntry(addressBookMatch[1], normalizeAddressBookInput(input));
+    if (!entry) {
+      sendJson(res, 404, { error: "ADDRESS_NOT_FOUND", message: "Saved address was not found." });
+      return;
+    }
+    sendJson(res, 200, { entry });
+    return;
+  }
+
+  if (addressBookMatch && req.method === "DELETE") {
+    const existing = await store.getAddressBookEntry(addressBookMatch[1]);
+    await requireAddressBookAccess(currentUser, existing);
+    await store.deleteAddressBookEntry(addressBookMatch[1]);
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
   if (req.method === "POST" && url.pathname === "/api/quotes") {
     await createQuote(req, res, currentUser);
     return;
@@ -1153,6 +1196,56 @@ function validatePickupTimesForQuote(input) {
     default:
       throw new PublicError(400, "VALIDATION_ERROR", "Enter valid pickup times.");
   }
+}
+
+async function addressBookCustomerIdForRequest(currentUser, requestedCustomerId) {
+  if (currentUser.role === "customer") {
+    if (!currentUser.customerId) {
+      throw new PublicError(403, "FORBIDDEN", "Your user is not linked to a customer account.");
+    }
+    return currentUser.customerId;
+  }
+
+  requireStaff(currentUser);
+  const customerId = requiredString(requestedCustomerId, "customerId");
+  const customer = await store.getCustomer(customerId);
+  if (!customer) {
+    throw new PublicError(404, "CUSTOMER_NOT_FOUND", "Customer was not found.");
+  }
+  return customer.id;
+}
+
+async function requireAddressBookAccess(currentUser, entry) {
+  if (!entry || entry.status !== "active") {
+    throw new PublicError(404, "ADDRESS_NOT_FOUND", "Saved address was not found.");
+  }
+  if (currentUser.role === "customer" && entry.customerId !== currentUser.customerId) {
+    throw new PublicError(404, "ADDRESS_NOT_FOUND", "Saved address was not found.");
+  }
+  if (currentUser.role !== "customer") {
+    requireStaff(currentUser);
+  }
+}
+
+function normalizeAddressBookInput(input = {}) {
+  return {
+    label: String(input.label || input.nickname || "").trim(),
+    usageType: ["pickup", "delivery", "both"].includes(input.usageType) ? input.usageType : "both",
+    companyName: requiredString(input.companyName, "companyName"),
+    contactName: String(input.contactName || "").trim() || null,
+    street: requiredString(input.street, "street"),
+    city: requiredString(input.city, "city"),
+    state: requiredString(input.state, "state").toUpperCase(),
+    zip: requiredString(input.zip, "zip"),
+    country: String(input.country || "US").trim() || "US",
+    phone: normalizePhoneNumber(String(input.phone || ""), "phone"),
+    email: String(input.email || "").trim() || null,
+    openTime: String(input.openTime || "").trim(),
+    closeTime: String(input.closeTime || "").trim(),
+    defaultAccessorials: Array.isArray(input.defaultAccessorials) ? input.defaultAccessorials.filter(Boolean) : [],
+    isDefaultPickup: Boolean(input.isDefaultPickup),
+    isDefaultDelivery: Boolean(input.isDefaultDelivery)
+  };
 }
 
 function normalizeFreight(freight) {

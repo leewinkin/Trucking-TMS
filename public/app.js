@@ -118,6 +118,20 @@ const translations = {
     "Phone": "电话",
     "Email": "邮箱",
     "Accessorials": "附加服务",
+    "Choose saved address": "选择已保存地址",
+    "Save current address": "保存当前地址",
+    "Update saved address": "更新已保存地址",
+    "Address nickname": "地址昵称",
+    "Main warehouse": "主仓库",
+    "Main consignee": "主要收货方",
+    "Save as": "保存为",
+    "Pickup and delivery": "提货和送货",
+    "Default pickup": "默认提货地址",
+    "Default delivery": "默认送货地址",
+    "Address saved.": "地址已保存。",
+    "Address updated.": "地址已更新。",
+    "Could not save address.": "无法保存地址。",
+    "Could not update address.": "无法更新地址。",
     "Select accessorials": "选择附加服务",
     "Appointment": "预约",
     "Liftgate": "尾板",
@@ -627,6 +641,7 @@ const state = {
   user: null,
   customers: [],
   tariffs: [],
+  addressBookEntries: [],
   quotes: [],
   shipments: [],
   invoices: [],
@@ -950,6 +965,16 @@ function wireForms() {
     updateFreightClassSuggestion();
   });
   quoteForm.addEventListener("click", (event) => {
+    const saveAddressButton = event.target.closest("[data-save-address]");
+    if (saveAddressButton) {
+      saveCurrentAddress(saveAddressButton.dataset.saveAddress);
+      return;
+    }
+    const updateAddressButton = event.target.closest("[data-update-address]");
+    if (updateAddressButton) {
+      updateSavedAddress(updateAddressButton.dataset.updateAddress);
+      return;
+    }
     const button = event.target.closest("[data-use-pickup-opening-time]");
     if (!button) {
       return;
@@ -1019,6 +1044,7 @@ function wireForms() {
   });
 
   syncCarrierControls();
+  wireAddressBookControls();
   updateFreightClassSuggestion();
   wireZipAutofill();
 }
@@ -1045,10 +1071,15 @@ async function bootApp() {
 
 async function refreshAll(options = {}) {
   try {
-    const [health, customers, tariffs, quotes, shipments, invoices] = await Promise.all([
+    const selectedQuoteCustomerId = document.getElementById("quoteCustomerSelect")?.value || "";
+    const addressBookRequest = isStaffUser() && !selectedQuoteCustomerId
+      ? Promise.resolve({ entries: [] })
+      : api(`/api/address-book${isStaffUser() ? `?customerId=${encodeURIComponent(selectedQuoteCustomerId)}` : ""}`);
+    const [health, customers, tariffs, addressBook, quotes, shipments, invoices] = await Promise.all([
       api("/api/health"),
       api("/api/customers"),
       api("/api/tariffs"),
+      addressBookRequest,
       api("/api/quotes"),
       api("/api/shipments"),
       api("/api/invoices")
@@ -1057,6 +1088,7 @@ async function refreshAll(options = {}) {
     state.health = health;
     state.customers = customers.customers;
     state.tariffs = tariffs.tariffRules;
+    state.addressBookEntries = addressBook.entries || [];
     state.quotes = quotes.quotes;
     state.shipments = shipments.shipments;
     state.invoices = invoices.invoices;
@@ -1064,6 +1096,7 @@ async function refreshAll(options = {}) {
     renderHealth();
     renderUserChip();
     renderCustomerOptions();
+    renderAddressBookControls();
     renderCustomers();
     renderDashboard();
     renderShipments();
@@ -1193,6 +1226,7 @@ function applyPermissions() {
     quoteCustomerSelect.addEventListener("change", () => {
       autofillPickupFromCustomer(quoteCustomerSelect.value, true);
       syncCarrierControls();
+      refreshAll({ keepQuoteResults: true });
     });
     quoteCustomerSelect.dataset.autofillBound = "true";
   }
@@ -4302,6 +4336,144 @@ function quotePayload(form) {
   };
 }
 
+function wireAddressBookControls() {
+  document.querySelectorAll("[data-address-book-select]").forEach((select) => {
+    if (select.dataset.addressBookBound === "true") {
+      return;
+    }
+    select.addEventListener("change", () => {
+      const usage = select.dataset.addressBookSelect;
+      const entry = state.addressBookEntries.find((item) => item.id === select.value);
+      if (entry) {
+        fillAddressFromEntry(usage, entry);
+      }
+    });
+    select.dataset.addressBookBound = "true";
+  });
+  renderAddressBookControls();
+}
+
+function renderAddressBookControls() {
+  ["pickup", "delivery"].forEach((usage) => {
+    const select = document.querySelector(`[data-address-book-select='${usage}']`);
+    if (!select) {
+      return;
+    }
+    const currentValue = select.value;
+    const entries = state.addressBookEntries.filter((entry) => entry.usageType === usage || entry.usageType === "both");
+    select.innerHTML = [
+      `<option value="">${escapeHtml(t("Choose saved address"))}</option>`,
+      ...entries.map((entry) => `<option value="${escapeHtml(entry.id)}">${escapeHtml(entry.label || entry.companyName)}</option>`)
+    ].join("");
+    select.value = entries.some((entry) => entry.id === currentValue) ? currentValue : "";
+  });
+}
+
+function currentAddressBookEntry(usage) {
+  const prefix = usage === "delivery" ? "delivery" : "pickup";
+  const form = document.getElementById("quoteForm");
+  const formData = new FormData(form);
+  const accessorials = prefix === "pickup"
+    ? formData.getAll("pickupAccessorials")
+    : normalizeDeliveryAccessorials(formData.getAll("deliveryAccessorials"));
+  return {
+    label: document.querySelector(`[data-address-book-label='${prefix}']`)?.value || "",
+    usageType: document.querySelector(`[data-address-book-usage='${prefix}']`)?.value || prefix,
+    companyName: form.elements[`${prefix}Name`]?.value || "",
+    contactName: "",
+    street: form.elements[`${prefix}Street`]?.value || "",
+    city: form.elements[`${prefix}City`]?.value || "",
+    state: form.elements[`${prefix}State`]?.value || "",
+    zip: form.elements[`${prefix}Zip`]?.value || "",
+    country: "US",
+    phone: form.elements[`${prefix}Phone`]?.value || "",
+    email: form.elements[`${prefix}Email`]?.value || "",
+    openTime: form.elements[`${prefix}Open`]?.value || "",
+    closeTime: form.elements[`${prefix}Close`]?.value || "",
+    defaultAccessorials: accessorials,
+    isDefaultPickup: prefix === "pickup" && Boolean(document.querySelector("[data-address-book-default='pickup']")?.checked),
+    isDefaultDelivery: prefix === "delivery" && Boolean(document.querySelector("[data-address-book-default='delivery']")?.checked),
+    customerId: document.getElementById("quoteCustomerSelect")?.value || state.user?.customerId || ""
+  };
+}
+
+async function saveCurrentAddress(usage) {
+  try {
+    const response = await api("/api/address-book", {
+      method: "POST",
+      body: currentAddressBookEntry(usage)
+    });
+    state.addressBookEntries.push(response.entry);
+    renderAddressBookControls();
+    const select = document.querySelector(`[data-address-book-select='${usage}']`);
+    if (select) {
+      select.value = response.entry.id;
+    }
+    showToast(t("Address saved."));
+  } catch (error) {
+    showToast(error.message || t("Could not save address."), true);
+  }
+}
+
+async function updateSavedAddress(usage) {
+  const select = document.querySelector(`[data-address-book-select='${usage}']`);
+  if (!select?.value) {
+    showToast(t("Choose saved address"), true);
+    return;
+  }
+  try {
+    const response = await api(`/api/address-book/${encodeURIComponent(select.value)}`, {
+      method: "PATCH",
+      body: currentAddressBookEntry(usage)
+    });
+    state.addressBookEntries = state.addressBookEntries.map((entry) => entry.id === response.entry.id ? response.entry : entry);
+    renderAddressBookControls();
+    select.value = response.entry.id;
+    showToast(t("Address updated."));
+  } catch (error) {
+    showToast(error.message || t("Could not update address."), true);
+  }
+}
+
+function fillAddressFromEntry(usage, entry) {
+  const prefix = usage === "delivery" ? "delivery" : "pickup";
+  const form = document.getElementById("quoteForm");
+  const values = {
+    [`${prefix}Name`]: entry.companyName,
+    [`${prefix}Street`]: entry.street,
+    [`${prefix}City`]: entry.city,
+    [`${prefix}State`]: entry.state,
+    [`${prefix}Zip`]: entry.zip,
+    [`${prefix}Phone`]: entry.phone,
+    [`${prefix}Email`]: entry.email || "",
+    [`${prefix}Open`]: entry.openTime,
+    [`${prefix}Close`]: entry.closeTime
+  };
+  Object.entries(values).forEach(([name, value]) => {
+    if (form.elements[name]) {
+      form.elements[name].value = value || "";
+    }
+  });
+  setQuoteCheckboxGroup(`${prefix}Accessorials`, entry.defaultAccessorials || []);
+  if (prefix === "delivery") {
+    enforceDeliveryAccessorialDependencies(document.querySelector("[data-accessorial-group='delivery']"));
+  }
+  document.querySelectorAll(".accessorial-dropdown").forEach((details) => syncAccessorialDropdown(details));
+  const labelInput = document.querySelector(`[data-address-book-label='${prefix}']`);
+  if (labelInput) {
+    labelInput.value = entry.label || "";
+  }
+  const usageSelect = document.querySelector(`[data-address-book-usage='${prefix}']`);
+  if (usageSelect) {
+    usageSelect.value = entry.usageType || prefix;
+  }
+  const defaultCheckbox = document.querySelector(`[data-address-book-default='${prefix}']`);
+  if (defaultCheckbox) {
+    defaultCheckbox.checked = prefix === "pickup" ? Boolean(entry.isDefaultPickup) : Boolean(entry.isDefaultDelivery);
+  }
+  triggerZipAutofillField(`${prefix}Zip`, form);
+}
+
 function populateQuoteFormFromQuote(quote) {
   const form = document.getElementById("quoteForm");
   if (!form || !quote) {
@@ -4396,6 +4568,14 @@ function populateQuoteFormFromQuote(quote) {
   updateFreightClassSuggestion();
   triggerZipAutofillField("pickupZip", form);
   triggerZipAutofillField("deliveryZip", form);
+}
+
+function setQuoteCheckboxGroup(name, values) {
+  const form = document.getElementById("quoteForm");
+  const selected = new Set((Array.isArray(values) ? values : []).filter(Boolean));
+  form?.querySelectorAll(`input[name='${name}']`).forEach((input) => {
+    input.checked = selected.has(input.value);
+  });
 }
 
 function triggerZipAutofillField(name, root = document) {

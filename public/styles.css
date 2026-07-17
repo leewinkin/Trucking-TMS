@@ -632,6 +632,25 @@ select:focus {
   gap: 8px;
 }
 
+.saved-address-tools {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 10px;
+  border: 1px solid rgba(15, 118, 110, 0.16);
+  border-radius: var(--radius);
+  background: #f8fffc;
+}
+
+.saved-address-tools .checkbox-wrap {
+  align-self: end;
+}
+
+.saved-address-tools button {
+  min-height: 38px;
+}
+
 .accessorial-dropdown {
   position: relative;
 }

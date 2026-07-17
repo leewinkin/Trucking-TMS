@@ -406,6 +406,103 @@ async function createPostgresStore(dbUrl, { runOrganizationMigrationOnStartup = 
         client.release();
       }
     },
+    async listAddressBookEntries({ customerId }) {
+      const { rows } = await pool.query(
+        "SELECT * FROM address_book_entries WHERE customer_id = $1 AND status = 'active' ORDER BY is_default_pickup DESC, is_default_delivery DESC, label ASC, created_at ASC",
+        [customerId]
+      );
+      return rows.map(mapAddressBookEntryRow);
+    },
+    async getAddressBookEntry(id) {
+      const { rows } = await pool.query("SELECT * FROM address_book_entries WHERE id = $1", [id]);
+      return rows[0] ? mapAddressBookEntryRow(rows[0]) : null;
+    },
+    async createAddressBookEntry(input) {
+      const customerOrganizationId = input.customerOrganizationId || await getPostgresCustomerOrganizationId(pool, input.customerId);
+      const now = nowIso();
+      const { rows } = await pool.query(
+        `INSERT INTO address_book_entries
+         (id, customer_organization_id, customer_id, label, usage_type, company_name, contact_name, street, city, state, zip, country, phone, email, open_time, close_time, default_accessorials, is_default_pickup, is_default_delivery, status, created_by_user_id, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18, $19, 'active', $20, $21, $21)
+         RETURNING *`,
+        [
+          createId("addr"),
+          customerOrganizationId || null,
+          input.customerId,
+          normalizeAddressLabel(input.label, input.companyName),
+          normalizeAddressUsageType(input.usageType),
+          String(input.companyName || "").trim(),
+          normalizeNullableString(input.contactName),
+          String(input.street || "").trim(),
+          String(input.city || "").trim(),
+          String(input.state || "").trim().toUpperCase(),
+          String(input.zip || "").trim(),
+          String(input.country || "US").trim() || "US",
+          String(input.phone || "").trim(),
+          normalizeNullableString(input.email),
+          String(input.openTime || "").trim(),
+          String(input.closeTime || "").trim(),
+          JSON.stringify(Array.isArray(input.defaultAccessorials) ? input.defaultAccessorials : []),
+          Boolean(input.isDefaultPickup),
+          Boolean(input.isDefaultDelivery),
+          input.createdByUserId || null,
+          now
+        ]
+      );
+      return mapAddressBookEntryRow(rows[0]);
+    },
+    async updateAddressBookEntry(id, input) {
+      const { rows } = await pool.query(
+        `UPDATE address_book_entries
+         SET label = $2,
+             usage_type = $3,
+             company_name = $4,
+             contact_name = $5,
+             street = $6,
+             city = $7,
+             state = $8,
+             zip = $9,
+             country = $10,
+             phone = $11,
+             email = $12,
+             open_time = $13,
+             close_time = $14,
+             default_accessorials = $15::jsonb,
+             is_default_pickup = $16,
+             is_default_delivery = $17,
+             updated_at = $18
+         WHERE id = $1
+         RETURNING *`,
+        [
+          id,
+          normalizeAddressLabel(input.label, input.companyName),
+          normalizeAddressUsageType(input.usageType),
+          String(input.companyName || "").trim(),
+          normalizeNullableString(input.contactName),
+          String(input.street || "").trim(),
+          String(input.city || "").trim(),
+          String(input.state || "").trim().toUpperCase(),
+          String(input.zip || "").trim(),
+          String(input.country || "US").trim() || "US",
+          String(input.phone || "").trim(),
+          normalizeNullableString(input.email),
+          String(input.openTime || "").trim(),
+          String(input.closeTime || "").trim(),
+          JSON.stringify(Array.isArray(input.defaultAccessorials) ? input.defaultAccessorials : []),
+          Boolean(input.isDefaultPickup),
+          Boolean(input.isDefaultDelivery),
+          nowIso()
+        ]
+      );
+      return rows[0] ? mapAddressBookEntryRow(rows[0]) : null;
+    },
+    async deleteAddressBookEntry(id) {
+      const result = await pool.query(
+        "UPDATE address_book_entries SET status = 'deleted', updated_at = $2 WHERE id = $1",
+        [id, nowIso()]
+      );
+      return result.rowCount > 0;
+    },
     async listQuotes() {
       const { rows } = await pool.query("SELECT * FROM quotes ORDER BY created_at DESC");
       return rows.map(mapQuoteRow);
@@ -845,6 +942,31 @@ async function ensureSchema(pool) {
       created_at timestamptz NOT NULL DEFAULT now(),
       ended_at timestamptz
     )`,
+    `CREATE TABLE IF NOT EXISTS address_book_entries (
+      id text PRIMARY KEY,
+      customer_organization_id text REFERENCES organizations(id),
+      customer_id text NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+      label text NOT NULL,
+      usage_type text NOT NULL DEFAULT 'both',
+      company_name text NOT NULL,
+      contact_name text,
+      street text NOT NULL,
+      city text NOT NULL,
+      state text NOT NULL,
+      zip text NOT NULL,
+      country text NOT NULL DEFAULT 'US',
+      phone text NOT NULL DEFAULT '',
+      email text,
+      open_time text NOT NULL DEFAULT '',
+      close_time text NOT NULL DEFAULT '',
+      default_accessorials jsonb NOT NULL DEFAULT '[]'::jsonb,
+      is_default_pickup boolean NOT NULL DEFAULT false,
+      is_default_delivery boolean NOT NULL DEFAULT false,
+      status text NOT NULL DEFAULT 'active',
+      created_by_user_id text REFERENCES users(id),
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )`,
       `CREATE TABLE IF NOT EXISTS quotes (
       id text PRIMARY KEY,
       customer_id text NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
@@ -966,7 +1088,9 @@ async function ensureSchema(pool) {
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_organization_users_one_active ON organization_users(user_id) WHERE status = 'active'",
     "CREATE INDEX IF NOT EXISTS idx_organization_users_organization_id ON organization_users(organization_id)",
     "CREATE INDEX IF NOT EXISTS idx_agent_customer_relationships_agent ON agent_customer_relationships(agent_organization_id)",
-    "CREATE INDEX IF NOT EXISTS idx_agent_customer_relationships_customer ON agent_customer_relationships(customer_organization_id)"
+    "CREATE INDEX IF NOT EXISTS idx_agent_customer_relationships_customer ON agent_customer_relationships(customer_organization_id)",
+    "CREATE INDEX IF NOT EXISTS idx_address_book_entries_customer_id ON address_book_entries(customer_id)",
+    "CREATE INDEX IF NOT EXISTS idx_address_book_entries_customer_organization_id ON address_book_entries(customer_organization_id)"
   ];
 
   for (const statement of statements) {
@@ -1645,6 +1769,68 @@ async function createJsonStore(filePath, { runOrganizationMigrationOnStartup = f
       await writeJsonDb(filePath, db);
       return tariffRule;
     },
+    async listAddressBookEntries({ customerId }) {
+      const db = await readJsonDb(filePath);
+      return db.addressBookEntries
+        .filter((entry) => entry.customerId === customerId && entry.status === "active")
+        .sort(addressBookSort);
+    },
+    async getAddressBookEntry(id) {
+      const db = await readJsonDb(filePath);
+      return db.addressBookEntries.find((entry) => entry.id === id) || null;
+    },
+    async createAddressBookEntry(input) {
+      const db = await readJsonDb(filePath);
+      const now = nowIso();
+      const entry = normalizeAddressBookRecord({
+        ...input,
+        id: createId("addr"),
+        customerOrganizationId:
+          input.customerOrganizationId ||
+          customerOrganizationIdByLegacyCustomerId(db.organizations, input.customerId) ||
+          null,
+        label: normalizeAddressLabel(input.label, input.companyName),
+        usageType: normalizeAddressUsageType(input.usageType),
+        status: "active",
+        createdAt: now,
+        updatedAt: now
+      });
+      db.addressBookEntries.push(entry);
+      await writeJsonDb(filePath, db);
+      return entry;
+    },
+    async updateAddressBookEntry(id, input) {
+      const db = await readJsonDb(filePath);
+      const entry = db.addressBookEntries.find((item) => item.id === id);
+      if (!entry) {
+        return null;
+      }
+      Object.assign(entry, normalizeAddressBookRecord({
+        ...entry,
+        ...input,
+        id: entry.id,
+        customerId: entry.customerId,
+        customerOrganizationId: entry.customerOrganizationId || input.customerOrganizationId || null,
+        label: normalizeAddressLabel(input.label, input.companyName),
+        usageType: normalizeAddressUsageType(input.usageType),
+        status: entry.status || "active",
+        createdAt: entry.createdAt,
+        updatedAt: nowIso()
+      }));
+      await writeJsonDb(filePath, db);
+      return entry;
+    },
+    async deleteAddressBookEntry(id) {
+      const db = await readJsonDb(filePath);
+      const entry = db.addressBookEntries.find((item) => item.id === id);
+      if (!entry) {
+        return false;
+      }
+      entry.status = "deleted";
+      entry.updatedAt = nowIso();
+      await writeJsonDb(filePath, db);
+      return true;
+    },
     async listQuotes() {
       const db = await readJsonDb(filePath);
       return db.quotes.slice().reverse();
@@ -2128,6 +2314,34 @@ function mapTariffRuleRow(row) {
   };
 }
 
+function mapAddressBookEntryRow(row) {
+  return {
+    id: row.id,
+    customerOrganizationId: row.customer_organization_id || null,
+    customerId: row.customer_id,
+    label: row.label,
+    usageType: row.usage_type,
+    companyName: row.company_name,
+    contactName: row.contact_name || null,
+    street: row.street,
+    city: row.city,
+    state: row.state,
+    zip: row.zip,
+    country: row.country || "US",
+    phone: row.phone || "",
+    email: row.email || null,
+    openTime: row.open_time || "",
+    closeTime: row.close_time || "",
+    defaultAccessorials: Array.isArray(row.default_accessorials) ? row.default_accessorials : [],
+    isDefaultPickup: Boolean(row.is_default_pickup),
+    isDefaultDelivery: Boolean(row.is_default_delivery),
+    status: row.status,
+    createdByUserId: row.created_by_user_id || null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
 function mapQuoteRow(row) {
   const carrierModes =
     Array.isArray(row.carrier_modes) && row.carrier_modes.length > 0
@@ -2329,6 +2543,7 @@ function normalizeJsonDb(db) {
     organizations: Array.isArray(db.organizations) ? db.organizations.map(normalizeOrganizationRecord) : [],
     organizationUsers: Array.isArray(db.organizationUsers) ? db.organizationUsers.map(normalizeOrganizationUserRecord) : [],
     agentCustomerRelationships: Array.isArray(db.agentCustomerRelationships) ? db.agentCustomerRelationships : [],
+    addressBookEntries: Array.isArray(db.addressBookEntries) ? db.addressBookEntries.map(normalizeAddressBookRecord) : [],
     quotes: Array.isArray(db.quotes) ? db.quotes : [],
     shipments: Array.isArray(db.shipments) ? db.shipments : [],
     invoices: Array.isArray(db.invoices) ? db.invoices : [],
@@ -2375,6 +2590,57 @@ function normalizeOrganizationUserRecord(membership) {
     createdAt: membership?.createdAt || membership?.created_at || nowIso(),
     updatedAt: membership?.updatedAt || membership?.updated_at || nowIso()
   };
+}
+
+function normalizeAddressBookRecord(entry) {
+  return {
+    id: String(entry?.id || "").trim(),
+    customerOrganizationId: entry?.customerOrganizationId || entry?.customer_organization_id || null,
+    customerId: entry?.customerId || entry?.customer_id || "",
+    label: normalizeAddressLabel(entry?.label, entry?.companyName || entry?.company_name),
+    usageType: normalizeAddressUsageType(entry?.usageType || entry?.usage_type),
+    companyName: String(entry?.companyName || entry?.company_name || "").trim(),
+    contactName: entry?.contactName || entry?.contact_name || null,
+    street: String(entry?.street || "").trim(),
+    city: String(entry?.city || "").trim(),
+    state: String(entry?.state || "").trim().toUpperCase(),
+    zip: String(entry?.zip || "").trim(),
+    country: String(entry?.country || "US").trim() || "US",
+    phone: String(entry?.phone || "").trim(),
+    email: entry?.email || null,
+    openTime: String(entry?.openTime || entry?.open_time || "").trim(),
+    closeTime: String(entry?.closeTime || entry?.close_time || "").trim(),
+    defaultAccessorials: Array.isArray(entry?.defaultAccessorials)
+      ? entry.defaultAccessorials.filter(Boolean)
+      : Array.isArray(entry?.default_accessorials)
+        ? entry.default_accessorials.filter(Boolean)
+        : [],
+    isDefaultPickup: Boolean(entry?.isDefaultPickup || entry?.is_default_pickup),
+    isDefaultDelivery: Boolean(entry?.isDefaultDelivery || entry?.is_default_delivery),
+    status: entry?.status === "deleted" ? "deleted" : "active",
+    createdByUserId: entry?.createdByUserId || entry?.created_by_user_id || null,
+    createdAt: entry?.createdAt || entry?.created_at || nowIso(),
+    updatedAt: entry?.updatedAt || entry?.updated_at || nowIso()
+  };
+}
+
+function normalizeAddressUsageType(value) {
+  return ["pickup", "delivery", "both"].includes(value) ? value : "both";
+}
+
+function normalizeAddressLabel(label, companyName) {
+  const text = String(label || "").trim();
+  return text || String(companyName || "Saved address").trim() || "Saved address";
+}
+
+function addressBookSort(left, right) {
+  if (left.isDefaultPickup !== right.isDefaultPickup) {
+    return left.isDefaultPickup ? -1 : 1;
+  }
+  if (left.isDefaultDelivery !== right.isDefaultDelivery) {
+    return left.isDefaultDelivery ? -1 : 1;
+  }
+  return String(left.label || "").localeCompare(String(right.label || ""));
 }
 
 function ensureJsonUsers(db) {

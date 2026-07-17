@@ -368,6 +368,30 @@
 
                   <section class="location-subsection">
                     <h3 data-i18n="Accessorials">Accessorials</h3>
+                    <div class="saved-address-tools" data-address-book-tools="pickup">
+                      <label>
+                        <span data-i18n="Choose saved address">Choose saved address</span>
+                        <select data-address-book-select="pickup"></select>
+                      </label>
+                      <label>
+                        <span data-i18n="Address nickname">Address nickname</span>
+                        <input data-address-book-label="pickup" placeholder="Main warehouse" data-i18n-placeholder="Main warehouse">
+                      </label>
+                      <label>
+                        <span data-i18n="Save as">Save as</span>
+                        <select data-address-book-usage="pickup">
+                          <option value="pickup" data-i18n="Pickup">Pickup</option>
+                          <option value="delivery" data-i18n="Delivery">Delivery</option>
+                          <option value="both" data-i18n="Pickup and delivery">Pickup and delivery</option>
+                        </select>
+                      </label>
+                      <label class="checkbox-wrap">
+                        <input data-address-book-default="pickup" type="checkbox">
+                        <span data-i18n="Default pickup">Default pickup</span>
+                      </label>
+                      <button class="secondary-action" type="button" data-save-address="pickup" data-i18n="Save current address">Save current address</button>
+                      <button class="secondary-action" type="button" data-update-address="pickup" data-i18n="Update saved address">Update saved address</button>
+                    </div>
                     <div class="accessorial-dropdown-shell">
                       <details class="accessorial-dropdown" data-accessorial-group="pickup">
                         <summary><span class="accessorial-summary" data-i18n="Select accessorials">Select accessorials</span></summary>
@@ -445,6 +469,30 @@
 
                   <section class="location-subsection">
                     <h3 data-i18n="Accessorials">Accessorials</h3>
+                    <div class="saved-address-tools" data-address-book-tools="delivery">
+                      <label>
+                        <span data-i18n="Choose saved address">Choose saved address</span>
+                        <select data-address-book-select="delivery"></select>
+                      </label>
+                      <label>
+                        <span data-i18n="Address nickname">Address nickname</span>
+                        <input data-address-book-label="delivery" placeholder="Main consignee" data-i18n-placeholder="Main consignee">
+                      </label>
+                      <label>
+                        <span data-i18n="Save as">Save as</span>
+                        <select data-address-book-usage="delivery">
+                          <option value="pickup" data-i18n="Pickup">Pickup</option>
+                          <option value="delivery" data-i18n="Delivery">Delivery</option>
+                          <option value="both" data-i18n="Pickup and delivery">Pickup and delivery</option>
+                        </select>
+                      </label>
+                      <label class="checkbox-wrap">
+                        <input data-address-book-default="delivery" type="checkbox">
+                        <span data-i18n="Default delivery">Default delivery</span>
+                      </label>
+                      <button class="secondary-action" type="button" data-save-address="delivery" data-i18n="Save current address">Save current address</button>
+                      <button class="secondary-action" type="button" data-update-address="delivery" data-i18n="Update saved address">Update saved address</button>
+                    </div>
                     <div class="accessorial-dropdown-shell">
                       <details class="accessorial-dropdown" data-accessorial-group="delivery">
                         <summary><span class="accessorial-summary" data-i18n="Select accessorials">Select accessorials</span></summary>
