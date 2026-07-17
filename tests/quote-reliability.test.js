@@ -56,13 +56,16 @@ assert.equal(resolveActualCarrierName({ carrierName: "Xpress Global Systems" }),
 assert.equal(resolveActualCarrierName({ providerScac: "ODFL" }), "Old Dominion");
 assert.equal(resolveActualCarrierName({ providerScac: "ABFS" }), "ABF Freight");
 assert.equal(resolveActualCarrierName({ providerScac: "CNWY" }), "XPO Logistics");
+assert.equal(resolveActualCarrierName({ providerScac: "XPOL" }), "XPO Logistics");
+assert.equal(resolveActualCarrierName({ providerScac: "XGSI" }), "Xpress Global Systems");
 assert.equal(resolveActualCarrierName({ providerScac: "SAIA" }), "SAIA");
 assert.equal(resolveActualCarrierName({}), "Contracted Carrier");
 assert.equal(resolveActualCarrierName({ provider: "mothership" }, { sourcePlatform: "mothershipSandbox" }), "Self-owned Truck");
 assert.equal(resolveActualCarrierName({ carrierName: "Mothership" }, { sourcePlatform: "mothershipSandbox" }), "Self-owned Truck");
 assert.equal(knownCarrierCodeMappings.TFWW, "TForce Freight");
 assert.equal(knownCarrierCodeMappings.FWDN, "Forward Air");
-assert.equal(knownCarrierCodeMappings.XPOL, "Xpress Global Systems");
+assert.equal(knownCarrierCodeMappings.XPOL, "XPO Logistics");
+assert.equal(knownCarrierCodeMappings.XGSI, "Xpress Global Systems");
 
 const internalRate = applyActualCarrierNames(
   [

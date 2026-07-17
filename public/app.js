@@ -345,6 +345,7 @@ const translations = {
     "Reference / PO": "参考号 / PO",
     "Lane": "线路",
     "Cost": "成本",
+    "Your Price": "您的报价",
     "Mothership status": "Mothership 状态",
     "No SCAC": "无 SCAC",
     "Offer": "报价",
@@ -1205,7 +1206,7 @@ function isCustomerUser() {
 }
 
 function customerPriceLabel() {
-  return isCustomerUser() ? t("Cost") : t("Sell price");
+  return isCustomerUser() ? t("Your Price") : t("Sell price");
 }
 
 function hasDisplayValue(value) {

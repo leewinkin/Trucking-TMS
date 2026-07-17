@@ -48,7 +48,7 @@ export const knownCarrierCodeMappings = {
   UPSF: "TForce Freight",
   CNWY: "XPO Logistics",
   XPO: "XPO Logistics",
-  XPOL: "Xpress Global Systems",
+  XPOL: "XPO Logistics",
   XGSI: "Xpress Global Systems"
 };
 
