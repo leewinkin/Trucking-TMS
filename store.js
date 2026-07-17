@@ -418,8 +418,8 @@ async function createPostgresStore(dbUrl, { runOrganizationMigrationOnStartup = 
       const customerOrganizationId = quote.customerOrganizationId || await getPostgresCustomerOrganizationId(pool, quote.customerId);
       const result = await pool.query(
         `INSERT INTO quotes
-         (id, customer_id, customer_name, carrier_mode, carrier_modes, carrier, carrier_quote_id, reference_number, pickup, delivery, freight, pickup_ready_date, tariff_rule, rates, status, carrier_message, carrier_audit, raw_carrier_response, created_at, customer_organization_id, agent_organization_id, created_by_user_id, created_by_organization_id)
-         VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9::jsonb, $10::jsonb, $11::jsonb, $12::jsonb, $13::jsonb, $14::jsonb, $15, $16, $17::jsonb, $18::jsonb, $19, $20, $21, $22, $23)
+         (id, customer_id, customer_name, carrier_mode, carrier_modes, carrier, carrier_quote_id, reference_number, pickup, delivery, freight, pickup_ready_date, tariff_rule, rates, status, carrier_message, carrier_audit, raw_carrier_response, created_at, customer_organization_id, agent_organization_id, created_by_user_id, created_by_organization_id, rate_availability)
+         VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9::jsonb, $10::jsonb, $11::jsonb, $12::jsonb, $13::jsonb, $14::jsonb, $15, $16, $17::jsonb, $18::jsonb, $19, $20, $21, $22, $23, $24::jsonb)
          RETURNING *`,
         [
           quote.id,
@@ -444,7 +444,8 @@ async function createPostgresStore(dbUrl, { runOrganizationMigrationOnStartup = 
           customerOrganizationId || null,
           quote.agentOrganizationId || null,
           quote.createdByUserId || null,
-          quote.createdByOrganizationId || null
+          quote.createdByOrganizationId || null,
+          JSON.stringify(quote.rateAvailability || null)
         ]
       );
       return mapQuoteRow(result.rows[0]);
@@ -923,6 +924,7 @@ async function ensureSchema(pool) {
     "ALTER TABLE quotes ADD COLUMN IF NOT EXISTS carrier_modes jsonb NOT NULL DEFAULT '[]'::jsonb",
     "ALTER TABLE quotes ADD COLUMN IF NOT EXISTS carrier_message text NOT NULL DEFAULT ''",
     "ALTER TABLE quotes ADD COLUMN IF NOT EXISTS carrier_audit jsonb NOT NULL DEFAULT '[]'::jsonb",
+    "ALTER TABLE quotes ADD COLUMN IF NOT EXISTS rate_availability jsonb",
     "ALTER TABLE quotes ADD COLUMN IF NOT EXISTS customer_organization_id text REFERENCES organizations(id)",
     "ALTER TABLE quotes ADD COLUMN IF NOT EXISTS agent_organization_id text REFERENCES organizations(id)",
     "ALTER TABLE quotes ADD COLUMN IF NOT EXISTS created_by_user_id text REFERENCES users(id)",
@@ -1661,7 +1663,8 @@ async function createJsonStore(filePath, { runOrganizationMigrationOnStartup = f
           null,
         agentOrganizationId: quote.agentOrganizationId || null,
         createdByUserId: quote.createdByUserId || null,
-        createdByOrganizationId: quote.createdByOrganizationId || null
+        createdByOrganizationId: quote.createdByOrganizationId || null,
+        rateAvailability: quote.rateAvailability || null
       };
       db.quotes.push(storedQuote);
       await writeJsonDb(filePath, db);
@@ -2151,6 +2154,7 @@ function mapQuoteRow(row) {
     carrierMessage: row.carrier_message || "",
     carrierAudit: Array.isArray(row.carrier_audit) ? row.carrier_audit : row.carrier_audit || [],
     rawCarrierResponse: row.raw_carrier_response,
+    rateAvailability: row.rate_availability || null,
     customerOrganizationId: row.customer_organization_id || null,
     agentOrganizationId: row.agent_organization_id || null,
     createdByUserId: row.created_by_user_id || null,

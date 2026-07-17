@@ -224,6 +224,8 @@ const translations = {
     "No {provider} rates: {message}": "无 {provider} 报价：{message}",
     "No Mothership rates: pickup ready time is earlier than pickup opening time.": "无 Mothership 报价：提货准备时间早于提货开始时间。",
     "No rates are currently available. Please contact customer service.": "当前暂无可用报价。请联系客服。",
+    "Some rates are temporarily unavailable. The available results are shown below. Please try again later or contact customer service.": "部分报价暂时未能返回，以下为目前可用的报价。请稍后重试或联系客服。",
+    "Contracted Carrier": "合作承运商",
     "Select a customer to see the carrier modes assigned by admin.": "选择客户后可查看管理员分配的承运商模式。",
     "Rates will use the carrier modes assigned to the selected customer.": "费率会使用所选客户已分配的承运商模式。",
     "Your quote uses the carrier modes assigned to your account: {label}.": "你的报价将使用分配到你账户的承运商模式：{label}。",
@@ -2649,6 +2651,18 @@ function auditJsonBlock(value, emptyLabel = t("No data recorded.")) {
   return `<pre class="audit-json">${escapeHtml(JSON.stringify(value, null, 2))}</pre>`;
 }
 
+function rateAvailabilityNoticeHtml(rateAvailability) {
+  if (rateAvailability?.status !== "partial" || rateAvailability?.messageCode !== "PARTIAL_RATES_UNAVAILABLE") {
+    return "";
+  }
+
+  return `
+    <div class="quote-status notice-state">
+      <p>${escapeHtml(t("Some rates are temporarily unavailable. The available results are shown below. Please try again later or contact customer service."))}</p>
+    </div>
+  `;
+}
+
 function isMothershipAuditRow(row) {
   return normalizeCarrierModeValue(row?.mode) === "mothershipSandbox" || String(row?.carrier || "").toLowerCase() === "mothership";
 }
@@ -2848,6 +2862,7 @@ function quoteDetailsHtml(quote) {
   const quoteCarrierModes = quoteCarrierModesList(quote);
   const sortedRates = sortedQuoteRates(quote);
   const carrierStatus = quoteCarrierStatusHtml(quote);
+  const availabilityNotice = customerView ? rateAvailabilityNoticeHtml(quote.rateAvailability) : "";
   const rateCards = sortedRates.length
     ? sortedRates
         .map(
@@ -2897,6 +2912,7 @@ function quoteDetailsHtml(quote) {
           ${carrierNotice}
           ${bookingNotice}
           ${carrierStatus}
+          ${availabilityNotice}
           <p><strong>${t("Reference / PO")}:</strong> ${escapeHtml(quote.referenceNumber || "")}</p>
           ${customerView ? "" : `<p><strong>${t("Tariff")}:</strong> ${escapeHtml(quote.tariffRule?.ruleType || "n/a")} ${quote.tariffRule?.ruleType === "fixed" ? `· ${money.format(Number(quote.tariffRule?.fixedAmount || 0))}` : `· ${Number(quote.tariffRule?.markupPercentage || 0)}%`}</p>`}
           <p><strong>${t("Pickup")}:</strong> ${escapeHtml(quote.pickup?.name || "")}, ${escapeHtml(quote.pickup?.address?.street || "")}, ${escapeHtml(quote.pickup?.address?.city || "")}, ${escapeHtml(quote.pickup?.address?.state || "")}</p>
@@ -3619,6 +3635,9 @@ function carrierNameLabel(rate, quote, customerView = false) {
     if (customerView && explicitName.toLowerCase().includes("mothership")) {
       return t("Self-owned Truck");
     }
+    if (customerView && (explicitName === "Self-owned Truck" || explicitName === "Contracted Carrier")) {
+      return t(explicitName);
+    }
     return explicitName;
   }
 
@@ -3984,6 +4003,7 @@ function renderQuoteResults(quote) {
     : carrierModeSummaryLabel(quoteCarrierModes[0], customerView);
   const sortedRates = sortedQuoteRates(quote);
   const carrierStatus = quoteCarrierStatusHtml(quote);
+  const availabilityNotice = customerView ? rateAvailabilityNoticeHtml(quote.rateAvailability) : "";
   if (!Array.isArray(sortedRates) || sortedRates.length === 0) {
     if (customerView) {
       const notice = t("No rates are currently available. Please contact customer service.");
@@ -4009,6 +4029,7 @@ function renderQuoteResults(quote) {
   const canLoadMore = visibleRates.length < sortedRates.length;
   list.innerHTML = `
     ${carrierStatus}
+    ${availabilityNotice}
     ${visibleRates
     .map((rate) => {
       const rateBookingAllowed = !customerView || rateBookingAllowedForUser(quote, rate);

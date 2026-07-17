@@ -6,6 +6,13 @@ import path from "node:path";
 import { createAppStore } from "./store.js";
 import { buildPublicUser } from "./server/auth/public-user.js";
 import {
+  applyActualCarrierNames,
+  customerRateAvailability,
+  normalizePackagingType,
+  packagingTypeForProvider,
+  resolveActualCarrierName
+} from "./server/quote-reliability.js";
+import {
   isMothershipPickupReadyBeforeOpenFailure,
   mothershipPickupReadyBeforeOpenMessage,
   pickupTimeErrorCodes,
@@ -421,9 +428,10 @@ async function createQuote(req, res, currentUser) {
   const mothershipRequest = buildMothershipQuoteRequest(input);
   const speedshipRequests = buildSpeedshipLtlQuoteRequests(input);
   const priority1Request = buildPriority1QuoteRequest(input);
+  const canonicalFreight = normalizeFreight(input.freight);
     const carrierRuns = await Promise.all(
       allowedCarrierModes.map((mode) =>
-        requestCarrierQuoteForMode(mode, mothershipRequest, speedshipRequests, priority1Request)
+        requestCarrierQuoteForMode(mode, input, mothershipRequest, speedshipRequests, priority1Request)
       )
     );
     const carrierAudit = carrierRuns.map((run) => ({
@@ -455,6 +463,7 @@ async function createQuote(req, res, currentUser) {
     };
     });
   const carrierNotice = normalizedRates.length === 0 ? carrierMessage || "Carrier returned no rates for this lane." : "";
+  const rateAvailability = customerRateAvailability(carrierRuns, normalizedRates);
 
   if (normalizedRates.length === 0) {
     const quote = {
@@ -468,10 +477,11 @@ async function createQuote(req, res, currentUser) {
       referenceNumber,
       pickup: mothershipRequest.pickup,
       delivery: mothershipRequest.delivery,
-      freight: mothershipRequest.freight,
+      freight: canonicalFreight,
       pickupReadyDate: mothershipRequest.pickupReadyDate,
         tariffRule,
         rates: [],
+        rateAvailability,
         status: "carrier_connected_no_rates",
         carrierMessage: carrierNotice,
         carrierAudit,
@@ -499,10 +509,11 @@ async function createQuote(req, res, currentUser) {
     referenceNumber,
     pickup: mothershipRequest.pickup,
     delivery: mothershipRequest.delivery,
-    freight: mothershipRequest.freight,
+    freight: canonicalFreight,
     pickupReadyDate: mothershipRequest.pickupReadyDate,
       tariffRule,
       rates: normalizedRates,
+      rateAvailability,
       status: "quoted",
       carrierMessage: carrierNotice,
       carrierAudit,
@@ -836,7 +847,7 @@ function buildMothershipQuoteRequest(input) {
   };
   const freight = normalizeFreight(input.freight).map((item) => ({
     quantity: item.quantity,
-    type: item.type,
+    type: packagingTypeForProvider(item.type, "mothership"),
     weight: item.weight,
     length: item.length,
     width: item.width,
@@ -899,7 +910,7 @@ function buildSpeedshipShopFlowRequest(input, freight) {
       isMixedClass: false,
       isStackable: Boolean(item.stackable),
       marksAndNumbers: null,
-      packagingType: "PLT",
+      packagingType: packagingTypeForProvider(item.type, "speedship"),
       quantity: itemQuantity,
       referenceList: [
         {
@@ -933,7 +944,7 @@ function buildSpeedshipShopFlowRequest(input, freight) {
           name: item.description,
           NMFCDescription: item.nmfc || null,
           NMFCNbr: item.nmfc || null,
-          packagingType: "PLT",
+          packagingType: packagingTypeForProvider(item.type, "speedship"),
           quantity: itemPieces,
           weight: {
             value: String(itemWeight),
@@ -1149,22 +1160,37 @@ function normalizeFreight(freight) {
     throw new PublicError(400, "INVALID_FREIGHT", "Add at least one freight line.");
   }
 
-  return freight.map((item, index) => ({
-    quantity: toPositiveNumber(item.quantity, `freight.${index}.quantity`),
-    type: requiredString(item.type, `freight.${index}.type`),
-    pieces: normalizePieceCount(item.pieces),
-    weight: toPositiveNumber(item.weight, `freight.${index}.weight`),
-    length: toPositiveNumber(item.length, `freight.${index}.length`),
-    width: toPositiveNumber(item.width, `freight.${index}.width`),
-    height: toPositiveNumber(item.height, `freight.${index}.height`),
-    freightClass: requiredString(item.freightClass || item.commodityClass, `freight.${index}.freightClass`),
-    nmfc: String(item.nmfc || item.nmfcCode || "").trim(),
-    stackable: Boolean(item.stackable),
-    hazmat: Boolean(item.hazmat),
-    used: Boolean(item.used),
-    machinery: Boolean(item.machinery),
-    description: requiredString(item.description, `freight.${index}.description`)
-  }));
+  return freight.map((item, index) => {
+    const typeField = `freight.${index}.type`;
+    const type = normalizeFreightPackagingType(item.type, typeField);
+    return {
+      quantity: toPositiveNumber(item.quantity, `freight.${index}.quantity`),
+      type,
+      pieces: normalizePieceCount(item.pieces),
+      weight: toPositiveNumber(item.weight, `freight.${index}.weight`),
+      length: toPositiveNumber(item.length, `freight.${index}.length`),
+      width: toPositiveNumber(item.width, `freight.${index}.width`),
+      height: toPositiveNumber(item.height, `freight.${index}.height`),
+      freightClass: requiredString(item.freightClass || item.commodityClass, `freight.${index}.freightClass`),
+      nmfc: String(item.nmfc || item.nmfcCode || "").trim(),
+      stackable: Boolean(item.stackable),
+      hazmat: Boolean(item.hazmat),
+      used: Boolean(item.used),
+      machinery: Boolean(item.machinery),
+      description: requiredString(item.description, `freight.${index}.description`)
+    };
+  });
+}
+
+function normalizeFreightPackagingType(value, fieldName) {
+  try {
+    return normalizePackagingType(requiredString(value, fieldName), fieldName);
+  } catch (error) {
+    if (error?.code === "INVALID_PACKAGING_TYPE") {
+      throw new PublicError(400, error.code, error.message);
+    }
+    throw error;
+  }
 }
 
 function normalizePieceCount(value) {
@@ -1950,7 +1976,7 @@ function carrierModeDisplayName(mode) {
   }
 }
 
-async function requestCarrierQuoteForMode(mode, mothershipRequest, speedshipRequests, priority1Request) {
+async function requestCarrierQuoteForMode(mode, input, mothershipRequest, speedshipRequests, priority1Request) {
   const normalizedMode = normalizeCarrierMode(mode);
 
   try {
@@ -1968,7 +1994,7 @@ async function requestCarrierQuoteForMode(mode, mothershipRequest, speedshipRequ
       }
 
       const carrierQuote = await requestMothershipQuote(mothershipRequest);
-      const rates = normalizeMothershipRates(carrierQuote);
+      const rates = applyActualCarrierNames(normalizeMothershipRates(carrierQuote), normalizedMode);
       const quoteMetadata = extractMothershipQuoteMetadata(carrierQuote);
       return {
         mode: normalizedMode,
@@ -1996,7 +2022,7 @@ async function requestCarrierQuoteForMode(mode, mothershipRequest, speedshipRequ
       }
 
       const carrierQuote = await requestSpeedshipLtlQuote(speedshipRequests.shopFlow, speedshipRequests.estimateFlow);
-      const rates = normalizeSpeedshipLtlRates(carrierQuote);
+      const rates = applyActualCarrierNames(normalizeSpeedshipLtlRates(carrierQuote), normalizedMode);
       return {
         mode: normalizedMode,
         carrier: "speedship",
@@ -2022,7 +2048,7 @@ async function requestCarrierQuoteForMode(mode, mothershipRequest, speedshipRequ
       }
 
       const carrierQuote = await requestPriority1Quote(priority1Request);
-      const rates = normalizePriority1Rates(carrierQuote);
+      const rates = applyActualCarrierNames(normalizePriority1Rates(carrierQuote), normalizedMode);
       return {
         mode: normalizedMode,
         carrier: "priority1",
@@ -2042,14 +2068,14 @@ async function requestCarrierQuoteForMode(mode, mothershipRequest, speedshipRequ
           carrierQuoteId: createId("fedexFreightQuote"),
           rates: [],
           carrierMessage: "Add FedEx Freight credentials to .env.local before using FedEx Freight.",
-          carrierRequest: buildFedexFreightQuoteRequest(mothershipRequest),
+          carrierRequest: {},
           rawCarrierResponse: {}
         };
       }
 
-      const fedexRequest = buildFedexFreightQuoteRequest(mothershipRequest);
+      const fedexRequest = buildFedexFreightQuoteRequest(input);
       const carrierQuote = await requestFedexFreightQuote(fedexRequest);
-      const rates = normalizeFedexFreightRates(carrierQuote);
+      const rates = applyActualCarrierNames(normalizeFedexFreightRates(carrierQuote), normalizedMode);
       return {
         mode: normalizedMode,
         carrier: "fedexFreight",
@@ -2062,7 +2088,7 @@ async function requestCarrierQuoteForMode(mode, mothershipRequest, speedshipRequ
     }
 
     const carrierQuote = createDemoCarrierQuote(mothershipRequest);
-    const rates = normalizeMothershipRates(carrierQuote);
+    const rates = applyActualCarrierNames(normalizeMothershipRates(carrierQuote), normalizedMode);
     return {
       mode: normalizedMode,
       carrier: "demo",
@@ -2231,7 +2257,7 @@ function buildPriority1QuoteRequest(input) {
     pickupDate,
     items: freight.map((item, index) => ({
       freightClass: String(item.freightClass || item.commodityClass || "50"),
-      packagingType: String(item.type || item.packagingType || "Pallet"),
+      packagingType: packagingTypeForProvider(item.type, "priority1"),
       units: toPositiveNumber(item.quantity, `freight.${index}.quantity`),
       pieces: normalizePieceCount(item.pieces),
       totalWeight: toPositiveNumber(item.weight, `freight.${index}.weight`) * toPositiveNumber(item.quantity, `freight.${index}.quantity`),
@@ -2284,7 +2310,7 @@ function buildFedexFreightQuoteRequest(input) {
         const quantity = toPositiveNumber(item.quantity, `freight.${index}.quantity`);
         const lineWeight = toPositiveNumber(item.weight, `freight.${index}.weight`) * quantity;
         return {
-          subPackagingType: normalizeFedexFreightPackagingType(item.type || item.freightType || "Pallet"),
+          subPackagingType: packagingTypeForProvider(item.type, "fedexFreight"),
           groupPackageCount: quantity,
           weight: {
             units: "LB",
@@ -2320,7 +2346,7 @@ function buildFedexFreightQuoteRequest(input) {
             freightClass: normalizeFedexFreightClass(item.freightClass || item.class || "50"),
             handlingUnits: quantity,
             pieces: totalPieces,
-            subPackagingType: normalizeFedexFreightPackagingType(item.type || item.freightType || "Pallet"),
+            subPackagingType: packagingTypeForProvider(item.type, "fedexFreight"),
             weight: {
               units: "LB",
               value: lineWeight
@@ -3521,6 +3547,10 @@ function sanitizeQuoteForCustomer(quote, customer = null) {
     freight: quote.freight,
     pickupReadyDate: quote.pickupReadyDate,
     rates: Array.isArray(quote.rates) ? quote.rates.map((rate) => sanitizeRateForCustomer(rate, quote, customer)) : [],
+    rateAvailability: quote.rateAvailability || {
+      status: Array.isArray(quote.rates) && quote.rates.length > 0 ? "complete" : "none",
+      messageCode: Array.isArray(quote.rates) && quote.rates.length > 0 ? null : "NO_RATES_AVAILABLE"
+    },
     status: quote.status,
     createdAt: quote.createdAt
   };
@@ -3530,7 +3560,7 @@ function sanitizeRateForCustomer(rate, quote, customer = null) {
   const carrierMode = rate?.carrierSource || quote?.carrierMode;
   return {
     id: rate?.id,
-    carrierName: safeCustomerCarrierName(rate),
+    carrierName: safeCustomerCarrierName(rate, quote),
     service: rate?.service,
     sellPrice: rate?.sellPrice,
     estimatedPickupDate: rate?.estimatedPickupDate || null,
@@ -3540,15 +3570,10 @@ function sanitizeRateForCustomer(rate, quote, customer = null) {
   };
 }
 
-function safeCustomerCarrierName(rate) {
-  const name = String(rate?.carrierName || "").trim();
-  if (name && !name.toLowerCase().includes("mothership")) {
-    return name;
-  }
-  if (name) {
-    return "Self-owned Truck";
-  }
-  return null;
+function safeCustomerCarrierName(rate, quote = null) {
+  return resolveActualCarrierName(rate, {
+    sourcePlatform: rate?.carrierSource || quote?.carrierMode || ""
+  });
 }
 
 function verifyPassword(password, salt, expectedHash) {
