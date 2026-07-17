@@ -1,4 +1,9 @@
 import { carrierStatusLine, pickupTimeErrorCodes, validatePickupReadyWindow } from "./quote-time-validation.js";
+import {
+  accessorialChargeNotice,
+  accessorialExplanation,
+  accessorialLabel
+} from "./accessorial-catalog.js";
 
 const money = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -415,6 +420,7 @@ function setLanguage(language) {
   renderDashboard();
   renderCustomers();
   populateTimeSelects();
+  enhanceAccessorialDropdowns();
   document.querySelectorAll(".accessorial-dropdown").forEach((details) => syncAccessorialDropdown(details));
   updateFreightClassSuggestion();
 }
@@ -2871,7 +2877,7 @@ function quoteDetailsHtml(quote) {
             <article class="rate-item compact-rate quote-rate-card">
               <div class="rate-main">
                 <div class="rate-title-row">
-                  <strong>${escapeHtml(carrierNameLabel(rate, quote, customerView))}</strong>
+                  <span class="carrier-name-badge">${escapeHtml(carrierNameLabel(rate, quote, customerView))}</span>
                   <span class="service-badge">${escapeHtml(formatRateService(rate?.service))}</span>
                   ${customerView ? "" : `<span class="carrier-badge">${escapeHtml(carrierBadgeLabel(rate.provider, rate.carrierSource || quote.carrierMode, customerView))}</span>`}
                 </div>
@@ -4038,7 +4044,7 @@ function renderQuoteResults(quote) {
       <article class="rate-item quote-rate-card">
         <div class="rate-main">
           <div class="rate-title-row">
-            <strong>${escapeHtml(carrierNameLabel(rate, quote, customerView))}</strong>
+            <span class="carrier-name-badge">${escapeHtml(carrierNameLabel(rate, quote, customerView))}</span>
             <span class="service-badge">${escapeHtml(formatRateService(rate?.service))}</span>
             ${customerView ? "" : `<span class="carrier-badge">${escapeHtml(carrierBadgeLabel(rate.provider, rate.carrierSource || quote.carrierMode, customerView))}</span>`}
           </div>
@@ -4443,6 +4449,7 @@ function populateTimeSelects() {
 }
 
 function wireAccessorialDropdowns() {
+  enhanceAccessorialDropdowns();
   document.querySelectorAll(".accessorial-dropdown").forEach((details) => {
     const update = () => {
       if (details.dataset.accessorialGroup === "delivery") {
@@ -4454,8 +4461,64 @@ function wireAccessorialDropdowns() {
     details.querySelectorAll("input[type='checkbox']").forEach((checkbox) => {
       checkbox.addEventListener("change", update);
     });
-
     update();
+  });
+}
+
+function enhanceAccessorialDropdowns() {
+  document.querySelectorAll(".accessorial-dropdown").forEach((details) => {
+    const group = details.dataset.accessorialGroup === "delivery" ? "delivery" : "pickup";
+    details.querySelectorAll("label").forEach((label) => {
+      const checkbox = label.querySelector("input[type='checkbox']");
+      if (!checkbox) {
+        return;
+      }
+      const key = checkbox.value;
+      const labelText = accessorialLabel(key, state.language);
+      const helpText = accessorialExplanation(key, group, state.language);
+      const helpId = `${group}-accessorial-${key}-help`;
+      checkbox.dataset.label = labelText;
+      label.classList.add("accessorial-option");
+      label.innerHTML = "";
+      label.appendChild(checkbox);
+      label.insertAdjacentHTML(
+        "beforeend",
+        `
+          <span class="accessorial-option-body">
+            <span class="accessorial-option-line">
+              <span class="accessorial-option-label">${escapeHtml(labelText)}</span>
+              <button class="accessorial-help-button" type="button" aria-label="${escapeHtml(labelText)} ${escapeHtml(t("Details"))}" aria-expanded="false" aria-describedby="${escapeHtml(helpId)}" data-accessorial-help-toggle>i</button>
+            </span>
+            <span class="accessorial-help-text" id="${escapeHtml(helpId)}" role="note">${escapeHtml(helpText)}</span>
+          </span>
+        `
+      );
+    });
+
+    details.querySelectorAll("[data-accessorial-help-toggle]").forEach((button) => {
+      if (button.dataset.helpBound === "true") {
+        return;
+      }
+      button.addEventListener("click", () => {
+        const option = button.closest(".accessorial-option");
+        const expanded = option?.classList.toggle("is-help-open") || false;
+        button.setAttribute("aria-expanded", expanded ? "true" : "false");
+      });
+      button.dataset.helpBound = "true";
+    });
+
+    const shell = details.closest(".accessorial-dropdown-shell");
+    if (shell && !shell.querySelector(".accessorial-charge-notice")) {
+      details.insertAdjacentHTML(
+        "afterend",
+        `<p class="helper-text accessorial-charge-notice">${escapeHtml(accessorialChargeNotice[state.language] || accessorialChargeNotice.en)}</p>`
+      );
+    } else if (shell) {
+      const notice = shell.querySelector(".accessorial-charge-notice");
+      if (notice) {
+        notice.textContent = accessorialChargeNotice[state.language] || accessorialChargeNotice.en;
+      }
+    }
   });
 }
 
@@ -4466,7 +4529,7 @@ function syncAccessorialDropdown(details) {
   }
 
   const selectedLabels = Array.from(details.querySelectorAll("input[type='checkbox']:checked"))
-    .map((checkbox) => checkbox.dataset.label || checkbox.value);
+    .map((checkbox) => checkbox.dataset.label || accessorialLabel(checkbox.value, state.language));
 
   if (selectedLabels.length === 0) {
     summary.textContent = t("Select accessorials");

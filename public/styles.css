@@ -672,7 +672,9 @@ select:focus {
   overflow: auto;
 }
 
-.accessorial-menu label {
+.accessorial-menu label,
+.accessorial-option {
+  display: grid;
   grid-template-columns: auto 1fr;
   align-items: center;
   gap: 8px;
@@ -682,6 +684,65 @@ select:focus {
 .accessorial-menu input[type="checkbox"] {
   width: auto;
   height: auto;
+}
+
+.accessorial-option-body {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.accessorial-option-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.accessorial-option-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.accessorial-help-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border: 1px solid #0f766e;
+  border-radius: 999px;
+  background: #ecfdf5;
+  color: #115e59;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: help;
+}
+
+.accessorial-help-button:focus-visible {
+  outline: 2px solid rgba(15, 118, 110, 0.35);
+  outline-offset: 2px;
+}
+
+.accessorial-help-text {
+  display: none;
+  max-width: 48ch;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.accessorial-option:hover .accessorial-help-text,
+.accessorial-option:focus-within .accessorial-help-text,
+.accessorial-option.is-help-open .accessorial-help-text {
+  display: block;
+}
+
+.accessorial-charge-notice {
+  margin: 0;
 }
 
 .accessorial-select option {
@@ -973,6 +1034,22 @@ select:focus {
   font-weight: 800;
   line-height: 1;
   white-space: nowrap;
+}
+
+.carrier-name-badge {
+  display: inline-flex;
+  align-items: center;
+  max-width: min(100%, 28rem);
+  min-height: 26px;
+  padding: 0 10px;
+  border: 1px solid rgba(180, 83, 9, 0.24);
+  border-radius: 999px;
+  color: #7c2d12;
+  background: #fff7ed;
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
 }
 
 .service-badge {
