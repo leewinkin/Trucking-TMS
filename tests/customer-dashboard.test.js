@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import {
   aggregateReadyQuoteAttentionItems,
   customerQuoteNumber,
+  customerQuoteRateMetrics,
   customerDashboardMetrics,
   customerDashboardViewModel,
   dashboardAttentionItems,
@@ -68,6 +69,46 @@ assert.equal(quoteStatusLabelKey(quote("quote_failed", "2026-07-18T12:00:00Z", "
 assert.equal(customerQuoteNumber(quotes[0]), "Q-READYOLD");
 assert.equal(quoteLowestSellPrice(quote("quote_multi", "2026-07-18T12:00:00Z", "quoted", [{ sellPrice: 125 }, { sellPrice: 95 }])), 95);
 assert.equal(quoteLowestSellPrice(quote("quote_missing_price", "2026-07-18T12:00:00Z", "quoted", [{ sellPrice: "" }])), Number.POSITIVE_INFINITY);
+
+const quoteDetailRates = [
+  { id: "old_dominion", carrierName: "Old Dominion", sellPrice: 80, transitDays: 5, estimatedDeliveryDate: "2026-07-26" },
+  { id: "xpress", carrierName: "Xpress Global Systems", sellPrice: 120, transitDays: 2, estimatedDeliveryDate: "2026-07-24" },
+  { id: "saia", carrierName: "SAIA", sellPrice: 95, transitDays: 3, estimatedDeliveryDate: "2026-07-25" }
+];
+const quoteDetailsAllMetrics = customerQuoteRateMetrics(quoteDetailRates, {
+  search: "",
+  sort: "lowestPrice",
+  visibleCount: 2,
+  carrierName: (rate) => rate.carrierName
+});
+assert.equal(quoteDetailsAllMetrics.totalCount, 3, "quote detail metrics should keep the original total count");
+assert.equal(quoteDetailsAllMetrics.matchingCount, 3, "empty search should match all original rates");
+assert.equal(quoteDetailsAllMetrics.visibleCount, 2, "quote detail metrics should keep visible rates separate from matching rates");
+assert.equal(quoteDetailsAllMetrics.lowestPrice, 80, "quote detail summary should use the original lowest price");
+assert.equal(quoteDetailsAllMetrics.badgeForRate(quoteDetailRates[0]).lowestPrice, true, "best-price badge should be based on original rates");
+const quoteDetailsSearchMetrics = customerQuoteRateMetrics(quoteDetailRates, {
+  search: "xpress",
+  sort: "lowestPrice",
+  visibleCount: 12,
+  carrierName: (rate) => rate.carrierName
+});
+assert.equal(quoteDetailsSearchMetrics.totalCount, 3, "search should not change the original total count");
+assert.equal(quoteDetailsSearchMetrics.matchingCount, 1, "search should track matching rates separately");
+assert.equal(quoteDetailsSearchMetrics.visibleCount, 1, "search should track visible rates separately");
+assert.equal(quoteDetailsSearchMetrics.lowestPrice, 80, "search should not change summary lowest price");
+assert.equal(quoteDetailsSearchMetrics.badgeForRate(quoteDetailRates[1]).lowestPrice, false, "filtered-only rates should not become best price badges");
+const quoteDetailsLoadMoreMetrics = customerQuoteRateMetrics(quoteDetailRates, {
+  search: "a",
+  sort: "fastestTransit",
+  visibleCount: 24,
+  carrierName: (rate) => rate.carrierName
+});
+assert.equal(quoteDetailsLoadMoreMetrics.matchingCount, 2, "load-more calculations should preserve search state");
+assert.deepEqual(
+  quoteDetailsLoadMoreMetrics.visibleRates.map((rate) => rate.id),
+  ["xpress", "saia"],
+  "load-more calculations should preserve sort state"
+);
 
 assert.deepEqual(
   quotes.filter((item) => quoteStatusLabelKey(item, shipments) === "Ready to Book").map((item) => item.id),
@@ -143,6 +184,9 @@ const customerQuoteDetailsSlice = app.slice(app.indexOf("function customerQuoteD
 const customerQuoteRateCardSlice = app.slice(app.indexOf("function customerQuoteRateCardHtml"), app.indexOf("function customerRateBadgesHtml"));
 const employeeQuoteDetailsSlice = app.slice(app.indexOf("function quoteDetailsHtml"), app.indexOf("function bookingConfirmationHtml"));
 const documentErrorSlice = app.slice(app.indexOf('if (loadState === "error")'), app.indexOf("  const bol = filterShipmentDocumentsByKind"));
+const openQuoteDetailsSlice = app.slice(app.indexOf("async function openQuoteDetails"), app.indexOf("function resetCustomerQuoteDetailsControls"));
+const searchUpdateSlice = app.slice(app.indexOf("function updateCustomerQuoteDetailsSearch"), app.indexOf("function loadMoreCustomerQuoteDetailsRates"));
+const rateResultsUpdateSlice = app.slice(app.indexOf("function updateCustomerQuoteRateResults"), app.indexOf("function cssAttributeEscape"));
 assert.match(app, /function renderDashboard\(\) {\n\s+if \(isCustomerUser\(\)\) {\n\s+renderCustomerDashboard\(\);/, "customer and employee dashboards should use separate render paths");
 assert.match(app, /function renderStaffDashboard\(\)/, "staff dashboard path should be preserved");
 assert.doesNotMatch(renderCustomerDashboardSlice, /className\s*=\s*"view active"|classList\.(?:add|toggle)\("active"/, "customer dashboard renderer must not own active view state");
@@ -240,15 +284,36 @@ assert.match(customerQuoteDetailsSlice, /validSellPrice\(rate\)/, "customer pric
 assert.match(customerQuoteDetailsSlice, /Price unavailable/, "missing sellPrice should display Price unavailable");
 assert.doesNotMatch(customerQuoteDetailsSlice, /\$0\.00|carrierCost|markup|margin|providerScac|carrierAudit|carrierExclusionAudit|rawCarrierResponse|carrierSource|carrierQuoteId|carrierRateId/, "customer quote detail HTML should not expose internal carrier or pricing fields");
 assert.match(customerQuoteRateCardSlice, /rateBookingAllowedForUser\(quote, rate\)/, "per-rate booking should use rateBookingAllowedForUser");
+assert.match(customerQuoteRateCardSlice, /accountBookingAllowed/, "account booking restrictions should be checked before rendering per-rate booking helpers");
+assert.match(customerQuoteRateCardSlice, /bookingVisible && accountBookingAllowed/, "account-disabled customers should not see repeated per-rate unavailable helpers");
 assert.match(app, /state\.currentQuote\?\.id === quoteId \? state\.currentQuote : state\.quotes\.find/, "booking confirmation should resolve the clicked quote ID instead of blindly using currentQuote");
 assert.match(customerQuoteRateCardSlice, /data-book-quote="\$\{escapeHtml\(quote\.id\)\}"/, "per-rate booking buttons should carry the quote ID");
 assert.match(customerQuoteRateCardSlice, /Booking unavailable for this carrier\./, "disabled customer rates should show a compact helper instead of an active booking button");
 assert.match(customerQuoteDetailsSlice, /customerQuoteBookingControlsVisible\(quote\)/, "customer quote details should suppress booking controls for terminal quotes");
 assert.match(customerQuoteDetailsSlice, /\["expired", "cancelled", "failed", "booked"\]/, "expired, cancelled, failed, and booked quotes should not show active booking buttons");
+assert.match(app, /if \(\["expired", "cancelled", "failed", "booked"\]\.includes\(status\) \|\| quoteHasShipment\(quote, state\.shipments\)\)/, "customer booking eligibility should reject terminal quotes and linked shipments");
+assert.match(app, /if \(!Number\.isFinite\(validSellPrice\(rate\)\)\)/, "customer booking eligibility should reject rates without a valid sellPrice");
+assert.match(app, /if \(rate\?\.bookingAllowed === false\)/, "customer booking eligibility should honor rate-level booking denial");
+assert.match(app, /return customerBookingAllowed\(quote\?\.customerId, rate\?\.carrierSource \|\| quote\?\.carrierMode\)/, "rate-level allow flags must not override account-level booking restrictions");
 assert.match(customerQuoteDetailsSlice, /data-customer-quote-reenter/, "Use as New Quote should appear in the sticky header");
 assert.match(customerQuoteDetailsSlice, /data-customer-quote-close/, "sticky customer quote header should include a close action");
 assert.doesNotMatch(customerQuoteDetailsSlice, /Re-enter Quote/, "customer quote details should not keep the old bottom Re-enter Quote button");
-assert.match(customerQuoteDetailsSlice, /customerQuoteSummaryHtml\(quote, allRates, lowest\)/, "customer quote details should render a structured quote summary");
+assert.match(customerQuoteDetailsSlice, /customerQuoteSummaryHtml\(quote, originalRates, lowest\)/, "customer quote details should render a structured quote summary from original rates");
+assert.match(customerQuoteDetailsSlice, /function renderCustomerQuoteDetailsShell\(quote\)/, "customer quote details should render a stable shell before populating rates");
+assert.match(customerQuoteDetailsSlice, /function renderCustomerQuoteRateResults\(quote\)/, "customer quote details should render rate results separately from the modal shell");
+assert.match(customerQuoteDetailsSlice, /data-customer-quote-rate-list/, "customer quote details should keep a stable rate-list mount point");
+assert.match(customerQuoteDetailsSlice, /data-customer-quote-rate-count/, "customer quote details should keep a stable rate-count mount point");
+assert.match(customerQuoteDetailsSlice, /data-customer-quote-rate-footer/, "customer quote details should keep a stable load-more footer mount point");
+assert.match(openQuoteDetailsSlice, /renderCustomerQuoteDetailsShell\(quote\)/, "opening customer quote details should render the shell once");
+assert.match(openQuoteDetailsSlice, /updateCustomerQuoteRateResults\(quoteId\)/, "opening customer quote details should populate the rate results after mounting the shell");
+assert.match(searchUpdateSlice, /updateCustomerQuoteRateResults\(quoteId\)/, "searching customer quote details should update only the rate results");
+assert.doesNotMatch(searchUpdateSlice, /paintModal|openModal|renderCustomerQuoteDetailsShell/, "searching customer quote details should not repaint the whole modal");
+assert.match(rateResultsUpdateSlice, /innerHTML = rendered\.listHtml/, "rate result updates should replace only the rate list");
+assert.doesNotMatch(rateResultsUpdateSlice, /modalBody|paintModal|openModal/, "rate result updates should not replace the modal body");
+assert.match(customerQuoteDetailsSlice, /originalRates = customerVisibleRates\(quote\)/, "customer quote details should keep original rates separate from filtered rates");
+assert.match(customerQuoteDetailsSlice, /filteredRates = filterCustomerQuoteRates/, "customer quote details should keep filtered rates separate");
+assert.match(customerQuoteDetailsSlice, /visibleRates = sortedFilteredRates\.slice/, "customer quote details should keep visible rates separate");
+assert.match(customerQuoteDetailsSlice, /Showing \{visible\} of \{matching\} matching rates · \{total\} total/, "searched quote details should explain visible, matching, and total counts");
 assert.match(customerQuoteDetailsSlice, /Pickup accessorials/, "customer quote summary should include pickup accessorials");
 assert.match(customerQuoteDetailsSlice, /Delivery accessorials/, "customer quote summary should include delivery accessorials");
 assert.match(customerQuoteDetailsSlice, /Rates quoted on \{dateTime\}/, "customer quote details should show quote creation time");
@@ -262,6 +327,7 @@ assert.match(customerQuoteDetailsSlice, /price === lowestPrice/, "Lowest Price b
 assert.match(customerQuoteDetailsSlice, /transit === fastestTransit/, "Fastest badge should support ties");
 assert.match(customerQuoteDetailsSlice, /Online booking is not enabled for this account/, "customer booking-disabled notice should use compact customer-safe copy");
 assert.match(styles, /customer-quote-details-header[\s\S]*position: sticky/, "customer quote details header should stay sticky");
+assert.match(styles, /customer-quote-details-modal \.modal-header[\s\S]*clip-path: inset\(50%\)/, "customer quote details should visually hide the generic modal header while preserving aria-labelledby");
 assert.match(styles, /compact-notice[\s\S]*padding: 10px 12px/, "booking-disabled notice should remain compact");
 assert.match(styles, /customer-rate-toolbar/, "customer quote rate controls should be styled");
 assert.match(styles, /customer-quote-rate-card[\s\S]*grid-template-columns: minmax\(0, 1fr\) minmax\(160px, auto\)/, "desktop rate row should keep price and booking action on the right");
@@ -278,6 +344,8 @@ assert.match(app, /"Earliest ETA": "最早送达"/, "Earliest ETA Chinese transl
 assert.match(app, /"Search carrier": "搜索承运商"/, "Search carrier Chinese translation should exist");
 assert.match(app, /"Load More": "加载更多"/, "Load More Chinese translation should exist");
 assert.match(app, /"Showing \{visible\}\/\{total\} rates": "当前显示 \{visible\}\/\{total\} 条报价"/, "showing rate count Chinese translation should exist");
+assert.match(app, /"Showing \{visible\} of \{total\} rates": "当前显示 \{visible\}\/\{total\} 条报价"/, "customer quote detail visible-total Chinese translation should exist");
+assert.match(app, /"Showing \{visible\} of \{matching\} matching rates · \{total\} total": "当前显示 \{visible\}\/\{matching\} 条匹配报价 · 共 \{total\} 条"/, "customer quote detail search-count Chinese translation should exist");
 
 console.log("customer dashboard tests passed");
 

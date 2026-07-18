@@ -1909,6 +1909,16 @@ select:focus {
   border-bottom: 1px solid var(--line);
 }
 
+.customer-quote-details-modal .modal-header {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .modal-body {
   padding: 16px;
 }

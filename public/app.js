@@ -9,6 +9,7 @@ import {
   customerQuoteNumber,
   customerDashboardViewModel,
   customerVisibleRates,
+  customerRateTransitDaysValue,
   isActiveShipment,
   isDeliveredThisMonth,
   isOpenInvoice,
@@ -23,7 +24,8 @@ import {
   recentByCreatedAt,
   reliableDeliveredDate,
   shipmentStatusLabelKey,
-  shipmentStatusVariant
+  shipmentStatusVariant,
+  validCustomerSellPrice
 } from "./customer-dashboard.js";
 
 const money = new Intl.NumberFormat("en-US", {
@@ -151,6 +153,8 @@ const translations = {
     "Sort": "排序",
     "Load More": "加载更多",
     "Showing {visible}/{total} rates": "当前显示 {visible}/{total} 条报价",
+    "Showing {visible} of {total} rates": "当前显示 {visible}/{total} 条报价",
+    "Showing {visible} of {matching} matching rates · {total} total": "当前显示 {visible}/{matching} 条匹配报价 · 共 {total} 条",
     "No rates match your search.": "没有匹配的报价。",
     "Available Rates": "可用报价",
     "Quote Number": "报价编号",
@@ -1641,8 +1645,15 @@ function rateBookingAllowedForUser(quote, rate) {
   if (!isCustomerUser()) {
     return true;
   }
-  if (typeof rate?.bookingAllowed === "boolean") {
-    return rate.bookingAllowed;
+  const status = normalizeQuoteStatus(quote?.status);
+  if (["expired", "cancelled", "failed", "booked"].includes(status) || quoteHasShipment(quote, state.shipments)) {
+    return false;
+  }
+  if (!Number.isFinite(validSellPrice(rate))) {
+    return false;
+  }
+  if (rate?.bookingAllowed === false) {
+    return false;
   }
   return customerBookingAllowed(quote?.customerId, rate?.carrierSource || quote?.carrierMode);
 }
@@ -1741,13 +1752,13 @@ function wireModal() {
   });
 }
 
-function openModal(title, bodyHtml) {
+function openModal(title, bodyHtml, options = {}) {
   const overlay = document.getElementById("modalOverlay");
   const replacingOpenModal = overlay && !overlay.classList.contains("hidden");
   if (!replacingOpenModal || !state.lastModalFocus || !document.contains(state.lastModalFocus)) {
     state.lastModalFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   }
-  state.modal = { type: "static", title, bodyHtml };
+  state.modal = { type: "static", title, bodyHtml, modalClass: options.modalClass || "" };
   paintModal(title, bodyHtml);
 }
 
@@ -1755,6 +1766,7 @@ function paintModal(title, bodyHtml) {
   const overlay = document.getElementById("modalOverlay");
   document.getElementById("modalTitle").textContent = title;
   document.getElementById("modalBody").innerHTML = bodyHtml;
+  overlay.classList.toggle("customer-quote-details-modal", state.modal?.modalClass === "customer-quote-details-modal");
   overlay.classList.remove("hidden");
   overlay.setAttribute("aria-hidden", "false");
 }
@@ -1762,6 +1774,7 @@ function paintModal(title, bodyHtml) {
 function closeModal() {
   const overlay = document.getElementById("modalOverlay");
   overlay.classList.add("hidden");
+  overlay.classList.remove("customer-quote-details-modal");
   overlay.setAttribute("aria-hidden", "true");
   document.getElementById("modalBody").innerHTML = "";
   state.modal = null;
@@ -1910,6 +1923,11 @@ async function openQuoteDetails(quoteId) {
   }
 
   resetCustomerQuoteDetailsControls(quoteId);
+  if (isCustomerUser()) {
+    openModal(t("Quote Details"), renderCustomerQuoteDetailsShell(quote), { modalClass: "customer-quote-details-modal" });
+    updateCustomerQuoteRateResults(quoteId);
+    return;
+  }
   openModal(t("Quote Details"), quoteDetailsHtml(quote));
 }
 
@@ -1928,7 +1946,7 @@ function updateCustomerQuoteDetailsSort(quoteId, sort) {
   }
   state.customerQuoteDetails.sort = ["lowestPrice", "fastestTransit", "earliestEta"].includes(sort) ? sort : "lowestPrice";
   state.customerQuoteDetails.visibleCount = 12;
-  refreshCustomerQuoteDetailsModal(quoteId);
+  updateCustomerQuoteRateResults(quoteId);
 }
 
 function updateCustomerQuoteDetailsSearch(quoteId, search) {
@@ -1937,7 +1955,7 @@ function updateCustomerQuoteDetailsSearch(quoteId, search) {
   }
   state.customerQuoteDetails.search = String(search || "");
   state.customerQuoteDetails.visibleCount = 12;
-  refreshCustomerQuoteDetailsModal(quoteId);
+  updateCustomerQuoteRateResults(quoteId);
 }
 
 function loadMoreCustomerQuoteDetailsRates(quoteId) {
@@ -1945,17 +1963,38 @@ function loadMoreCustomerQuoteDetailsRates(quoteId) {
     return;
   }
   const quote = state.quotes.find((item) => item.id === quoteId);
-  const total = customerQuoteDetailsRates(quote).length;
+  const total = customerQuoteRateCollections(quote).sortedFilteredRates.length;
   state.customerQuoteDetails.visibleCount = Math.min((state.customerQuoteDetails.visibleCount || 12) + 12, total);
-  refreshCustomerQuoteDetailsModal(quoteId);
+  updateCustomerQuoteRateResults(quoteId);
 }
 
-function refreshCustomerQuoteDetailsModal(quoteId) {
+function updateCustomerQuoteRateResults(quoteId) {
   const quote = state.quotes.find((item) => item.id === quoteId);
   if (!quote || !state.modal || state.modal.title !== t("Quote Details")) {
     return;
   }
-  paintModal(t("Quote Details"), quoteDetailsHtml(quote));
+  const rendered = renderCustomerQuoteRateResults(quote);
+  const escapedQuoteId = cssAttributeEscape(quoteId);
+  const count = document.querySelector(`[data-customer-quote-rate-count="${escapedQuoteId}"]`);
+  const list = document.querySelector(`[data-customer-quote-rate-list="${escapedQuoteId}"]`);
+  const footer = document.querySelector(`[data-customer-quote-rate-footer="${escapedQuoteId}"]`);
+  if (count) {
+    count.textContent = rendered.countText;
+  }
+  if (list) {
+    list.innerHTML = rendered.listHtml;
+  }
+  if (footer) {
+    footer.innerHTML = rendered.footerHtml;
+  }
+}
+
+function cssAttributeEscape(value) {
+  const text = String(value || "");
+  if (window.CSS?.escape) {
+    return CSS.escape(text);
+  }
+  return text.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
 function reenterQuote(quoteId) {
@@ -3362,14 +3401,17 @@ function freightDetailLinesHtml(freight, units = "imperial") {
 }
 
 function customerQuoteDetailsHtml(quote) {
+  return renderCustomerQuoteDetailsShell(quote);
+}
+
+function renderCustomerQuoteDetailsShell(quote) {
   const quoteNumber = customerQuoteNumber(quote);
   const controls = customerQuoteDetailsControls(quote.id);
-  const allRates = customerQuoteDetailsRates(quote);
-  const visibleRates = allRates.slice(0, controls.visibleCount);
-  const canLoadMore = visibleRates.length < allRates.length;
-  const lowest = quoteLowestSellPrice({ rates: allRates });
+  const originalRates = customerVisibleRates(quote);
+  const lowest = quoteLowestSellPrice({ rates: originalRates });
   const expiration = customerQuoteExpirationDate(quote);
   const expired = normalizeQuoteStatus(quote.status) === "expired";
+  const accountBookingAllowed = customerBookingAllowed(quote.customerId);
   return `
     <div class="customer-quote-details">
       <section class="customer-quote-details-header">
@@ -3388,14 +3430,14 @@ function customerQuoteDetailsHtml(quote) {
         </div>
       </section>
       ${expired ? `<div class="quote-status notice-state compact-notice">${escapeHtml(t("These rates may no longer be available. Get updated rates before booking."))}</div>` : ""}
-      ${customerBookingAllowed(quote.customerId) ? "" : `<div class="quote-status notice-state compact-notice">${escapeHtml(t("Online booking is not enabled for this account. Contact customer service for assistance."))}</div>`}
+      ${accountBookingAllowed ? "" : `<div class="quote-status notice-state compact-notice">${escapeHtml(t("Online booking is not enabled for this account. Contact customer service for assistance."))}</div>`}
       ${rateAvailabilityNoticeHtml(quote.rateAvailability)}
-      ${customerQuoteSummaryHtml(quote, allRates, lowest)}
+      ${customerQuoteSummaryHtml(quote, originalRates, lowest)}
       <section class="detail-section customer-rate-section">
         <div class="customer-rate-toolbar">
           <div>
             <h3>${escapeHtml(t("Available Rates"))}</h3>
-            <small>${escapeHtml(t("Showing {visible}/{total} rates", { visible: visibleRates.length, total: allRates.length }))}</small>
+            <small data-customer-quote-rate-count="${escapeHtml(quote.id)}"></small>
           </div>
           <label>
             ${escapeHtml(t("Search carrier"))}
@@ -3410,16 +3452,8 @@ function customerQuoteDetailsHtml(quote) {
             </select>
           </label>
         </div>
-        <div class="customer-rate-list">
-          ${visibleRates.length
-            ? visibleRates.map((rate) => customerQuoteRateCardHtml(quote, rate, allRates)).join("")
-            : `<div class="empty-state">${escapeHtml(t("No rates match your search."))}</div>`}
-        </div>
-        ${canLoadMore ? `
-          <div class="rate-list-footer">
-            <button class="secondary-action" type="button" data-customer-quote-load-more="${escapeHtml(quote.id)}">${t("Load More")}</button>
-          </div>
-        ` : ""}
+        <div class="customer-rate-list" data-customer-quote-rate-list="${escapeHtml(quote.id)}"></div>
+        <div class="rate-list-footer" data-customer-quote-rate-footer="${escapeHtml(quote.id)}"></div>
       </section>
     </div>
   `;
@@ -3433,18 +3467,33 @@ function customerQuoteDetailsControls(quoteId) {
 }
 
 function customerQuoteDetailsRates(quote) {
-  const controls = customerQuoteDetailsControls(quote?.id || "");
-  const search = String(controls.search || "").trim().toLowerCase();
-  const rates = customerVisibleRates(quote).filter((rate) => {
-    if (!search) {
-      return true;
-    }
-    return carrierNameLabel(rate, quote, true).toLowerCase().includes(search);
-  });
-  return sortCustomerQuoteDetailsRates(rates, quote, controls.sort);
+  return customerQuoteRateCollections(quote).sortedFilteredRates;
 }
 
-function sortCustomerQuoteDetailsRates(rates, quote, sort) {
+function customerQuoteRateCollections(quote) {
+  const controls = customerQuoteDetailsControls(quote?.id || "");
+  const originalRates = customerVisibleRates(quote);
+  const filteredRates = filterCustomerQuoteRates(originalRates, quote, controls.search);
+  const sortedFilteredRates = sortCustomerQuoteRates(filteredRates, quote, controls.sort);
+  const visibleRates = sortedFilteredRates.slice(0, controls.visibleCount);
+  return {
+    controls,
+    originalRates,
+    filteredRates,
+    sortedFilteredRates,
+    visibleRates
+  };
+}
+
+function filterCustomerQuoteRates(rates, quote, searchValue) {
+  const search = String(searchValue || "").trim().toLowerCase();
+  if (!search) {
+    return [...rates];
+  }
+  return rates.filter((rate) => carrierNameLabel(rate, quote, true).toLowerCase().includes(search));
+}
+
+function sortCustomerQuoteRates(rates, quote, sort) {
   return [...rates].sort((left, right) => {
     if (sort === "fastestTransit") {
       return compareNullableNumbers(customerRateTransitDays(left), customerRateTransitDays(right)) || compareCustomerRatePrices(left, right) || compareRateCarrierNames(left, right, quote);
@@ -3453,6 +3502,36 @@ function sortCustomerQuoteDetailsRates(rates, quote, sort) {
       return compareNullableNumbers(customerRateEtaTime(left), customerRateEtaTime(right)) || compareCustomerRatePrices(left, right) || compareRateCarrierNames(left, right, quote);
     }
     return compareCustomerRatePrices(left, right) || compareRateCarrierNames(left, right, quote);
+  });
+}
+
+function renderCustomerQuoteRateResults(quote) {
+  const collections = customerQuoteRateCollections(quote);
+  const countText = customerQuoteRateCountText(collections);
+  const listHtml = collections.visibleRates.length
+    ? collections.visibleRates.map((rate) => customerQuoteRateCardHtml(quote, rate, collections.originalRates)).join("")
+    : `<div class="empty-state">${escapeHtml(t("No rates match your search."))}</div>`;
+  const footerHtml = collections.visibleRates.length < collections.sortedFilteredRates.length
+    ? `<button class="secondary-action" type="button" data-customer-quote-load-more="${escapeHtml(quote.id)}">${t("Load More")}</button>`
+    : "";
+  return {
+    countText,
+    listHtml,
+    footerHtml
+  };
+}
+
+function customerQuoteRateCountText(collections) {
+  if (String(collections.controls.search || "").trim()) {
+    return t("Showing {visible} of {matching} matching rates · {total} total", {
+      visible: collections.visibleRates.length,
+      matching: collections.filteredRates.length,
+      total: collections.originalRates.length
+    });
+  }
+  return t("Showing {visible} of {total} rates", {
+    visible: collections.visibleRates.length,
+    total: collections.originalRates.length
   });
 }
 
@@ -3478,7 +3557,8 @@ function compareNullableNumbers(left, right) {
 
 function customerQuoteRateCardHtml(quote, rate, allRates) {
   const bookingVisible = customerQuoteBookingControlsVisible(quote);
-  const bookingAllowed = bookingVisible && rateBookingAllowedForUser(quote, rate);
+  const accountBookingAllowed = customerBookingAllowed(quote.customerId);
+  const bookingAllowed = bookingVisible && accountBookingAllowed && rateBookingAllowedForUser(quote, rate);
   return `
     <article class="rate-item quote-rate-card customer-quote-rate-card">
       <div class="rate-main">
@@ -3495,7 +3575,7 @@ function customerQuoteRateCardHtml(quote, rate, allRates) {
       <div class="rate-aside customer-rate-price-aside">
         <small>${escapeHtml(t("Your Price"))}</small>
         <strong>${customerRatePriceHtml(rate)}</strong>
-        ${bookingVisible
+        ${bookingVisible && accountBookingAllowed
           ? bookingAllowed
             ? `<button class="primary-action rate-book-action" type="button" data-book-rate="${escapeHtml(rate.id)}" data-book-quote="${escapeHtml(quote.id)}">${t("Book Shipment")}</button>`
             : `<small class="helper-text booking-disabled-note">${t("Booking unavailable for this carrier.")}</small>`
@@ -3526,12 +3606,7 @@ function customerRatePriceHtml(rate) {
 }
 
 function validSellPrice(rate) {
-  const raw = rate?.sellPrice;
-  if (raw === null || raw === undefined || String(raw).trim() === "") {
-    return Number.POSITIVE_INFINITY;
-  }
-  const price = Number(raw);
-  return Number.isFinite(price) && price >= 0 ? price : Number.POSITIVE_INFINITY;
+  return validCustomerSellPrice(rate);
 }
 
 function customerQuoteBookingControlsVisible(quote) {
@@ -3540,20 +3615,7 @@ function customerQuoteBookingControlsVisible(quote) {
 }
 
 function customerRateTransitDays(rate) {
-  const value = rate?.transitDays;
-  if (value && typeof value === "object") {
-    const minimum = Number(value.minimum);
-    const maximum = Number(value.maximum);
-    if (Number.isFinite(minimum)) {
-      return minimum;
-    }
-    if (Number.isFinite(maximum)) {
-      return maximum;
-    }
-    return Number.POSITIVE_INFINITY;
-  }
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric : Number.POSITIVE_INFINITY;
+  return customerRateTransitDaysValue(rate);
 }
 
 function customerRateEtaTime(rate) {

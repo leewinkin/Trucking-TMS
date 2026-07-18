@@ -71,13 +71,66 @@ export function customerVisibleRates(quote) {
   return Array.isArray(quote?.rates) ? quote.rates : [];
 }
 
+export function validCustomerSellPrice(rate) {
+  const raw = rate?.sellPrice;
+  if (raw === null || raw === undefined || String(raw).trim() === "") {
+    return Number.POSITIVE_INFINITY;
+  }
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? value : Number.POSITIVE_INFINITY;
+}
+
+export function customerRateTransitDaysValue(rate) {
+  const value = rate?.transitDays;
+  if (value && typeof value === "object") {
+    const minimum = Number(value.minimum);
+    const maximum = Number(value.maximum);
+    if (Number.isFinite(minimum)) {
+      return minimum;
+    }
+    if (Number.isFinite(maximum)) {
+      return maximum;
+    }
+    return Number.POSITIVE_INFINITY;
+  }
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : Number.POSITIVE_INFINITY;
+}
+
+export function customerQuoteRateMetrics(rates = [], options = {}) {
+  const originalRates = Array.isArray(rates) ? rates : [];
+  const carrierName = typeof options.carrierName === "function"
+    ? options.carrierName
+    : (rate) => String(rate?.carrierName || rate?.carrier || "");
+  const search = String(options.search || "").trim().toLowerCase();
+  const filteredRates = search
+    ? originalRates.filter((rate) => carrierName(rate).toLowerCase().includes(search))
+    : [...originalRates];
+  const sortedFilteredRates = sortCustomerQuoteMetricRates(filteredRates, options.sort, carrierName);
+  const visibleCount = Math.max(0, Number(options.visibleCount) || 12);
+  const visibleRates = sortedFilteredRates.slice(0, visibleCount);
+  const lowestPrice = quoteLowestSellPrice({ rates: originalRates });
+  const fastestTransit = Math.min(...originalRates.map(customerRateTransitDaysValue).filter(Number.isFinite));
+  return {
+    originalRates,
+    filteredRates,
+    sortedFilteredRates,
+    visibleRates,
+    totalCount: originalRates.length,
+    matchingCount: filteredRates.length,
+    visibleCount: visibleRates.length,
+    lowestPrice,
+    fastestTransit,
+    badgeForRate: (rate) => ({
+      lowestPrice: Number.isFinite(validCustomerSellPrice(rate)) && validCustomerSellPrice(rate) === lowestPrice,
+      fastest: Number.isFinite(customerRateTransitDaysValue(rate)) && customerRateTransitDaysValue(rate) === fastestTransit
+    })
+  };
+}
+
 export function quoteLowestSellPrice(quote) {
   return customerVisibleRates(quote).reduce((lowest, rate) => {
-    const raw = rate?.sellPrice;
-    if (raw === null || raw === undefined || String(raw).trim() === "") {
-      return lowest;
-    }
-    const value = Number(raw);
+    const value = validCustomerSellPrice(rate);
     return Number.isFinite(value) && value >= 0 ? Math.min(lowest, value) : lowest;
   }, Number.POSITIVE_INFINITY);
 }
@@ -331,6 +384,35 @@ function calendarDayDiff(from, to) {
   const start = new Date(from.getFullYear(), from.getMonth(), from.getDate());
   const end = new Date(to.getFullYear(), to.getMonth(), to.getDate());
   return Math.round((end.getTime() - start.getTime()) / 86400000);
+}
+
+function sortCustomerQuoteMetricRates(rates, sort, carrierName) {
+  return [...rates].sort((left, right) => {
+    if (sort === "fastestTransit") {
+      return compareMetricNumbers(customerRateTransitDaysValue(left), customerRateTransitDaysValue(right)) ||
+        compareMetricNumbers(validCustomerSellPrice(left), validCustomerSellPrice(right)) ||
+        carrierName(left).localeCompare(carrierName(right));
+    }
+    if (sort === "earliestEta") {
+      return compareMetricNumbers(parseDate(left?.estimatedDeliveryDate)?.getTime() ?? Number.POSITIVE_INFINITY, parseDate(right?.estimatedDeliveryDate)?.getTime() ?? Number.POSITIVE_INFINITY) ||
+        compareMetricNumbers(validCustomerSellPrice(left), validCustomerSellPrice(right)) ||
+        carrierName(left).localeCompare(carrierName(right));
+    }
+    return compareMetricNumbers(validCustomerSellPrice(left), validCustomerSellPrice(right)) ||
+      carrierName(left).localeCompare(carrierName(right));
+  });
+}
+
+function compareMetricNumbers(left, right) {
+  const leftValid = Number.isFinite(left);
+  const rightValid = Number.isFinite(right);
+  if (leftValid && rightValid && left !== right) {
+    return left - right;
+  }
+  if (leftValid !== rightValid) {
+    return leftValid ? -1 : 1;
+  }
+  return 0;
 }
 
 function quoteRouteGroupKey(quote) {
