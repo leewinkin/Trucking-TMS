@@ -58,13 +58,13 @@ export function normalizeInvoiceStatus(status) {
   if (["void", "voided"].includes(value)) {
     return "void";
   }
-  if (["cancelled", "canceled"].includes(value)) {
+  if (["cancelled", "canceled", "closed", "refunded", "written_off"].includes(value)) {
     return "cancelled";
   }
-  if (["draft", "open", "pending", "unpaid", "due", "overdue", "imported", "local"].includes(value)) {
+  if (["draft", "open", "pending", "unpaid", "due", "overdue", "imported"].includes(value)) {
     return "open";
   }
-  return "open";
+  return "status_pending";
 }
 
 export function customerVisibleRates(quote) {

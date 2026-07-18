@@ -98,6 +98,10 @@ const translations = {
     "Exception": "运输异常",
     "Cancelled": "已取消",
     "Status Pending": "状态待更新",
+    "All": "全部",
+    "Clear Filter": "清除筛选",
+    "Documents could not be loaded.": "文件加载失败。",
+    "Try Again": "重试",
     "No active shipments. Book a quote to start a shipment.": "当前没有运输中的货件，您可以先选择报价并完成订舱。",
     "View all shipments": "查看全部货件",
     "View Details": "查看详情",
@@ -139,6 +143,7 @@ const translations = {
     "Other Documents": "其他文件",
     "Available": "可用",
     "Pending": "待生成",
+    "Paid": "已付款",
     "Unavailable": "不可用",
     "Loading customer dashboard...": "正在加载客户仪表盘...",
     "Dashboard data could not be refreshed. Please try again.": "仪表盘数据无法刷新，请重试。",
@@ -538,6 +543,7 @@ function setLanguage(language) {
   }
   renderShipments();
   renderInvoices();
+  renderQuotesView();
   renderDashboard();
   renderCustomers();
   renderUserChip();
@@ -770,6 +776,12 @@ const state = {
   dashboardLoading: false,
   dashboardError: "",
   dashboardFilter: "",
+  customerFilters: {
+    quotes: "all",
+    shipments: "all",
+    invoices: "all"
+  },
+  lastModalFocus: null,
   modal: null
 };
 
@@ -788,6 +800,7 @@ const viewMeta = {
       ? [t("Welcome back, {companyName}", { companyName: currentCustomer()?.companyName || t("Your account") }), t("Manage your quotes, shipments, documents, and invoices.")]
       : [t("Dashboard"), t("Watch quote activity, shipment status, and invoice drafts.")],
   customers: [t("Customers"), t("Manage customer accounts and tariff rules.")],
+  quotes: [t("Quotes"), t("Track your quotes, shipments, and invoices.")],
   quote: [t("New Quote"), ""],
   shipments: [t("Shipments"), t("Review local bookings and carrier shipment references.")],
   invoices: [t("Invoices"), t("See draft invoices created from booked shipments.")]
@@ -833,7 +846,7 @@ function wireFreightUnitSwitches() {
 
 function wireNavigation() {
   document.querySelectorAll(".nav-button").forEach((button) => {
-    button.addEventListener("click", () => setView(button.dataset.view));
+    button.addEventListener("click", () => setView(button.dataset.view, { resetCustomerFilter: true }));
   });
 
   bindDashboardModalButtons();
@@ -939,6 +952,12 @@ function wireNavigation() {
     const dashboardFilterButton = event.target.closest("[data-dashboard-filter]");
     if (dashboardFilterButton) {
       navigateCustomerDashboardFilter(dashboardFilterButton.dataset.dashboardFilter);
+      return;
+    }
+
+    const customerFilterButton = event.target.closest("[data-customer-filter]");
+    if (customerFilterButton) {
+      setCustomerFilter(customerFilterButton.dataset.customerFilterView, customerFilterButton.dataset.customerFilter);
       return;
     }
 
@@ -1300,6 +1319,7 @@ async function refreshAll(options = {}) {
     await refreshCarrierPreferences({ silent: true });
     renderAddressBookControls();
     renderCustomers();
+    renderQuotesView();
     renderDashboard();
     renderShipments();
     renderInvoices();
@@ -1359,7 +1379,10 @@ async function api(path, options = {}) {
   return payload;
 }
 
-function setView(name) {
+function setView(name, options = {}) {
+  if (options.resetCustomerFilter) {
+    resetCustomerFilterForView(name);
+  }
   document.querySelectorAll(".nav-button").forEach((button) => {
     button.classList.toggle("active", button.dataset.view === name);
   });
@@ -1401,6 +1424,9 @@ function applyPermissions() {
   const isCustomer = isCustomerUser();
   document.querySelectorAll(".admin-only").forEach((element) => {
     element.classList.toggle("hidden", !isStaff);
+  });
+  document.querySelectorAll(".customer-only").forEach((element) => {
+    element.classList.toggle("hidden", !isCustomer);
   });
   document.getElementById("customersNavButton").classList.toggle("hidden", !isStaff);
   const customersMetricButton = document.getElementById("customersMetricButton");
@@ -1584,6 +1610,11 @@ function wireModal() {
 }
 
 function openModal(title, bodyHtml) {
+  const overlay = document.getElementById("modalOverlay");
+  const replacingOpenModal = overlay && !overlay.classList.contains("hidden");
+  if (!replacingOpenModal || !state.lastModalFocus || !document.contains(state.lastModalFocus)) {
+    state.lastModalFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  }
   state.modal = { type: "static", title, bodyHtml };
   paintModal(title, bodyHtml);
 }
@@ -1603,6 +1634,10 @@ function closeModal() {
   document.getElementById("modalBody").innerHTML = "";
   state.modal = null;
   state.pendingBooking = null;
+  if (state.lastModalFocus && document.contains(state.lastModalFocus)) {
+    state.lastModalFocus.focus();
+  }
+  state.lastModalFocus = null;
 }
 
 function renderModal() {
@@ -2807,11 +2842,15 @@ function shipmentCarrierLabel(shipment) {
 
 function invoiceRow(invoice, options = {}) {
   const showActions = options.showActions !== false;
+  const customerView = isCustomerUser();
   const sourceLabel = invoice.source === "mothership" ? t("Mothership") : t("Local");
   const referenceOnly = isImportedInvoiceReference(invoice);
   const podTarget = resolveInvoiceDocumentTarget(invoice);
   const shipment = podTarget.localShipment;
-  const subLabel = podTarget.displayLabel
+  const customerStatusLabel = invoiceStatusLabel(invoice);
+  const subLabel = customerView
+    ? [invoice.customerName, invoice.referenceNumber ? `PO ${invoice.referenceNumber}` : ""].filter(Boolean).map(escapeHtml).join(" · ")
+    : podTarget.displayLabel
     ? `${escapeHtml(invoice.customerName)} · ${escapeHtml(podTarget.displayLabel)}`
     : referenceOnly
       ? `${escapeHtml(sourceLabel)} ${t("invoice reference")}`
@@ -2822,9 +2861,9 @@ function invoiceRow(invoice, options = {}) {
         <strong>${escapeHtml(invoice.invoiceNumber)}</strong>
         <small>${subLabel}</small>
         <div class="meta-line">
-          <span class="pill">${escapeHtml(invoice.status)}</span>
-          <span class="pill">${escapeHtml(sourceLabel)}</span>
-          ${referenceOnly ? `<span class="pill">${t("Reference only")}</span>` : ""}
+          <span class="pill">${escapeHtml(customerView ? customerStatusLabel : invoice.status)}</span>
+          ${customerView ? "" : `<span class="pill">${escapeHtml(sourceLabel)}</span>`}
+          ${!customerView && referenceOnly ? `<span class="pill">${t("Reference only")}</span>` : ""}
           ${invoice.referenceNumber ? `<span class="pill">PO ${escapeHtml(invoice.referenceNumber)}</span>` : ""}
           <span class="pill">${formatDate(invoice.createdAt)}</span>
         </div>
@@ -2841,6 +2880,20 @@ function invoiceRow(invoice, options = {}) {
       </div>
     </article>
   `;
+}
+
+function invoiceStatusLabel(invoice) {
+  const status = normalizeInvoiceStatus(invoice?.status);
+  if (status === "open") {
+    return t("Open Invoices");
+  }
+  if (status === "paid") {
+    return t("Paid");
+  }
+  if (status === "void" || status === "cancelled") {
+    return t("Cancelled");
+  }
+  return t("Status Pending");
 }
 
 function detailSection(title, contentHtml) {
@@ -4337,13 +4390,40 @@ function renderDashboard() {
   renderStaffDashboard();
 }
 
+function renderQuotesView() {
+  const list = document.getElementById("quoteList");
+  if (!list) {
+    return;
+  }
+  if (!isCustomerUser()) {
+    list.innerHTML = `<div class="empty-state">${t("Select a customer")}</div>`;
+    return;
+  }
+  const activeFilter = state.customerFilters.quotes || "all";
+  const filters = [
+    { value: "all", label: "All" },
+    { value: "ready", label: "Ready to Book" },
+    { value: "booked", label: "Booked" },
+    { value: "noRates", label: "No Rates" },
+    { value: "expired", label: "Expired" }
+  ];
+  const quotes = recentByCreatedAt(state.quotes).filter((quote) => customerQuoteMatchesFilter(quote, activeFilter));
+  list.innerHTML = `
+    ${customerFilterBarHtml("quotes", filters, activeFilter)}
+    <div class="customer-card-stack">
+      ${quotes.length ? quotes.map(customerQuoteRowHtml).join("") : `<div class="empty-state">${t("No quotes yet. Create your first quote.")}</div>`}
+    </div>
+  `;
+}
+
 function renderStaffDashboard() {
   const dashboard = document.getElementById("dashboardView");
   if (!dashboard) {
     return;
   }
   if (!dashboard.querySelector(".metric-grid")) {
-    dashboard.className = "view active";
+    dashboard.classList.remove("customer-dashboard-view");
+    dashboard.classList.add("staff-dashboard-view");
     dashboard.innerHTML = staffDashboardShellHtml();
     bindDashboardModalButtons(dashboard);
   }
@@ -4402,7 +4482,8 @@ function renderCustomerDashboard() {
   if (!dashboard) {
     return;
   }
-  dashboard.className = "view active customer-dashboard-view";
+  dashboard.classList.remove("staff-dashboard-view");
+  dashboard.classList.add("customer-dashboard-view");
   if (state.dashboardLoading && !state.quotes.length && !state.shipments.length && !state.invoices.length) {
     dashboard.innerHTML = `<div class="customer-dashboard-shell"><div class="empty-state" aria-live="polite">${t("Loading customer dashboard...")}</div></div>`;
     return;
@@ -4582,7 +4663,7 @@ function attentionItemHtml(item) {
       title: t("Quote ready to book"),
       detail: routeLabel(item.quote?.pickup, item.quote?.delivery),
       action: t("Review quote"),
-      actionAttrs: `data-view-quote="${escapeHtml(item.quote?.id || "")}"`
+      actionAttrs: `data-dashboard-filter="readyQuotes"`
     }
   }[item.type];
   return `
@@ -4602,7 +4683,7 @@ function recentQuotesSectionHtml(quotes) {
     <section class="panel customer-panel">
       <div class="panel-heading">
         <h2>${t("Recent Quotes")}</h2>
-        <button class="link-action" type="button" data-dashboard-filter="readyQuotes">${t("View all quotes")}</button>
+        <button class="link-action" type="button" data-dashboard-filter="quoteAll">${t("View all quotes")}</button>
       </div>
       <div class="customer-card-stack">
         ${quotes.length
@@ -4659,6 +4740,69 @@ function quickActionsPanelHtml(hasQuote) {
 
 function currentCustomer() {
   return state.customers.find((customer) => customer.id === state.user?.customerId) || state.customers[0] || null;
+}
+
+function resetCustomerFilterForView(view) {
+  if (!isCustomerUser()) {
+    return;
+  }
+  state.dashboardFilter = "";
+  if (view === "quotes") {
+    state.customerFilters.quotes = "all";
+  } else if (view === "shipments") {
+    state.customerFilters.shipments = "all";
+  } else if (view === "invoices") {
+    state.customerFilters.invoices = "all";
+  }
+}
+
+function setCustomerFilter(view, filter) {
+  if (!isCustomerUser()) {
+    return;
+  }
+  if (["quotes", "shipments", "invoices"].includes(view)) {
+    state.customerFilters[view] = filter || "all";
+    if (view === "quotes") {
+      renderQuotesView();
+    } else if (view === "shipments") {
+      renderShipments();
+    } else {
+      renderInvoices();
+    }
+  }
+}
+
+function customerFilterBarHtml(view, filters, activeFilter) {
+  const activeLabel = filters.find((filter) => filter.value === activeFilter)?.label || "All";
+  return `
+    <div class="customer-filter-bar" aria-label="${escapeHtml(t("Filter: {filter}", { filter: t(activeLabel) }))}">
+      ${filters.map((filter) => `
+        <button class="filter-chip ${activeFilter === filter.value ? "active" : ""}" type="button" data-customer-filter-view="${escapeHtml(view)}" data-customer-filter="${escapeHtml(filter.value)}">
+          ${escapeHtml(t(filter.label))}
+        </button>
+      `).join("")}
+      ${activeFilter !== "all" ? `<button class="link-action" type="button" data-customer-filter-view="${escapeHtml(view)}" data-customer-filter="all">${t("Clear Filter")}</button>` : ""}
+    </div>
+  `;
+}
+
+function customerQuoteMatchesFilter(quote, filter) {
+  const label = quoteStatusLabelKey(quote, state.shipments);
+  return filter === "all" ||
+    (filter === "ready" && label === "Ready to Book") ||
+    (filter === "booked" && label === "Booked") ||
+    (filter === "noRates" && label === "No Rates") ||
+    (filter === "expired" && label === "Expired");
+}
+
+function customerShipmentMatchesFilter(shipment, filter) {
+  return filter === "all" ||
+    (filter === "active" && isActiveShipment(shipment)) ||
+    (filter === "deliveredThisMonth" && isDeliveredThisMonth(shipment));
+}
+
+function customerInvoiceMatchesFilter(invoice, filter) {
+  return filter === "all" || (filter === "open" && isOpenInvoice(invoice));
 }
 
 function latestCustomerQuote() {
@@ -4726,6 +4870,7 @@ function navigateCustomerDashboardFilter(filter) {
     return;
   }
   const filterLabels = {
+    quoteAll: "All",
     readyQuotes: "Ready-to-book quotes",
     activeShipments: "Active shipments",
     openInvoices: "Open invoices",
@@ -4735,13 +4880,20 @@ function navigateCustomerDashboardFilter(filter) {
   if (state.dashboardFilter) {
     showToast(t("Filter: {filter}", { filter: t(state.dashboardFilter) }));
   }
-  if (filter === "readyQuotes") {
-    setView("quote");
+  if (filter === "readyQuotes" || filter === "quoteAll") {
+    state.customerFilters.quotes = filter === "readyQuotes" ? "ready" : "all";
+    setView("quotes");
     return;
   }
   if (filter === "openInvoices") {
+    state.customerFilters.invoices = "open";
     setView("invoices");
     return;
+  }
+  if (filter === "activeShipments") {
+    state.customerFilters.shipments = "active";
+  } else if (filter === "deliveredThisMonth") {
+    state.customerFilters.shipments = "deliveredThisMonth";
   }
   setView("shipments");
 }
@@ -4819,29 +4971,44 @@ async function openCustomerShipmentDocuments(shipmentId) {
     return;
   }
   const title = `${t("Documents")} ${shipment.confirmationNumber || ""}`.trim();
-  openModal(title, customerDocumentsPanelHtml(shipment, [], true));
+  openModal(title, customerDocumentsPanelHtml(shipment, [], "loading"));
   try {
     const response = await api(`/api/shipments/${shipmentId}/documents`);
     if (!state.modal || state.modal.title !== title) {
       return;
     }
-    paintModal(title, customerDocumentsPanelHtml(shipment, response.documents || [], false));
+    paintModal(title, customerDocumentsPanelHtml(shipment, response.documents || [], "loaded"));
   } catch {
     if (!state.modal || state.modal.title !== title) {
       return;
     }
-    paintModal(title, customerDocumentsPanelHtml(shipment, [], false));
+    paintModal(title, customerDocumentsPanelHtml(shipment, [], "error"));
   }
 }
 
-function customerDocumentsPanelHtml(shipment, documents = [], loading = false) {
+function customerDocumentsPanelHtml(shipment, documents = [], loadState = "loaded") {
+  if (loadState === "error") {
+    return `
+      <div class="detail-grid">
+        ${detailSection(
+          t("Documents"),
+          `
+            <div class="empty-state">
+              <p>${escapeHtml(t("Documents could not be loaded."))}</p>
+              <button class="primary-action" type="button" data-customer-documents="${escapeHtml(shipment.id)}">${t("Try Again")}</button>
+            </div>
+          `
+        )}
+      </div>
+    `;
+  }
   const bol = filterShipmentDocumentsByKind(documents, "bol");
   const pod = filterShipmentDocumentsByKind(documents, "pod");
   const other = documents.filter((document) => !bol.includes(document) && !pod.includes(document));
   const rows = [
-    customerDocumentStatusRow(t("Bill of Lading"), bol, loading, shipment),
-    customerDocumentStatusRow(t("Proof of Delivery"), pod, loading, shipment),
-    customerDocumentStatusRow(t("Other Documents"), other, loading, shipment)
+    customerDocumentStatusRow(t("Bill of Lading"), bol, loadState, shipment),
+    customerDocumentStatusRow(t("Proof of Delivery"), pod, loadState, shipment),
+    customerDocumentStatusRow(t("Other Documents"), other, loadState, shipment)
   ];
   return `
     <div class="detail-grid">
@@ -4859,8 +5026,8 @@ function customerDocumentsPanelHtml(shipment, documents = [], loading = false) {
   `;
 }
 
-function customerDocumentStatusRow(label, documents, loading, shipment) {
-  const status = loading ? t("Pending") : documents.length ? t("Available") : t("Unavailable");
+function customerDocumentStatusRow(label, documents, loadState, shipment) {
+  const status = loadState === "loading" ? t("Pending") : documents.length ? t("Available") : t("Unavailable");
   const first = documents[0];
   return `
     <article class="document-status-row">
@@ -5017,6 +5184,25 @@ async function finalizeBooking(quoteId, rateId) {
 
 function renderShipments() {
   const list = document.getElementById("shipmentList");
+  if (!list) {
+    return;
+  }
+  if (isCustomerUser()) {
+    const activeFilter = state.customerFilters.shipments || "all";
+    const filters = [
+      { value: "all", label: "All" },
+      { value: "active", label: "Active Shipments" },
+      { value: "deliveredThisMonth", label: "Delivered This Month" }
+    ];
+    const shipments = state.shipments.filter((shipment) => customerShipmentMatchesFilter(shipment, activeFilter));
+    list.innerHTML = `
+      ${customerFilterBarHtml("shipments", filters, activeFilter)}
+      <div class="customer-card-stack">
+        ${shipments.length ? shipments.map(shipmentRow).join("") : `<div class="empty-state">${t("No shipments yet.")}</div>`}
+      </div>
+    `;
+    return;
+  }
   list.innerHTML = state.shipments.length
     ? state.shipments.map(shipmentRow).join("")
     : `<div class="empty-state">${t("No shipments yet.")}</div>`;
@@ -5025,6 +5211,22 @@ function renderShipments() {
 function renderInvoices() {
   const list = document.getElementById("invoiceList");
   if (!list) {
+    return;
+  }
+
+  if (isCustomerUser()) {
+    const activeFilter = state.customerFilters.invoices || "all";
+    const filters = [
+      { value: "all", label: "All" },
+      { value: "open", label: "Open Invoices" }
+    ];
+    const invoices = state.invoices.filter((invoice) => customerInvoiceMatchesFilter(invoice, activeFilter));
+    list.innerHTML = `
+      ${customerFilterBarHtml("invoices", filters, activeFilter)}
+      <div class="customer-card-stack">
+        ${invoices.length ? invoices.map((invoice) => invoiceRow(invoice)).join("") : `<div class="empty-state">${t("No invoices yet.")}</div>`}
+      </div>
+    `;
     return;
   }
 

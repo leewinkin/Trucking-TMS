@@ -62,6 +62,7 @@
         <nav class="nav">
           <button class="nav-button active" data-view="dashboard" data-i18n="Dashboard">Dashboard</button>
           <button class="nav-button" data-view="customers" id="customersNavButton" data-i18n="Customers">Customers</button>
+          <button class="nav-button customer-only" data-view="quotes" id="quotesNavButton" data-i18n="Quotes">Quotes</button>
           <button class="nav-button" data-view="quote" data-i18n="New Quote">New Quote</button>
           <button class="nav-button" data-view="shipments" data-i18n="Shipments">Shipments</button>
           <button class="nav-button" data-view="invoices" data-i18n="Invoices">Invoices</button>
@@ -132,6 +133,15 @@
               </div>
             </section>
           </div>
+        </section>
+
+        <section class="view" id="quotesView">
+          <section class="panel">
+            <div class="panel-heading">
+              <h2 data-i18n="Quotes">Quotes</h2>
+            </div>
+            <div id="quoteList" class="table-list"></div>
+          </section>
         </section>
 
         <section class="view" id="customersView">

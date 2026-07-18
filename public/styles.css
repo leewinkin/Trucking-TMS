@@ -544,6 +544,31 @@ button.metric {
   font-weight: 800;
 }
 
+.customer-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.filter-chip {
+  border: 1px solid #dbe4ef;
+  border-radius: 999px;
+  padding: 8px 12px;
+  background: #ffffff;
+  color: var(--text);
+  font-weight: 800;
+}
+
+.filter-chip.active,
+.filter-chip:hover,
+.filter-chip:focus-visible {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
 .track-result {
   width: 100%;
   text-align: left;
@@ -1726,7 +1751,7 @@ select:focus {
   }
 
   .nav {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
   }
 
   .nav-button {
