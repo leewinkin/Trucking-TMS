@@ -187,6 +187,10 @@ const documentErrorSlice = app.slice(app.indexOf('if (loadState === "error")'), 
 const openQuoteDetailsSlice = app.slice(app.indexOf("async function openQuoteDetails"), app.indexOf("function resetCustomerQuoteDetailsControls"));
 const searchUpdateSlice = app.slice(app.indexOf("function updateCustomerQuoteDetailsSearch"), app.indexOf("function loadMoreCustomerQuoteDetailsRates"));
 const rateResultsUpdateSlice = app.slice(app.indexOf("function updateCustomerQuoteRateResults"), app.indexOf("function cssAttributeEscape"));
+const confirmPendingBookingSlice = app.slice(app.indexOf("async function confirmPendingBooking"), app.indexOf("async function openInvoiceDetails"));
+const bookingConfirmationSlice = app.slice(app.indexOf("function bookingConfirmationHtml"), app.indexOf("function shipmentDetailsHtml"));
+const customerBookingConfirmationSlice = app.slice(app.indexOf("function customerBookingConfirmationHtml"), app.indexOf("function staffBookingConfirmationHtml"));
+const staffBookingConfirmationSlice = app.slice(app.indexOf("function staffBookingConfirmationHtml"), app.indexOf("function shipmentDetailsHtml"));
 assert.match(app, /function renderDashboard\(\) {\n\s+if \(isCustomerUser\(\)\) {\n\s+renderCustomerDashboard\(\);/, "customer and employee dashboards should use separate render paths");
 assert.match(app, /function renderStaffDashboard\(\)/, "staff dashboard path should be preserved");
 assert.doesNotMatch(renderCustomerDashboardSlice, /className\s*=\s*"view active"|classList\.(?:add|toggle)\("active"/, "customer dashboard renderer must not own active view state");
@@ -346,6 +350,26 @@ assert.match(app, /"Load More": "加载更多"/, "Load More Chinese translation 
 assert.match(app, /"Showing \{visible\}\/\{total\} rates": "当前显示 \{visible\}\/\{total\} 条报价"/, "showing rate count Chinese translation should exist");
 assert.match(app, /"Showing \{visible\} of \{total\} rates": "当前显示 \{visible\}\/\{total\} 条报价"/, "customer quote detail visible-total Chinese translation should exist");
 assert.match(app, /"Showing \{visible\} of \{matching\} matching rates · \{total\} total": "当前显示 \{visible\}\/\{matching\} 条匹配报价 · 共 \{total\} 条"/, "customer quote detail search-count Chinese translation should exist");
+
+assert.match(bookingConfirmationSlice, /if \(customerView\) {\n\s+return customerBookingConfirmationHtml\(quote, rate\);/, "customer booking confirmation should use a dedicated customer-safe renderer");
+assert.match(customerBookingConfirmationSlice, /<small>\$\{t\("Your Price"\)\}<\/small>/, "customer booking confirmation should label sellPrice as Your Price");
+assert.match(customerBookingConfirmationSlice, /Number\.isFinite\(price\) \? money\.format\(price\) : escapeHtml\(t\("Price unavailable"\)\)/, "customer booking confirmation should not fall back to $0.00 for missing prices");
+assert.doesNotMatch(customerBookingConfirmationSlice, /<small>\$\{t\("Cost"\)\}<\/small>|carrierCost|markup|margin/, "customer booking confirmation should not show internal cost terminology or pricing fields");
+assert.doesNotMatch(customerBookingConfirmationSlice, /Mothership|SpeedShip|Priority1|providerScac|provider ID|providerId|carrierSource|carrierQuoteId|carrierRateId|Mothership status|Booking blocked by Mothership|Purchase eligibility|Fix these fields|invalidFields|Pickup suggestions|Delivery suggestions|rawCarrierResponse|pickupSuggestedAccessorials|deliverySuggestedAccessorials/, "customer booking confirmation should not expose source-platform diagnostics");
+assert.match(customerBookingConfirmationSlice, /This rate cannot be booked online\. Please choose another rate or contact customer service\./, "blocked customer purchase validation should use a generic customer-safe message");
+assert.match(customerBookingConfirmationSlice, /data-confirm-booking \$\{bookingBlocked \? "disabled" : ""\}/, "blocked customer purchase validation should disable Confirm Booking");
+assert.match(customerBookingConfirmationSlice, /This will submit the selected rate for shipment booking\. Please confirm before continuing\./, "customer booking confirmation should use customer-safe confirmation wording");
+assert.match(customerBookingConfirmationSlice, /carrierNameLabel\(rate, quote, true\)/, "customer booking confirmation should show the customer-safe actual carrier name");
+assert.match(confirmPendingBookingSlice, /isCustomerUser\(\)\n\s+\? t\("This rate cannot be booked online\. Please choose another rate or contact customer service\."\)/, "direct customer confirmation blocks should use the generic customer-safe message");
+assert.match(confirmPendingBookingSlice, /await finalizeBooking\(quote\.id, rate\.id\)/, "valid customer booking should still reach the existing booking flow");
+assert.match(staffBookingConfirmationSlice, /Mothership status/, "staff booking confirmation should retain provider purchase diagnostics");
+assert.match(staffBookingConfirmationSlice, /Booking blocked by Mothership/, "staff booking confirmation should retain provider-specific blocked diagnostics");
+assert.match(staffBookingConfirmationSlice, /Purchase eligibility/, "staff booking confirmation should retain purchase eligibility details");
+assert.match(staffBookingConfirmationSlice, /Pickup suggestions/, "staff booking confirmation should retain pickup suggestion details");
+assert.match(staffBookingConfirmationSlice, /Delivery suggestions/, "staff booking confirmation should retain delivery suggestion details");
+assert.match(staffBookingConfirmationSlice, /<small>\$\{t\("Cost"\)\}<\/small>/, "staff booking confirmation may retain internal Cost label");
+assert.match(app, /"This will submit the selected rate for shipment booking\. Please confirm before continuing\.": "系统将使用所选报价提交订舱，请确认信息后继续。"/, "customer-safe confirmation wording Chinese translation should exist");
+assert.match(app, /"This rate cannot be booked online\. Please choose another rate or contact customer service\.": "此报价暂无法在线订舱，请选择其他报价或联系客服。"/, "customer-safe blocked booking Chinese translation should exist");
 
 console.log("customer dashboard tests passed");
 

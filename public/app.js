@@ -504,8 +504,12 @@ const translations = {
     "Confirm Shipment Booking": "确认发运预订",
     "Confirm shipment booking": "确认发运预订",
     "This will finalize the shipment with the carrier platform.": "这将把发运提交到承运商平台。",
+    "This will submit the selected rate for shipment booking. Please confirm before continuing.": "系统将使用所选报价提交订舱，请确认信息后继续。",
     "This will create a shipment booking in the TMS.": "这将在 TMS 中创建发运预订。",
     "Please confirm before continuing.": "请确认后继续。",
+    "Booking status": "订舱状态",
+    "Ready for online booking.": "可在线订舱。",
+    "This rate cannot be booked online. Please choose another rate or contact customer service.": "此报价暂无法在线订舱，请选择其他报价或联系客服。",
     "Booking blocked by Mothership": "Mothership 阻止预订",
     "Purchase eligibility": "可购买状态",
     "Fix these fields": "请修正以下字段",
@@ -2066,7 +2070,10 @@ async function confirmPendingBooking() {
   const purchaseSummary = summarizeMothershipPurchaseMetadata(mothershipPurchaseMetadata(quote, rate));
   if (purchaseSummary && purchaseSummary.purchasable === false) {
     cancelPendingBooking();
-    showToast(purchaseSummary.invalidFields.length > 0 ? `Mothership needs: ${purchaseSummary.invalidFields.join("; ")}` : t("This Mothership quote is not purchasable yet."), true);
+    showToast(isCustomerUser()
+      ? t("This rate cannot be booked online. Please choose another rate or contact customer service.")
+      : (purchaseSummary.invalidFields.length > 0 ? `Mothership needs: ${purchaseSummary.invalidFields.join("; ")}` : t("This Mothership quote is not purchasable yet.")),
+    true);
     return;
   }
 
@@ -3794,6 +3801,64 @@ function quoteDetailsHtml(quote) {
 
 function bookingConfirmationHtml(quote, rate) {
   const customerView = isCustomerUser();
+  if (customerView) {
+    return customerBookingConfirmationHtml(quote, rate);
+  }
+  return staffBookingConfirmationHtml(quote, rate);
+}
+
+function carrierBookingBlockedByValidation(quote, rate) {
+  const purchaseSummary = summarizeMothershipPurchaseMetadata(mothershipPurchaseMetadata(quote, rate));
+  return Boolean(purchaseSummary && purchaseSummary.purchasable === false);
+}
+
+function customerBookingConfirmationHtml(quote, rate) {
+  const bookingBlocked = carrierBookingBlockedByValidation(quote, rate);
+  const price = validSellPrice(rate);
+  return `
+    <div class="booking-confirmation">
+      <div class="quote-status notice-state ${bookingBlocked ? "" : "success-state"}">
+        <strong>${t("Confirm shipment booking")}</strong>
+        <p>${t("This will submit the selected rate for shipment booking. Please confirm before continuing.")}</p>
+      </div>
+      <div class="quote-status notice-state ${bookingBlocked ? "" : "success-state"}">
+        <strong>${t("Booking status")}</strong>
+        <p>${bookingBlocked
+          ? escapeHtml(t("This rate cannot be booked online. Please choose another rate or contact customer service."))
+          : escapeHtml(t("Ready for online booking."))}</p>
+      </div>
+      <div class="confirmation-grid">
+        <div>
+          <small>${t("Carrier")}</small>
+          <strong>${escapeHtml(carrierNameLabel(rate, quote, true))}</strong>
+        </div>
+        <div>
+          <small>${t("Service")}</small>
+          <strong>${escapeHtml(formatRateService(rate?.service))}</strong>
+        </div>
+        <div>
+          <small>${t("Reference / PO")}</small>
+          <strong>${escapeHtml(quote.referenceNumber || "N/A")}</strong>
+        </div>
+        <div>
+          <small>${t("Lane")}</small>
+          <strong>${escapeHtml([quote.pickup?.address?.zip, quote.delivery?.address?.zip].filter(Boolean).join(" → ") || "N/A")}</strong>
+        </div>
+        <div>
+          <small>${t("Your Price")}</small>
+          <strong>${Number.isFinite(price) ? money.format(price) : escapeHtml(t("Price unavailable"))}</strong>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="secondary-action" data-cancel-booking>${t("Cancel")}</button>
+        <button type="button" class="primary-action" data-confirm-booking ${bookingBlocked ? "disabled" : ""}>${t("Confirm Booking")}</button>
+      </div>
+    </div>
+  `;
+}
+
+function staffBookingConfirmationHtml(quote, rate) {
+  const customerView = false;
   const isCarrierBooking = rate?.carrierSource === "mothershipSandbox";
   const purchaseSummary = summarizeMothershipPurchaseMetadata(mothershipPurchaseMetadata(quote, rate));
   const bookingBlocked = Boolean(purchaseSummary && purchaseSummary.purchasable === false);
