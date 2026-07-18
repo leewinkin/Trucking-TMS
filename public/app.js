@@ -19,6 +19,7 @@ import {
   quoteLowestSellPrice,
   quoteHasShipment,
   quoteStatusLabelKey,
+  parseDate,
   recentByCreatedAt,
   reliableDeliveredDate,
   shipmentStatusLabelKey,
@@ -134,6 +135,40 @@ const translations = {
     "{count} ready quotes": "{count} 个可订舱报价",
     "Quote {quoteNumber}": "报价 {quoteNumber}",
     "Reference {reference}": "参考号 {reference}",
+    "Use as New Quote": "复制为新报价",
+    "Close": "关闭",
+    "Price unavailable": "价格暂不可用",
+    "Booking unavailable for this carrier.": "该承运商暂不支持在线订舱。",
+    "Online booking is not enabled for this account. Contact customer service for assistance.": "此账户暂未开启在线订舱，如需订舱请联系客服。",
+    "Rates quoted on {dateTime}": "报价获取时间：{dateTime}",
+    "These rates may no longer be available. Get updated rates before booking.": "这些运价可能已经失效，请重新获取最新报价后再订舱。",
+    "Expires {dateTime}": "有效期至 {dateTime}",
+    "Lowest Price": "最低价格",
+    "Fastest": "最快运输",
+    "Fastest Transit": "最快运输",
+    "Earliest ETA": "最早送达",
+    "Search carrier": "搜索承运商",
+    "Sort": "排序",
+    "Load More": "加载更多",
+    "Showing {visible}/{total} rates": "当前显示 {visible}/{total} 条报价",
+    "No rates match your search.": "没有匹配的报价。",
+    "Available Rates": "可用报价",
+    "Quote Number": "报价编号",
+    "Quote Status": "报价状态",
+    "Created": "创建时间",
+    "Pickup company": "提货公司",
+    "Pickup address": "提货地址",
+    "Delivery company": "收货公司",
+    "Delivery address": "收货地址",
+    "Pickup ready": "提货准备时间",
+    "Total handling units": "总处理件数",
+    "Total weight": "总重量",
+    "Freight class": "货物等级",
+    "Dimensions": "尺寸",
+    "Description": "货物描述",
+    "Pickup accessorials": "提货附加服务",
+    "Delivery accessorials": "派送附加服务",
+    "Available rates": "可用报价",
     "No Rates": "暂无报价",
     "Expired": "已过期",
     "available rate(s)": "条可用报价",
@@ -421,7 +456,7 @@ const translations = {
     "Please wait while we contact the carrier platforms.": "请稍候，我们正在联系承运商平台。",
     "Load more results": "加载更多结果",
     "Showing {visible} of {total} results": "显示 {visible} / {total} 条结果",
-    "Book Shipment": "预订发运",
+    "Book Shipment": "订舱",
     "Booking disabled for this carrier.": "该承运商已禁用预订。",
     "No shipments yet.": "暂无发运记录。",
     "No shipments booked yet.": "暂无已预订的发运。",
@@ -797,6 +832,12 @@ const state = {
     shipments: "all",
     invoices: "all"
   },
+  customerQuoteDetails: {
+    quoteId: "",
+    visibleCount: 12,
+    sort: "lowestPrice",
+    search: ""
+  },
   lastModalFocus: null,
   modal: null
 };
@@ -920,6 +961,33 @@ function wireNavigation() {
     const loadMoreButton = event.target.closest("[data-load-more-rates]");
     if (loadMoreButton) {
       loadMoreQuoteRates();
+      return;
+    }
+
+    const bookRateButton = event.target.closest("[data-book-rate]");
+    if (bookRateButton) {
+      const quoteId = bookRateButton.dataset.bookQuote || state.currentQuote?.id;
+      if (quoteId) {
+        openBookingConfirmation(quoteId, bookRateButton.dataset.bookRate);
+      }
+      return;
+    }
+
+    const customerQuoteLoadMoreButton = event.target.closest("[data-customer-quote-load-more]");
+    if (customerQuoteLoadMoreButton) {
+      loadMoreCustomerQuoteDetailsRates(customerQuoteLoadMoreButton.dataset.customerQuoteLoadMore);
+      return;
+    }
+
+    const customerQuoteRequoteButton = event.target.closest("[data-customer-quote-reenter]");
+    if (customerQuoteRequoteButton) {
+      reenterQuote(customerQuoteRequoteButton.dataset.customerQuoteReenter);
+      return;
+    }
+
+    const customerQuoteCloseButton = event.target.closest("[data-customer-quote-close]");
+    if (customerQuoteCloseButton) {
+      closeModal();
       return;
     }
 
@@ -1085,6 +1153,20 @@ function wireForms() {
   populateTimeSelects();
   wireAccessorialDropdowns();
   ensureFreightRows();
+
+  document.addEventListener("input", (event) => {
+    const search = event.target.closest("[data-customer-quote-search]");
+    if (search) {
+      updateCustomerQuoteDetailsSearch(search.dataset.customerQuoteSearch, search.value);
+    }
+  });
+
+  document.addEventListener("change", (event) => {
+    const sort = event.target.closest("[data-customer-quote-sort]");
+    if (sort) {
+      updateCustomerQuoteDetailsSort(sort.dataset.customerQuoteSort, sort.value);
+    }
+  });
 
   document.getElementById("customerForm").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -1827,7 +1909,53 @@ async function openQuoteDetails(quoteId) {
     return;
   }
 
+  resetCustomerQuoteDetailsControls(quoteId);
   openModal(t("Quote Details"), quoteDetailsHtml(quote));
+}
+
+function resetCustomerQuoteDetailsControls(quoteId) {
+  state.customerQuoteDetails = {
+    quoteId,
+    visibleCount: 12,
+    sort: "lowestPrice",
+    search: ""
+  };
+}
+
+function updateCustomerQuoteDetailsSort(quoteId, sort) {
+  if (!isCustomerUser() || state.customerQuoteDetails.quoteId !== quoteId) {
+    return;
+  }
+  state.customerQuoteDetails.sort = ["lowestPrice", "fastestTransit", "earliestEta"].includes(sort) ? sort : "lowestPrice";
+  state.customerQuoteDetails.visibleCount = 12;
+  refreshCustomerQuoteDetailsModal(quoteId);
+}
+
+function updateCustomerQuoteDetailsSearch(quoteId, search) {
+  if (!isCustomerUser() || state.customerQuoteDetails.quoteId !== quoteId) {
+    return;
+  }
+  state.customerQuoteDetails.search = String(search || "");
+  state.customerQuoteDetails.visibleCount = 12;
+  refreshCustomerQuoteDetailsModal(quoteId);
+}
+
+function loadMoreCustomerQuoteDetailsRates(quoteId) {
+  if (!isCustomerUser() || state.customerQuoteDetails.quoteId !== quoteId) {
+    return;
+  }
+  const quote = state.quotes.find((item) => item.id === quoteId);
+  const total = customerQuoteDetailsRates(quote).length;
+  state.customerQuoteDetails.visibleCount = Math.min((state.customerQuoteDetails.visibleCount || 12) + 12, total);
+  refreshCustomerQuoteDetailsModal(quoteId);
+}
+
+function refreshCustomerQuoteDetailsModal(quoteId) {
+  const quote = state.quotes.find((item) => item.id === quoteId);
+  if (!quote || !state.modal || state.modal.title !== t("Quote Details")) {
+    return;
+  }
+  paintModal(t("Quote Details"), quoteDetailsHtml(quote));
 }
 
 function reenterQuote(quoteId) {
@@ -1854,7 +1982,7 @@ function reenterQuote(quoteId) {
 }
 
 function openBookingConfirmation(quoteId, rateId) {
-  const quote = state.currentQuote || state.quotes.find((item) => item.id === quoteId);
+  const quote = state.currentQuote?.id === quoteId ? state.currentQuote : state.quotes.find((item) => item.id === quoteId);
   if (!quote) {
     return;
   }
@@ -1884,7 +2012,7 @@ async function confirmPendingBooking() {
     return;
   }
 
-  const quote = state.currentQuote || state.quotes.find((item) => item.id === pending.quoteId);
+  const quote = state.currentQuote?.id === pending.quoteId ? state.currentQuote : state.quotes.find((item) => item.id === pending.quoteId);
   if (!quote) {
     cancelPendingBooking();
     return;
@@ -3233,8 +3361,304 @@ function freightDetailLinesHtml(freight, units = "imperial") {
     .join("<br>");
 }
 
+function customerQuoteDetailsHtml(quote) {
+  const quoteNumber = customerQuoteNumber(quote);
+  const controls = customerQuoteDetailsControls(quote.id);
+  const allRates = customerQuoteDetailsRates(quote);
+  const visibleRates = allRates.slice(0, controls.visibleCount);
+  const canLoadMore = visibleRates.length < allRates.length;
+  const lowest = quoteLowestSellPrice({ rates: allRates });
+  const expiration = customerQuoteExpirationDate(quote);
+  const expired = normalizeQuoteStatus(quote.status) === "expired";
+  return `
+    <div class="customer-quote-details">
+      <section class="customer-quote-details-header">
+        <div class="customer-quote-details-heading">
+          <div class="customer-quote-title-row">
+            <strong>${escapeHtml(t("Quote {quoteNumber}", { quoteNumber }))}</strong>
+            ${customerQuoteStatusBadgeHtml(quote)}
+          </div>
+          <p>${escapeHtml(routeLabel(quote.pickup, quote.delivery))}</p>
+          <small>${escapeHtml(t("Rates quoted on {dateTime}", { dateTime: formatDateTime(quote.createdAt) }))}</small>
+          ${expiration ? `<small>${escapeHtml(t("Expires {dateTime}", { dateTime: formatDateTime(expiration) }))}</small>` : ""}
+        </div>
+        <div class="customer-quote-details-actions">
+          <button class="secondary-action" type="button" data-customer-quote-reenter="${escapeHtml(quote.id)}">${t("Use as New Quote")}</button>
+          <button class="secondary-action" type="button" data-customer-quote-close>${t("Close")}</button>
+        </div>
+      </section>
+      ${expired ? `<div class="quote-status notice-state compact-notice">${escapeHtml(t("These rates may no longer be available. Get updated rates before booking."))}</div>` : ""}
+      ${customerBookingAllowed(quote.customerId) ? "" : `<div class="quote-status notice-state compact-notice">${escapeHtml(t("Online booking is not enabled for this account. Contact customer service for assistance."))}</div>`}
+      ${rateAvailabilityNoticeHtml(quote.rateAvailability)}
+      ${customerQuoteSummaryHtml(quote, allRates, lowest)}
+      <section class="detail-section customer-rate-section">
+        <div class="customer-rate-toolbar">
+          <div>
+            <h3>${escapeHtml(t("Available Rates"))}</h3>
+            <small>${escapeHtml(t("Showing {visible}/{total} rates", { visible: visibleRates.length, total: allRates.length }))}</small>
+          </div>
+          <label>
+            ${escapeHtml(t("Search carrier"))}
+            <input type="search" value="${escapeHtml(controls.search)}" data-customer-quote-search="${escapeHtml(quote.id)}" placeholder="${escapeHtml(t("Search carrier"))}">
+          </label>
+          <label>
+            ${escapeHtml(t("Sort"))}
+            <select data-customer-quote-sort="${escapeHtml(quote.id)}">
+              <option value="lowestPrice" ${controls.sort === "lowestPrice" ? "selected" : ""}>${t("Lowest Price")}</option>
+              <option value="fastestTransit" ${controls.sort === "fastestTransit" ? "selected" : ""}>${t("Fastest Transit")}</option>
+              <option value="earliestEta" ${controls.sort === "earliestEta" ? "selected" : ""}>${t("Earliest ETA")}</option>
+            </select>
+          </label>
+        </div>
+        <div class="customer-rate-list">
+          ${visibleRates.length
+            ? visibleRates.map((rate) => customerQuoteRateCardHtml(quote, rate, allRates)).join("")
+            : `<div class="empty-state">${escapeHtml(t("No rates match your search."))}</div>`}
+        </div>
+        ${canLoadMore ? `
+          <div class="rate-list-footer">
+            <button class="secondary-action" type="button" data-customer-quote-load-more="${escapeHtml(quote.id)}">${t("Load More")}</button>
+          </div>
+        ` : ""}
+      </section>
+    </div>
+  `;
+}
+
+function customerQuoteDetailsControls(quoteId) {
+  if (state.customerQuoteDetails.quoteId !== quoteId) {
+    resetCustomerQuoteDetailsControls(quoteId);
+  }
+  return state.customerQuoteDetails;
+}
+
+function customerQuoteDetailsRates(quote) {
+  const controls = customerQuoteDetailsControls(quote?.id || "");
+  const search = String(controls.search || "").trim().toLowerCase();
+  const rates = customerVisibleRates(quote).filter((rate) => {
+    if (!search) {
+      return true;
+    }
+    return carrierNameLabel(rate, quote, true).toLowerCase().includes(search);
+  });
+  return sortCustomerQuoteDetailsRates(rates, quote, controls.sort);
+}
+
+function sortCustomerQuoteDetailsRates(rates, quote, sort) {
+  return [...rates].sort((left, right) => {
+    if (sort === "fastestTransit") {
+      return compareNullableNumbers(customerRateTransitDays(left), customerRateTransitDays(right)) || compareCustomerRatePrices(left, right) || compareRateCarrierNames(left, right, quote);
+    }
+    if (sort === "earliestEta") {
+      return compareNullableNumbers(customerRateEtaTime(left), customerRateEtaTime(right)) || compareCustomerRatePrices(left, right) || compareRateCarrierNames(left, right, quote);
+    }
+    return compareCustomerRatePrices(left, right) || compareRateCarrierNames(left, right, quote);
+  });
+}
+
+function compareCustomerRatePrices(left, right) {
+  return compareNullableNumbers(validSellPrice(left), validSellPrice(right));
+}
+
+function compareRateCarrierNames(left, right, quote) {
+  return carrierNameLabel(left, quote, true).localeCompare(carrierNameLabel(right, quote, true));
+}
+
+function compareNullableNumbers(left, right) {
+  const leftValid = Number.isFinite(left);
+  const rightValid = Number.isFinite(right);
+  if (leftValid && rightValid && left !== right) {
+    return left - right;
+  }
+  if (leftValid !== rightValid) {
+    return leftValid ? -1 : 1;
+  }
+  return 0;
+}
+
+function customerQuoteRateCardHtml(quote, rate, allRates) {
+  const bookingVisible = customerQuoteBookingControlsVisible(quote);
+  const bookingAllowed = bookingVisible && rateBookingAllowedForUser(quote, rate);
+  return `
+    <article class="rate-item quote-rate-card customer-quote-rate-card">
+      <div class="rate-main">
+        <div class="rate-title-row">
+          <span class="carrier-name-badge">${escapeHtml(carrierNameLabel(rate, quote, true))}</span>
+          <span class="service-badge">${escapeHtml(formatRateService(rate?.service))}</span>
+          ${customerRateBadgesHtml(rate, allRates)}
+        </div>
+        <div class="rate-meta-row">
+          ${hasDisplayValue(rate.transitDays) ? `<span class="pill">${t("Transit")} ${escapeHtml(formatTransitDays(rate.transitDays))}</span>` : ""}
+          ${hasDisplayValue(rate.estimatedDeliveryDate) ? `<span class="pill">ETA ${escapeHtml(formatDate(rate.estimatedDeliveryDate))}</span>` : ""}
+        </div>
+      </div>
+      <div class="rate-aside customer-rate-price-aside">
+        <small>${escapeHtml(t("Your Price"))}</small>
+        <strong>${customerRatePriceHtml(rate)}</strong>
+        ${bookingVisible
+          ? bookingAllowed
+            ? `<button class="primary-action rate-book-action" type="button" data-book-rate="${escapeHtml(rate.id)}" data-book-quote="${escapeHtml(quote.id)}">${t("Book Shipment")}</button>`
+            : `<small class="helper-text booking-disabled-note">${t("Booking unavailable for this carrier.")}</small>`
+          : ""}
+      </div>
+    </article>
+  `;
+}
+
+function customerRateBadgesHtml(rate, rates) {
+  const price = validSellPrice(rate);
+  const transit = customerRateTransitDays(rate);
+  const lowestPrice = Math.min(...rates.map(validSellPrice).filter(Number.isFinite));
+  const fastestTransit = Math.min(...rates.map(customerRateTransitDays).filter(Number.isFinite));
+  const badges = [];
+  if (Number.isFinite(price) && price === lowestPrice) {
+    badges.push(`<span class="best-rate-badge">${escapeHtml(t("Lowest Price"))}</span>`);
+  }
+  if (Number.isFinite(transit) && transit === fastestTransit) {
+    badges.push(`<span class="best-rate-badge">${escapeHtml(t("Fastest"))}</span>`);
+  }
+  return badges.join("");
+}
+
+function customerRatePriceHtml(rate) {
+  const price = validSellPrice(rate);
+  return Number.isFinite(price) ? money.format(price) : escapeHtml(t("Price unavailable"));
+}
+
+function validSellPrice(rate) {
+  const raw = rate?.sellPrice;
+  if (raw === null || raw === undefined || String(raw).trim() === "") {
+    return Number.POSITIVE_INFINITY;
+  }
+  const price = Number(raw);
+  return Number.isFinite(price) && price >= 0 ? price : Number.POSITIVE_INFINITY;
+}
+
+function customerQuoteBookingControlsVisible(quote) {
+  const status = normalizeQuoteStatus(quote?.status);
+  return !["expired", "cancelled", "failed", "booked"].includes(status) && !quoteHasShipment(quote, state.shipments);
+}
+
+function customerRateTransitDays(rate) {
+  const value = rate?.transitDays;
+  if (value && typeof value === "object") {
+    const minimum = Number(value.minimum);
+    const maximum = Number(value.maximum);
+    if (Number.isFinite(minimum)) {
+      return minimum;
+    }
+    if (Number.isFinite(maximum)) {
+      return maximum;
+    }
+    return Number.POSITIVE_INFINITY;
+  }
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : Number.POSITIVE_INFINITY;
+}
+
+function customerRateEtaTime(rate) {
+  const date = parseDate(rate?.estimatedDeliveryDate);
+  return date ? date.getTime() : Number.POSITIVE_INFINITY;
+}
+
+function customerQuoteExpirationDate(quote) {
+  return [
+    quote?.expiresAt,
+    quote?.expiration,
+    quote?.expirationDate,
+    quote?.validUntil,
+    quote?.ratesExpireAt,
+    quote?.rateExpiration
+  ].map(parseDate).find(Boolean) || null;
+}
+
+function customerQuoteSummaryHtml(quote, rates, lowest) {
+  const freight = convertFreightRowsForDisplay(quote.freight, "imperial", quote.displayFreightUnits || "imperial");
+  const freightSummary = customerFreightSummary(freight, quote.displayFreightUnits || "imperial");
+  return `
+    <section class="detail-section customer-quote-summary">
+      <h3>${escapeHtml(t("Quote Summary"))}</h3>
+      <div class="customer-summary-grid">
+        ${customerSummaryItem("Quote Number", customerQuoteNumber(quote))}
+        ${customerSummaryItem("Quote Status", t(quoteStatusLabelKey(quote, state.shipments)))}
+        ${customerSummaryItem("Created", formatDateTime(quote.createdAt))}
+        ${customerSummaryItem("Reference / PO", quote.referenceNumber || t("None"))}
+        ${customerSummaryItem("Pickup company", quote.pickup?.name || t("None"))}
+        ${customerSummaryItem("Pickup address", fullAddressLabel(quote.pickup?.address))}
+        ${customerSummaryItem("Delivery company", quote.delivery?.name || t("None"))}
+        ${customerSummaryItem("Delivery address", fullAddressLabel(quote.delivery?.address))}
+        ${customerSummaryItem("Pickup ready", pickupReadyLabel(quote))}
+        ${customerSummaryItem("Total handling units", freightSummary.handlingUnits)}
+        ${customerSummaryItem("Total weight", freightSummary.totalWeight)}
+        ${customerSummaryItem("Freight class", freightSummary.freightClass)}
+        ${customerSummaryItem("Dimensions", freightSummary.dimensions)}
+        ${customerSummaryItem("Description", freightSummary.description)}
+        ${customerSummaryItem("Pickup accessorials", accessorialListLabel(quote.pickup?.accessorials))}
+        ${customerSummaryItem("Delivery accessorials", accessorialListLabel(quote.delivery?.accessorials))}
+        ${customerSummaryItem("Available rates", String(rates.length))}
+        ${customerSummaryItem("Lowest price", Number.isFinite(lowest) ? money.format(lowest) : t("Price unavailable"))}
+      </div>
+      ${freight.length > 1 ? `
+        <details class="customer-freight-details">
+          <summary>${escapeHtml(t("Freight"))}</summary>
+          <div>${freightDetailLinesHtml(freight, quote.displayFreightUnits || "imperial")}</div>
+        </details>
+      ` : ""}
+    </section>
+  `;
+}
+
+function customerSummaryItem(label, value) {
+  return `
+    <div>
+      <small>${escapeHtml(t(label))}</small>
+      <strong>${escapeHtml(String(value || t("None")))}</strong>
+    </div>
+  `;
+}
+
+function customerFreightSummary(freight, units = "imperial") {
+  const config = getFreightUnitConfig(units);
+  const handlingUnits = freight.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
+  const totalWeight = freight.reduce((sum, item) => sum + ((Number(item.quantity) || 0) * (Number(item.weight) || 0)), 0);
+  const classes = uniqueValues(freight.map((item) => item.freightClass));
+  const dimensions = uniqueValues(freight.map((item) => [item.length, item.width, item.height].filter(Boolean).join(" x ")));
+  const descriptions = uniqueValues(freight.map((item) => item.description));
+  return {
+    handlingUnits: handlingUnits || t("None"),
+    totalWeight: totalWeight ? `${totalWeight} ${config.totalWeightSummaryUnit}` : t("None"),
+    freightClass: classes.length ? classes.join(", ") : t("None"),
+    dimensions: dimensions.length ? `${dimensions.join("; ")} ${config.dimensionSummaryUnit}` : t("None"),
+    description: descriptions.length ? descriptions.join("; ") : t("None")
+  };
+}
+
+function uniqueValues(values) {
+  return Array.from(new Set(values.map((value) => String(value || "").trim()).filter(Boolean)));
+}
+
+function fullAddressLabel(address = {}) {
+  return [address.street, address.city, address.state, address.zip, address.country].filter(Boolean).join(", ") || t("None");
+}
+
+function pickupReadyLabel(quote) {
+  const date = quote.pickupReadyDate?.date || quote.pickupDate?.date || quote.pickupDate || "";
+  const time = quote.pickupReadyDate?.time || quote.pickup?.readyTime || "";
+  return [date ? formatDate(date) : "", time ? formatTimeHour(time) : ""].filter(Boolean).join(" ") || t("None");
+}
+
+function accessorialListLabel(values) {
+  const labels = Array.isArray(values)
+    ? values.filter(Boolean).map((value) => accessorialLabel(value, state.language))
+    : [];
+  return labels.length ? labels.join(", ") : t("None");
+}
+
 function quoteDetailsHtml(quote) {
   const customerView = isCustomerUser();
+  if (customerView) {
+    return customerQuoteDetailsHtml(quote);
+  }
   const bookingAllowed = customerView ? customerBookingAllowed(quote.customerId) : true;
   const quoteCarrierModes = quoteCarrierModesList(quote);
   const sortedRates = sortedQuoteRates(quote);
@@ -5225,7 +5649,7 @@ function renderQuoteResults(quote) {
           <small>${escapeHtml(priceLabel)}</small>
           <strong>${money.format(rate.sellPrice)}</strong>
           ${rateBookingAllowed
-            ? `<button class="primary-action rate-book-action" type="button" data-book-rate="${escapeHtml(rate.id)}">${t("Book Shipment")}</button>`
+            ? `<button class="primary-action rate-book-action" type="button" data-book-rate="${escapeHtml(rate.id)}" data-book-quote="${escapeHtml(quote.id)}">${t("Book Shipment")}</button>`
             : `<small class="helper-text booking-disabled-note">${t("Booking disabled for this carrier.")}</small>`}
         </div>
       </article>
@@ -5240,9 +5664,6 @@ function renderQuoteResults(quote) {
     ` : ""}
   `;
 
-  list.querySelectorAll("[data-book-rate]").forEach((button) => {
-    button.addEventListener("click", () => openBookingConfirmation(quote.id, button.dataset.bookRate));
-  });
 }
 
 function renderQuoteResultsLoading() {
@@ -5270,7 +5691,7 @@ function loadMoreQuoteRates() {
 }
 
 async function finalizeBooking(quoteId, rateId) {
-  const quote = state.currentQuote || state.quotes.find((item) => item.id === quoteId);
+  const quote = state.currentQuote?.id === quoteId ? state.currentQuote : state.quotes.find((item) => item.id === quoteId);
   const rate = quote && Array.isArray(quote.rates) ? quote.rates.find((item) => item.id === rateId) : null;
   if (isCustomerUser() && quote && rate && !rateBookingAllowedForUser(quote, rate)) {
     showToast(t("Shipment booking is disabled for this carrier."), true);

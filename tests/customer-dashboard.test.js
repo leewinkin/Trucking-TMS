@@ -67,6 +67,7 @@ assert.equal(quoteStatusLabelKey(quotes[3], shipments), "No Rates");
 assert.equal(quoteStatusLabelKey(quote("quote_failed", "2026-07-18T12:00:00Z", "failed", []), shipments), "Exception");
 assert.equal(customerQuoteNumber(quotes[0]), "Q-READYOLD");
 assert.equal(quoteLowestSellPrice(quote("quote_multi", "2026-07-18T12:00:00Z", "quoted", [{ sellPrice: 125 }, { sellPrice: 95 }])), 95);
+assert.equal(quoteLowestSellPrice(quote("quote_missing_price", "2026-07-18T12:00:00Z", "quoted", [{ sellPrice: "" }])), Number.POSITIVE_INFINITY);
 
 assert.deepEqual(
   quotes.filter((item) => quoteStatusLabelKey(item, shipments) === "Ready to Book").map((item) => item.id),
@@ -138,6 +139,9 @@ const viewMetaSlice = app.slice(app.indexOf("const viewMeta"), app.indexOf("docu
 const customerQuoteRowSlice = app.slice(app.indexOf("function customerQuoteRowHtml"), app.indexOf("function customerQuoteStatusBadgeHtml"));
 const quoteStatusBadgeSlice = app.slice(app.indexOf("function customerQuoteStatusBadgeHtml"), app.indexOf("function currentCustomer"));
 const needsAttentionSlice = app.slice(app.indexOf("function needsAttentionSectionHtml"), app.indexOf("function recentQuotesSectionHtml"));
+const customerQuoteDetailsSlice = app.slice(app.indexOf("function customerQuoteDetailsHtml"), app.indexOf("function quoteDetailsHtml"));
+const customerQuoteRateCardSlice = app.slice(app.indexOf("function customerQuoteRateCardHtml"), app.indexOf("function customerRateBadgesHtml"));
+const employeeQuoteDetailsSlice = app.slice(app.indexOf("function quoteDetailsHtml"), app.indexOf("function bookingConfirmationHtml"));
 const documentErrorSlice = app.slice(app.indexOf('if (loadState === "error")'), app.indexOf("  const bol = filterShipmentDocumentsByKind"));
 assert.match(app, /function renderDashboard\(\) {\n\s+if \(isCustomerUser\(\)\) {\n\s+renderCustomerDashboard\(\);/, "customer and employee dashboards should use separate render paths");
 assert.match(app, /function renderStaffDashboard\(\)/, "staff dashboard path should be preserved");
@@ -228,6 +232,52 @@ assert.match(app, /"Clear Filter": "清除筛选"/, "Clear Filter Chinese transl
 assert.match(app, /"Documents could not be loaded\.": "文件加载失败。"/, "document failure Chinese translation should exist");
 assert.match(app, /"Try Again": "重试"/, "document retry Chinese translation should exist");
 assert.match(app, /"Status Pending": "状态待更新"/, "pending invoice status Chinese translation should exist");
+
+assert.match(customerQuoteRateCardSlice, /<small>\$\{escapeHtml\(t\("Your Price"\)\)\}<\/small>/, "every customer quote detail rate should label sellPrice as Your Price");
+assert.match(customerQuoteRateCardSlice, /customerRatePriceHtml\(rate\)/, "customer quote detail rate cards should render customer-safe sellPrice");
+assert.match(customerQuoteDetailsSlice, /function customerRatePriceHtml\(rate\)/, "customer price formatter should exist");
+assert.match(customerQuoteDetailsSlice, /validSellPrice\(rate\)/, "customer price formatter should use rate.sellPrice validation");
+assert.match(customerQuoteDetailsSlice, /Price unavailable/, "missing sellPrice should display Price unavailable");
+assert.doesNotMatch(customerQuoteDetailsSlice, /\$0\.00|carrierCost|markup|margin|providerScac|carrierAudit|carrierExclusionAudit|rawCarrierResponse|carrierSource|carrierQuoteId|carrierRateId/, "customer quote detail HTML should not expose internal carrier or pricing fields");
+assert.match(customerQuoteRateCardSlice, /rateBookingAllowedForUser\(quote, rate\)/, "per-rate booking should use rateBookingAllowedForUser");
+assert.match(app, /state\.currentQuote\?\.id === quoteId \? state\.currentQuote : state\.quotes\.find/, "booking confirmation should resolve the clicked quote ID instead of blindly using currentQuote");
+assert.match(customerQuoteRateCardSlice, /data-book-quote="\$\{escapeHtml\(quote\.id\)\}"/, "per-rate booking buttons should carry the quote ID");
+assert.match(customerQuoteRateCardSlice, /Booking unavailable for this carrier\./, "disabled customer rates should show a compact helper instead of an active booking button");
+assert.match(customerQuoteDetailsSlice, /customerQuoteBookingControlsVisible\(quote\)/, "customer quote details should suppress booking controls for terminal quotes");
+assert.match(customerQuoteDetailsSlice, /\["expired", "cancelled", "failed", "booked"\]/, "expired, cancelled, failed, and booked quotes should not show active booking buttons");
+assert.match(customerQuoteDetailsSlice, /data-customer-quote-reenter/, "Use as New Quote should appear in the sticky header");
+assert.match(customerQuoteDetailsSlice, /data-customer-quote-close/, "sticky customer quote header should include a close action");
+assert.doesNotMatch(customerQuoteDetailsSlice, /Re-enter Quote/, "customer quote details should not keep the old bottom Re-enter Quote button");
+assert.match(customerQuoteDetailsSlice, /customerQuoteSummaryHtml\(quote, allRates, lowest\)/, "customer quote details should render a structured quote summary");
+assert.match(customerQuoteDetailsSlice, /Pickup accessorials/, "customer quote summary should include pickup accessorials");
+assert.match(customerQuoteDetailsSlice, /Delivery accessorials/, "customer quote summary should include delivery accessorials");
+assert.match(customerQuoteDetailsSlice, /Rates quoted on \{dateTime\}/, "customer quote details should show quote creation time");
+assert.match(app, /visibleCount: 12/, "customer quote details should default to 12 visible rates");
+assert.match(app, /loadMoreCustomerQuoteDetailsRates/, "customer quote details should support Load More");
+assert.match(app, /updateCustomerQuoteDetailsSearch/, "customer quote details should support carrier search");
+assert.match(customerQuoteDetailsSlice, /lowestPrice/, "customer quote details should support Lowest Price sorting");
+assert.match(customerQuoteDetailsSlice, /fastestTransit/, "customer quote details should support Fastest Transit sorting");
+assert.match(customerQuoteDetailsSlice, /earliestEta/, "customer quote details should support Earliest ETA sorting");
+assert.match(customerQuoteDetailsSlice, /price === lowestPrice/, "Lowest Price badge should support ties");
+assert.match(customerQuoteDetailsSlice, /transit === fastestTransit/, "Fastest badge should support ties");
+assert.match(customerQuoteDetailsSlice, /Online booking is not enabled for this account/, "customer booking-disabled notice should use compact customer-safe copy");
+assert.match(styles, /customer-quote-details-header[\s\S]*position: sticky/, "customer quote details header should stay sticky");
+assert.match(styles, /compact-notice[\s\S]*padding: 10px 12px/, "booking-disabled notice should remain compact");
+assert.match(styles, /customer-rate-toolbar/, "customer quote rate controls should be styled");
+assert.match(styles, /customer-quote-rate-card[\s\S]*grid-template-columns: minmax\(0, 1fr\) minmax\(160px, auto\)/, "desktop rate row should keep price and booking action on the right");
+assert.match(employeeQuoteDetailsSlice, /Quote Audit/, "employee quote audit screen should remain available");
+assert.match(employeeQuoteDetailsSlice, /quoteAuditHtml\(quote\)/, "employee quote details should retain quote audit rendering");
+assert.match(app, /"Your Price": "您的报价"/, "Your Price Chinese translation should exist");
+assert.match(app, /"Price unavailable": "价格暂不可用"/, "Price unavailable Chinese translation should exist");
+assert.match(app, /"Book Shipment": "订舱"/, "Book Shipment Chinese translation should be 订舱");
+assert.match(app, /"Use as New Quote": "复制为新报价"/, "Use as New Quote Chinese translation should exist");
+assert.match(app, /"Close": "关闭"/, "Close Chinese translation should exist");
+assert.match(app, /"Lowest Price": "最低价格"/, "Lowest Price Chinese translation should exist");
+assert.match(app, /"Fastest Transit": "最快运输"/, "Fastest Transit Chinese translation should exist");
+assert.match(app, /"Earliest ETA": "最早送达"/, "Earliest ETA Chinese translation should exist");
+assert.match(app, /"Search carrier": "搜索承运商"/, "Search carrier Chinese translation should exist");
+assert.match(app, /"Load More": "加载更多"/, "Load More Chinese translation should exist");
+assert.match(app, /"Showing \{visible\}\/\{total\} rates": "当前显示 \{visible\}\/\{total\} 条报价"/, "showing rate count Chinese translation should exist");
 
 console.log("customer dashboard tests passed");
 

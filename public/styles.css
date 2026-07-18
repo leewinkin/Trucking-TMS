@@ -597,6 +597,134 @@ button.metric {
   font-size: 20px;
 }
 
+.customer-quote-details {
+  display: grid;
+  gap: 14px;
+}
+
+.customer-quote-details-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: flex-start;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(10px);
+}
+
+.customer-quote-details-heading {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.customer-quote-details-heading p {
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.customer-quote-details-heading small {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.customer-quote-details-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.compact-notice {
+  padding: 10px 12px;
+}
+
+.customer-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.customer-summary-grid div {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #e5e9f0;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.customer-summary-grid small,
+.customer-summary-grid strong {
+  display: block;
+}
+
+.customer-summary-grid small {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.customer-summary-grid strong {
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+
+.customer-freight-details {
+  margin-top: 12px;
+}
+
+.customer-freight-details summary {
+  cursor: pointer;
+  color: #2563eb;
+  font-weight: 900;
+}
+
+.customer-rate-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 0.6fr) minmax(170px, 0.45fr);
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 12px;
+}
+
+.customer-rate-toolbar label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.customer-rate-list {
+  display: grid;
+  gap: 12px;
+}
+
+.customer-quote-rate-card {
+  grid-template-columns: minmax(0, 1fr) minmax(160px, auto);
+}
+
+.customer-rate-price-aside strong {
+  color: #0f766e;
+  font-size: 24px;
+}
+
+.best-rate-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #ccfbf1;
+  color: #0f766e;
+  font-size: 12px;
+  font-weight: 900;
+}
+
 .customer-card-title-row {
   display: flex;
   flex-wrap: wrap;
@@ -1933,6 +2061,24 @@ select:focus {
     text-align: left;
   }
 
+  .customer-quote-details-header,
+  .customer-quote-rate-card,
+  .customer-rate-toolbar,
+  .customer-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .customer-quote-details-header {
+    display: grid;
+  }
+
+  .customer-quote-details-actions,
+  .customer-rate-price-aside {
+    justify-content: flex-start;
+    justify-items: start;
+    text-align: left;
+  }
+
   .quote-meta-grid,
   .quote-stops-grid {
     grid-template-columns: 1fr;
@@ -2008,5 +2154,10 @@ select:focus {
 
   .customer-dashboard-aux-actions {
     justify-content: flex-start;
+  }
+
+  .customer-quote-details-actions,
+  .customer-rate-price-aside .rate-book-action {
+    width: 100%;
   }
 }

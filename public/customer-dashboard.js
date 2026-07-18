@@ -73,8 +73,12 @@ export function customerVisibleRates(quote) {
 
 export function quoteLowestSellPrice(quote) {
   return customerVisibleRates(quote).reduce((lowest, rate) => {
-    const value = Number(rate?.sellPrice);
-    return Number.isFinite(value) ? Math.min(lowest, value) : lowest;
+    const raw = rate?.sellPrice;
+    if (raw === null || raw === undefined || String(raw).trim() === "") {
+      return lowest;
+    }
+    const value = Number(raw);
+    return Number.isFinite(value) && value >= 0 ? Math.min(lowest, value) : lowest;
   }, Number.POSITIVE_INFINITY);
 }
 
