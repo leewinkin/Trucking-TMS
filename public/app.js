@@ -4,6 +4,23 @@ import {
   accessorialExplanation,
   accessorialLabel
 } from "./accessorial-catalog.js";
+import {
+  customerDashboardViewModel,
+  customerVisibleRates,
+  isActiveShipment,
+  isDeliveredThisMonth,
+  isOpenInvoice,
+  isQuoteReadyToBook,
+  normalizeInvoiceStatus,
+  normalizeQuoteStatus,
+  normalizeShipmentStatus,
+  quoteHasShipment,
+  quoteStatusLabelKey,
+  recentByCreatedAt,
+  reliableDeliveredDate,
+  shipmentStatusLabelKey,
+  shipmentStatusVariant
+} from "./customer-dashboard.js";
 
 const money = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -19,6 +36,7 @@ const translations = {
     "Trucking TMS": "卡车运输 TMS",
     "Employee sign in": "员工登录",
     "Operations portal": "运营门户",
+    "Customer Portal": "客户门户",
     "Email or username": "邮箱或用户名",
     "Password": "密码",
     "Sign In": "登录",
@@ -31,9 +49,11 @@ const translations = {
     "Shipments": "发运",
     "Invoices": "发票",
     "Invoice": "发票",
+    "Quotes": "报价",
     "Edit": "编辑",
     "Logout": "退出登录",
     "Refresh": "刷新",
+    "Refreshing...": "刷新中...",
     "Watch quote activity, shipment status, and invoice drafts.": "查看报价动态、发运状态和发票草稿。",
     "Track your quotes, shipments, and invoices.": "跟踪你的报价、发运和发票。",
     "Manage customer accounts and tariff rules.": "管理客户账户和费率规则。",
@@ -45,6 +65,83 @@ const translations = {
     "My Invoices": "我的发票",
     "Draft invoices": "发票草稿",
     "Recent Shipments": "最近发运",
+    "Welcome back, {companyName}": "欢迎回来，{companyName}",
+    "Manage your quotes, shipments, documents, and invoices.": "管理您的报价、货件、文件和账单。",
+    "+ New Quote": "+ 新建报价",
+    "Repeat Last Quote": "重复上次报价",
+    "No previous quotes to repeat.": "暂无可重复的历史报价。",
+    "Ready to Book": "可以订舱",
+    "Ready to Book KPI": "可订舱报价",
+    "Active Shipments": "运输中货件",
+    "Open Invoices": "未结账单",
+    "Delivered This Month": "本月已送达",
+    "Quotes with available rates": "已有可用运价的报价",
+    "Booked and moving shipments": "已订舱或运输中的货件",
+    "Invoices requiring review or payment": "需要查看或付款的账单",
+    "Completed this calendar month": "本自然月已完成",
+    "View quotes": "查看报价",
+    "View shipments": "查看货件",
+    "View invoices": "查看账单",
+    "View delivered": "查看已送达",
+    "Filter: {filter}": "筛选：{filter}",
+    "Showing {filter}.": "当前查看：{filter}。",
+    "Ready-to-book quotes": "可订舱报价",
+    "Active shipments": "运输中货件",
+    "Open invoices": "未结账单",
+    "Delivered shipments this month": "本月已送达货件",
+    "Booked": "已订舱",
+    "Pickup Scheduled": "已安排提货",
+    "Picked Up": "已提货",
+    "In Transit": "运输中",
+    "Out for Delivery": "派送中",
+    "Delivered": "已送达",
+    "Exception": "运输异常",
+    "Cancelled": "已取消",
+    "Status Pending": "状态待更新",
+    "No active shipments. Book a quote to start a shipment.": "当前没有运输中的货件，您可以先选择报价并完成订舱。",
+    "View all shipments": "查看全部货件",
+    "View Details": "查看详情",
+    "Track": "查询轨迹",
+    "Documents": "文件",
+    "ETA": "预计送达",
+    "Pickup date": "提货日期",
+    "Needs Attention": "需要处理",
+    "You're all caught up.": "目前没有需要处理的事项。",
+    "Quote ready to book": "报价可以订舱",
+    "Shipment requires attention": "货件需要关注",
+    "Invoice overdue": "账单已逾期",
+    "Invoice due soon": "账单即将到期",
+    "Review quote": "查看报价",
+    "Review shipment": "查看货件",
+    "Review invoice": "查看账单",
+    "Recent Quotes": "最近报价",
+    "No quotes yet. Create your first quote.": "您还没有报价记录，请创建第一份报价。",
+    "View all quotes": "查看全部报价",
+    "Repeat Quote": "重复报价",
+    "No Rates": "暂无报价",
+    "Expired": "已过期",
+    "available rate(s)": "条可用报价",
+    "Lowest price": "最低报价",
+    "Quick Actions": "快捷操作",
+    "View Saved Addresses": "查看地址簿",
+    "Contact Support": "联系客服",
+    "Customer support": "客户服务",
+    "Please contact customer service for help with your shipment, invoice, or quote.": "如需货件、账单或报价帮助，请联系客服。",
+    "Track Shipment": "查询货件",
+    "Track a shipment": "查询货件",
+    "Enter a confirmation number or PO/reference number.": "请输入确认号或 PO/参考号。",
+    "Confirmation or PO/reference number": "确认号或 PO/参考号",
+    "Search": "搜索",
+    "No matching shipments found.": "未找到匹配货件。",
+    "Select a shipment": "选择货件",
+    "Bill of Lading": "提单",
+    "Proof of Delivery": "签收证明",
+    "Other Documents": "其他文件",
+    "Available": "可用",
+    "Pending": "待生成",
+    "Unavailable": "不可用",
+    "Loading customer dashboard...": "正在加载客户仪表盘...",
+    "Dashboard data could not be refreshed. Please try again.": "仪表盘数据无法刷新，请重试。",
     "Next Setup Steps": "下一步设置",
     "Add real customers.": "添加真实客户。",
     "Set customer markup rules.": "设置客户加价规则。",
@@ -276,9 +373,9 @@ const translations = {
     "Suggested freight class: {value}": "建议运费等级：{value}",
     "View Quote": "查看报价",
     "View Shipment": "查看发运",
-    "Track": "跟踪",
+    "Track": "查询轨迹",
     "BOL": "提单",
-    "POD": "送货回单",
+    "POD": "签收证明",
     "View BOL": "查看提单",
     "View POD": "查看回单",
     "View Payload": "查看载荷",
@@ -332,10 +429,10 @@ const translations = {
     "Tracking {confirmationNumber}": "跟踪 {confirmationNumber}",
     "Loading tracking details...": "正在加载跟踪详情...",
     "Tracking lookup failed.": "跟踪查询失败。",
-    "Proof of Delivery": "送货回单",
+    "Proof of Delivery": "签收证明",
     "Bill of Lading": "提单",
     "Carrier Documents": "承运商文档",
-    "Documents": "文档",
+    "Documents": "文件",
     "Document": "文档",
     "Loading proof of delivery...": "正在加载送货回单...",
     "Loading bill of lading...": "正在加载提单...",
@@ -443,6 +540,11 @@ function setLanguage(language) {
   renderInvoices();
   renderDashboard();
   renderCustomers();
+  renderUserChip();
+  const portalSubtitle = document.getElementById("portalSubtitle");
+  if (portalSubtitle) {
+    portalSubtitle.textContent = isCustomerUser() ? t("Customer Portal") : t("Operations portal");
+  }
   populateTimeSelects();
   enhanceAccessorialDropdowns();
   document.querySelectorAll(".accessorial-dropdown").forEach((details) => syncAccessorialDropdown(details));
@@ -665,6 +767,9 @@ const state = {
   pendingQuoteReentry: null,
   pendingBooking: null,
   invoiceTab: "mothership",
+  dashboardLoading: false,
+  dashboardError: "",
+  dashboardFilter: "",
   modal: null
 };
 
@@ -679,7 +784,9 @@ const accessorialTooltipState = {
 
 const viewMeta = {
   dashboard: () =>
-    [t("Dashboard"), isStaffUser() ? t("Watch quote activity, shipment status, and invoice drafts.") : t("Track your quotes, shipments, and invoices.")],
+    isCustomerUser()
+      ? [t("Welcome back, {companyName}", { companyName: currentCustomer()?.companyName || t("Your account") }), t("Manage your quotes, shipments, documents, and invoices.")]
+      : [t("Dashboard"), t("Watch quote activity, shipment status, and invoice drafts.")],
   customers: [t("Customers"), t("Manage customer accounts and tariff rules.")],
   quote: [t("New Quote"), ""],
   shipments: [t("Shipments"), t("Review local bookings and carrier shipment references.")],
@@ -729,9 +836,7 @@ function wireNavigation() {
     button.addEventListener("click", () => setView(button.dataset.view));
   });
 
-  document.querySelectorAll("[data-modal]").forEach((button) => {
-    button.addEventListener("click", () => openDashboardModal(button.dataset.modal));
-  });
+  bindDashboardModalButtons();
 
   document.getElementById("refreshButton").addEventListener("click", refreshAll);
   document.getElementById("logoutButton").addEventListener("click", logout);
@@ -822,6 +927,36 @@ function wireNavigation() {
     const invoiceCarrierPodButton = event.target.closest("[data-view-pod-carrier-entity]");
     if (invoiceCarrierPodButton) {
       openCarrierShipmentDocuments(invoiceCarrierPodButton.dataset.viewPodCarrierEntity, "pod");
+      return;
+    }
+
+    const dashboardActionButton = event.target.closest("[data-customer-dashboard-action]");
+    if (dashboardActionButton) {
+      handleCustomerDashboardAction(dashboardActionButton.dataset.customerDashboardAction);
+      return;
+    }
+
+    const dashboardFilterButton = event.target.closest("[data-dashboard-filter]");
+    if (dashboardFilterButton) {
+      navigateCustomerDashboardFilter(dashboardFilterButton.dataset.dashboardFilter);
+      return;
+    }
+
+    const customerDocumentsButton = event.target.closest("[data-customer-documents]");
+    if (customerDocumentsButton) {
+      openCustomerShipmentDocuments(customerDocumentsButton.dataset.customerDocuments);
+      return;
+    }
+
+    const trackSearchButton = event.target.closest("[data-track-search]");
+    if (trackSearchButton) {
+      runTrackShipmentSearch();
+      return;
+    }
+
+    const trackResultButton = event.target.closest("[data-track-result]");
+    if (trackResultButton) {
+      openShipmentTracking(trackResultButton.dataset.trackResult);
       return;
     }
 
@@ -1116,7 +1251,26 @@ async function bootApp() {
   }
 }
 
+function bindDashboardModalButtons(root = document) {
+  root.querySelectorAll("[data-modal]").forEach((button) => {
+    if (button.dataset.modalBound === "true") {
+      return;
+    }
+    button.addEventListener("click", () => openDashboardModal(button.dataset.modal));
+    button.dataset.modalBound = "true";
+  });
+}
+
 async function refreshAll(options = {}) {
+  const refreshButton = document.getElementById("refreshButton");
+  state.dashboardLoading = true;
+  state.dashboardError = "";
+  if (refreshButton) {
+    refreshButton.disabled = true;
+    refreshButton.textContent = t("Refreshing...");
+    refreshButton.setAttribute("aria-busy", "true");
+  }
+  renderDashboard();
   try {
     const selectedQuoteCustomerId = document.getElementById("quoteCustomerSelect")?.value || "";
     const addressBookRequest = isStaffUser() && !selectedQuoteCustomerId
@@ -1166,7 +1320,17 @@ async function refreshAll(options = {}) {
       applyPermissions();
       return;
     }
+    state.dashboardError = t("Dashboard data could not be refreshed. Please try again.");
+    renderDashboard();
     showToast(error.message, true);
+  } finally {
+    state.dashboardLoading = false;
+    if (refreshButton) {
+      refreshButton.disabled = false;
+      refreshButton.textContent = t("Refresh");
+      refreshButton.setAttribute("aria-busy", "false");
+    }
+    renderDashboard();
   }
 }
 
@@ -1281,6 +1445,10 @@ function applyPermissions() {
   if (!isStaff && document.querySelector(".nav-button.active")?.dataset.view === "customers") {
     setView("dashboard");
   }
+  const portalSubtitle = document.getElementById("portalSubtitle");
+  if (portalSubtitle) {
+    portalSubtitle.textContent = isCustomer ? t("Customer Portal") : t("Operations portal");
+  }
   renderCarrierPreferences();
   renderUserChip();
   renderDashboardSupportPanel();
@@ -1372,6 +1540,15 @@ function renderUserChip() {
     return;
   }
 
+  if (isCustomerUser()) {
+    const customer = currentCustomer();
+    chip.innerHTML = `
+      <strong>${escapeHtml(customer?.companyName || t("Your account"))}</strong>
+      <small>${escapeHtml(state.user.email || "")}</small>
+    `;
+    return;
+  }
+
   chip.textContent = `${state.user.email} · ${state.user.role}`;
 }
 
@@ -1395,6 +1572,11 @@ function wireModal() {
     }
   });
   document.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && event.target?.id === "trackShipmentSearchInput") {
+      event.preventDefault();
+      runTrackShipmentSearch();
+      return;
+    }
     if (event.key === "Escape") {
       closeModal();
     }
@@ -2584,7 +2766,9 @@ function shipmentRow(shipment, options = {}) {
   const showActions = options.showActions !== false;
   const priceLabel = customerPriceLabel();
   const carrierLabel = shipmentCarrierLabel(shipment);
-  const statusPill = shipment.status === "booked_with_carrier" ? "" : `<span class="pill">${escapeHtml(shipment.status)}</span>`;
+  const statusPill = isCustomerUser()
+    ? customerShipmentStatusBadgeHtml(shipment.status)
+    : shipment.status === "booked_with_carrier" ? "" : `<span class="pill">${escapeHtml(shipment.status)}</span>`;
   return `
     <article class="row-item">
       <div>
@@ -3090,7 +3274,9 @@ function shipmentDetailsHtml(shipment, events = []) {
     latestEvent && latestEvent.description && String(latestEvent.description).trim().toLowerCase() !== "shipment details updated."
       ? latestEvent.description
       : "";
-  const statusPill = shipment.status === "booked_with_carrier" ? "" : `<span class="pill">${escapeHtml(shipment.status)}</span>`;
+  const statusPill = isCustomerUser()
+    ? customerShipmentStatusBadgeHtml(shipment.status)
+    : shipment.status === "booked_with_carrier" ? "" : `<span class="pill">${escapeHtml(shipment.status)}</span>`;
   return `
     <div class="detail-grid">
       ${detailSection(
@@ -4143,6 +4329,24 @@ function decorateCustomerRows(list) {
 }
 
 function renderDashboard() {
+  if (isCustomerUser()) {
+    renderCustomerDashboard();
+    return;
+  }
+
+  renderStaffDashboard();
+}
+
+function renderStaffDashboard() {
+  const dashboard = document.getElementById("dashboardView");
+  if (!dashboard) {
+    return;
+  }
+  if (!dashboard.querySelector(".metric-grid")) {
+    dashboard.className = "view active";
+    dashboard.innerHTML = staffDashboardShellHtml();
+    bindDashboardModalButtons(dashboard);
+  }
   document.getElementById("customerCount").textContent = state.customers.length;
   document.getElementById("quoteCount").textContent = state.quotes.length;
   document.getElementById("shipmentCount").textContent = state.shipments.length;
@@ -4154,6 +4358,519 @@ function renderDashboard() {
     : `<div class="empty-state">${t("No shipments booked yet.")}</div>`;
 
   renderDashboardSupportPanel();
+}
+
+function staffDashboardShellHtml() {
+  return `
+    <div class="metric-grid">
+      <button class="metric metric-button" type="button" data-modal="customers" id="customersMetricButton">
+        <span id="customerMetricLabel">${t("Customers")}</span>
+        <strong id="customerCount">0</strong>
+      </button>
+      <button class="metric metric-button" type="button" data-modal="quotes">
+        <span id="quoteMetricLabel">${t("Quotes")}</span>
+        <strong id="quoteCount">0</strong>
+      </button>
+      <button class="metric metric-button" type="button" data-modal="shipments">
+        <span id="shipmentMetricLabel">${t("Shipments")}</span>
+        <strong id="shipmentCount">0</strong>
+      </button>
+      <button class="metric metric-button" type="button" data-modal="invoices">
+        <span id="invoiceMetricLabel">${t("Draft invoices")}</span>
+        <strong id="invoiceCount">0</strong>
+      </button>
+    </div>
+    <div class="two-column">
+      <section class="panel">
+        <div class="panel-heading">
+          <h2>${t("Recent Shipments")}</h2>
+        </div>
+        <div id="recentShipments" class="table-list"></div>
+      </section>
+      <section class="panel">
+        <div class="panel-heading">
+          <h2 id="dashboardSupportHeading">${t("Next Setup Steps")}</h2>
+        </div>
+        <div id="dashboardSupportBody"></div>
+      </section>
+    </div>
+  `;
+}
+
+function renderCustomerDashboard() {
+  const dashboard = document.getElementById("dashboardView");
+  if (!dashboard) {
+    return;
+  }
+  dashboard.className = "view active customer-dashboard-view";
+  if (state.dashboardLoading && !state.quotes.length && !state.shipments.length && !state.invoices.length) {
+    dashboard.innerHTML = `<div class="customer-dashboard-shell"><div class="empty-state" aria-live="polite">${t("Loading customer dashboard...")}</div></div>`;
+    return;
+  }
+
+  const customer = currentCustomer();
+  const model = customerDashboardViewModel({
+    quotes: state.quotes,
+    shipments: state.shipments,
+    invoices: state.invoices
+  });
+  const latestQuote = latestCustomerQuote();
+  const repeatDisabled = !latestQuote;
+  dashboard.innerHTML = `
+    <div class="customer-dashboard-shell">
+      ${state.dashboardError ? `<div class="quote-status notice-state" role="alert">${escapeHtml(state.dashboardError)}</div>` : ""}
+      ${state.dashboardFilter ? `<div class="customer-filter-note">${escapeHtml(t("Showing {filter}.", { filter: t(state.dashboardFilter) }))}</div>` : ""}
+      <section class="customer-dashboard-hero">
+        <div>
+          <p class="eyebrow">${escapeHtml(t("Customer Portal"))}</p>
+          <h2>${escapeHtml(t("Welcome back, {companyName}", { companyName: customer?.companyName || t("Your account") }))}</h2>
+          <p>${escapeHtml(t("Manage your quotes, shipments, documents, and invoices."))}</p>
+        </div>
+        <div class="customer-dashboard-actions" aria-label="${escapeHtml(t("Quick Actions"))}">
+          <button class="primary-action" type="button" data-customer-dashboard-action="newQuote">${t("+ New Quote")}</button>
+          <button class="secondary-action" type="button" data-customer-dashboard-action="trackShipment">${t("Track Shipment")}</button>
+          <button class="secondary-action" type="button" data-customer-dashboard-action="repeatLastQuote" ${repeatDisabled ? "disabled" : ""} aria-label="${escapeHtml(repeatDisabled ? t("No previous quotes to repeat.") : t("Repeat Last Quote"))}">${t("Repeat Last Quote")}</button>
+        </div>
+      </section>
+      ${customerKpiGridHtml(model.metrics)}
+      <div class="customer-dashboard-main">
+        ${activeShipmentsSectionHtml(model.activeShipments.slice(0, 5))}
+        ${needsAttentionSectionHtml(model.attentionItems.slice(0, 5))}
+      </div>
+      <div class="customer-dashboard-lower">
+        ${recentQuotesSectionHtml(model.recentQuotes.slice(0, 5))}
+        ${quickActionsPanelHtml(Boolean(latestQuote))}
+      </div>
+    </div>
+  `;
+}
+
+function customerKpiGridHtml(metrics) {
+  const cards = [
+    {
+      key: "readyQuotes",
+      label: t("Ready to Book KPI"),
+      count: metrics.readyToBook,
+      helper: t("Quotes with available rates"),
+      action: t("View quotes"),
+      filter: "Ready-to-book quotes"
+    },
+    {
+      key: "activeShipments",
+      label: t("Active Shipments"),
+      count: metrics.activeShipments,
+      helper: t("Booked and moving shipments"),
+      action: t("View shipments"),
+      filter: "Active shipments"
+    },
+    {
+      key: "openInvoices",
+      label: t("Open Invoices"),
+      count: metrics.openInvoices,
+      helper: t("Invoices requiring review or payment"),
+      action: t("View invoices"),
+      filter: "Open invoices"
+    },
+    {
+      key: "deliveredThisMonth",
+      label: t("Delivered This Month"),
+      count: metrics.deliveredThisMonth,
+      helper: t("Completed this calendar month"),
+      action: t("View delivered"),
+      filter: "Delivered shipments this month"
+    }
+  ];
+  return `
+    <section class="customer-kpi-grid" aria-label="${escapeHtml(t("Dashboard"))}">
+      ${cards.map((card) => `
+        <button class="customer-kpi-card" type="button" data-dashboard-filter="${escapeHtml(card.key)}">
+          <span>${escapeHtml(card.label)}</span>
+          <strong>${escapeHtml(String(card.count))}</strong>
+          <small>${escapeHtml(card.helper)}</small>
+          <em>${escapeHtml(card.action)} →</em>
+        </button>
+      `).join("")}
+    </section>
+  `;
+}
+
+function activeShipmentsSectionHtml(shipments) {
+  return `
+    <section class="panel customer-panel customer-active-shipments">
+      <div class="panel-heading">
+        <h2>${t("Active Shipments")}</h2>
+        <button class="link-action" type="button" data-dashboard-filter="activeShipments">${t("View all shipments")}</button>
+      </div>
+      <div class="customer-card-stack">
+        ${shipments.length
+          ? shipments.map(customerShipmentCardHtml).join("")
+          : `
+            <div class="empty-state action-empty">
+              <p>${t("No active shipments. Book a quote to start a shipment.")}</p>
+              <button class="primary-action" type="button" data-customer-dashboard-action="newQuote">${t("+ New Quote")}</button>
+            </div>
+          `}
+      </div>
+    </section>
+  `;
+}
+
+function customerShipmentCardHtml(shipment) {
+  const eta = shipment.estimatedDeliveryDate || shipment.eta || "";
+  const pickupDate = shipment.pickupDate?.date || shipment.pickupDate || "";
+  return `
+    <article class="customer-shipment-card">
+      <div class="customer-card-title-row">
+        ${customerShipmentStatusBadgeHtml(shipment.status)}
+        <strong>${escapeHtml(shipment.confirmationNumber || t("Status Pending"))}</strong>
+      </div>
+      <p>${escapeHtml(routeLabel(shipment.pickup, shipment.delivery))}</p>
+      <div class="customer-safe-meta">
+        <span>${escapeHtml(shipmentCarrierLabel(shipment))}</span>
+        ${eta ? `<span>${t("ETA")} ${escapeHtml(formatDate(eta))}</span>` : ""}
+        ${pickupDate ? `<span>${t("Pickup date")} ${escapeHtml(formatDate(pickupDate))}</span>` : ""}
+        ${shipment.referenceNumber ? `<span>${t("PO")} ${escapeHtml(shipment.referenceNumber)}</span>` : ""}
+        ${hasDisplayValue(shipment.sellPrice) ? `<span>${escapeHtml(customerPriceLabel())} ${money.format(Number(shipment.sellPrice || 0))}</span>` : ""}
+      </div>
+      <div class="row-actions">
+        <button class="secondary-action" type="button" data-view-shipment="${escapeHtml(shipment.id)}">${t("View Details")}</button>
+        <button class="secondary-action" type="button" data-track-shipment="${escapeHtml(shipment.id)}">${t("Track")}</button>
+        <button class="secondary-action" type="button" data-customer-documents="${escapeHtml(shipment.id)}">${t("Documents")}</button>
+      </div>
+    </article>
+  `;
+}
+
+function needsAttentionSectionHtml(items) {
+  return `
+    <section class="panel customer-panel customer-attention">
+      <div class="panel-heading">
+        <h2>${t("Needs Attention")}</h2>
+      </div>
+      <div class="customer-card-stack">
+        ${items.length ? items.map(attentionItemHtml).join("") : `<div class="empty-state">${t("You're all caught up.")}</div>`}
+      </div>
+    </section>
+  `;
+}
+
+function attentionItemHtml(item) {
+  const config = {
+    shipment_exception: {
+      marker: "!",
+      title: t("Shipment requires attention"),
+      detail: item.shipment?.confirmationNumber || "",
+      action: t("Review shipment"),
+      actionAttrs: `data-track-shipment="${escapeHtml(item.shipment?.id || "")}"`
+    },
+    invoice_overdue: {
+      marker: "!",
+      title: t("Invoice overdue"),
+      detail: item.invoice?.invoiceNumber || "",
+      action: t("Review invoice"),
+      actionAttrs: `data-view-invoice="${escapeHtml(item.invoice?.id || "")}"`
+    },
+    invoice_due_soon: {
+      marker: "•",
+      title: t("Invoice due soon"),
+      detail: item.invoice?.invoiceNumber || "",
+      action: t("Review invoice"),
+      actionAttrs: `data-view-invoice="${escapeHtml(item.invoice?.id || "")}"`
+    },
+    ready_quote: {
+      marker: "✓",
+      title: t("Quote ready to book"),
+      detail: routeLabel(item.quote?.pickup, item.quote?.delivery),
+      action: t("Review quote"),
+      actionAttrs: `data-view-quote="${escapeHtml(item.quote?.id || "")}"`
+    }
+  }[item.type];
+  return `
+    <article class="attention-item">
+      <span class="attention-marker" aria-hidden="true">${escapeHtml(config.marker)}</span>
+      <div>
+        <strong>${escapeHtml(config.title)}</strong>
+        <small>${escapeHtml(config.detail || "")}${item.date ? ` · ${escapeHtml(formatDate(item.date))}` : ""}</small>
+      </div>
+      <button class="link-action" type="button" ${config.actionAttrs}>${escapeHtml(config.action)} →</button>
+    </article>
+  `;
+}
+
+function recentQuotesSectionHtml(quotes) {
+  return `
+    <section class="panel customer-panel">
+      <div class="panel-heading">
+        <h2>${t("Recent Quotes")}</h2>
+        <button class="link-action" type="button" data-dashboard-filter="readyQuotes">${t("View all quotes")}</button>
+      </div>
+      <div class="customer-card-stack">
+        ${quotes.length
+          ? quotes.map(customerQuoteRowHtml).join("")
+          : `
+            <div class="empty-state action-empty">
+              <p>${t("No quotes yet. Create your first quote.")}</p>
+              <button class="primary-action" type="button" data-customer-dashboard-action="newQuote">${t("+ New Quote")}</button>
+            </div>
+          `}
+      </div>
+    </section>
+  `;
+}
+
+function customerQuoteRowHtml(quote) {
+  const rates = customerVisibleRates(quote);
+  const lowest = rates.reduce((min, rate) => Math.min(min, Number(rate.sellPrice || Infinity)), Infinity);
+  return `
+    <article class="customer-quote-row">
+      <div>
+        <strong>${escapeHtml(routeLabel(quote.pickup, quote.delivery))}</strong>
+        <small>${escapeHtml(formatDate(quote.createdAt))}</small>
+        <div class="customer-safe-meta">
+          <span>${escapeHtml(String(rates.length))} ${t("available rate(s)")}</span>
+          ${Number.isFinite(lowest) ? `<span>${t("Lowest price")} ${money.format(lowest)}</span>` : ""}
+          <span>${escapeHtml(t(quoteStatusLabelKey(quote, state.shipments)))}</span>
+        </div>
+      </div>
+      <div class="row-actions">
+        <button class="secondary-action" type="button" data-view-quote="${escapeHtml(quote.id)}">${t("View Quote")}</button>
+        <button class="secondary-action" type="button" data-reenter-quote="${escapeHtml(quote.id)}">${t("Repeat Quote")}</button>
+      </div>
+    </article>
+  `;
+}
+
+function quickActionsPanelHtml(hasQuote) {
+  return `
+    <section class="panel customer-panel customer-quick-actions">
+      <div class="panel-heading">
+        <h2>${t("Quick Actions")}</h2>
+      </div>
+      <div class="quick-action-grid">
+        <button class="secondary-action" type="button" data-customer-dashboard-action="newQuote">${t("New Quote")}</button>
+        <button class="secondary-action" type="button" data-customer-dashboard-action="repeatLastQuote" ${hasQuote ? "" : "disabled"}>${t("Repeat Last Quote")}</button>
+        <button class="secondary-action" type="button" data-customer-dashboard-action="trackShipment">${t("Track Shipment")}</button>
+        <button class="secondary-action" type="button" data-customer-dashboard-action="savedAddresses">${t("View Saved Addresses")}</button>
+        <button class="secondary-action" type="button" data-customer-dashboard-action="contactSupport">${t("Contact Support")}</button>
+      </div>
+    </section>
+  `;
+}
+
+function currentCustomer() {
+  return state.customers.find((customer) => customer.id === state.user?.customerId) || state.customers[0] || null;
+}
+
+function latestCustomerQuote() {
+  return recentByCreatedAt(state.quotes)[0] || null;
+}
+
+function routeLabel(pickup, delivery) {
+  const pickupLabel = cityStateLabel(pickup?.address || pickup);
+  const deliveryLabel = cityStateLabel(delivery?.address || delivery);
+  return [pickupLabel, deliveryLabel].filter(Boolean).join(" → ") || t("Status Pending");
+}
+
+function cityStateLabel(address = {}) {
+  return [address.city, address.state].filter(Boolean).join(", ");
+}
+
+function customerShipmentStatusBadgeHtml(status) {
+  const variant = shipmentStatusVariant(status);
+  const label = t(shipmentStatusLabelKey(status));
+  return `<span class="status-badge status-${escapeHtml(variant)}">${escapeHtml(label)}</span>`;
+}
+
+function handleCustomerDashboardAction(action) {
+  if (!isCustomerUser()) {
+    return;
+  }
+  if (action === "newQuote") {
+    state.dashboardFilter = "";
+    setView("quote");
+    window.requestAnimationFrame(() => {
+      if (isPickupAutofillEmpty()) {
+        autofillPickupFromCustomer(state.user?.customerId, true);
+      }
+    });
+    return;
+  }
+  if (action === "repeatLastQuote") {
+    const quote = latestCustomerQuote();
+    if (quote) {
+      reenterQuote(quote.id);
+    }
+    return;
+  }
+  if (action === "trackShipment") {
+    openTrackShipmentModal();
+    return;
+  }
+  if (action === "savedAddresses") {
+    setView("quote");
+    window.requestAnimationFrame(() => {
+      const tools = document.querySelector("[data-address-book-tools]");
+      tools?.scrollIntoView({ block: "center", behavior: "smooth" });
+      tools?.querySelector("select, input, button")?.focus();
+    });
+    return;
+  }
+  if (action === "contactSupport") {
+    openContactSupport();
+  }
+}
+
+function navigateCustomerDashboardFilter(filter) {
+  if (!isCustomerUser()) {
+    openDashboardModal(filter);
+    return;
+  }
+  const filterLabels = {
+    readyQuotes: "Ready-to-book quotes",
+    activeShipments: "Active shipments",
+    openInvoices: "Open invoices",
+    deliveredThisMonth: "Delivered shipments this month"
+  };
+  state.dashboardFilter = filterLabels[filter] || "";
+  if (state.dashboardFilter) {
+    showToast(t("Filter: {filter}", { filter: t(state.dashboardFilter) }));
+  }
+  if (filter === "readyQuotes") {
+    setView("quote");
+    return;
+  }
+  if (filter === "openInvoices") {
+    setView("invoices");
+    return;
+  }
+  setView("shipments");
+}
+
+function openTrackShipmentModal() {
+  openModal(
+    t("Track a shipment"),
+    `
+      <div class="track-shipment-modal">
+        <p>${escapeHtml(t("Enter a confirmation number or PO/reference number."))}</p>
+        <label>
+          ${escapeHtml(t("Confirmation or PO/reference number"))}
+          <input id="trackShipmentSearchInput" type="search" autocomplete="off">
+        </label>
+        <div class="modal-actions">
+          <button class="primary-action" type="button" data-track-search>${t("Search")}</button>
+        </div>
+        <div id="trackShipmentSearchResults" class="customer-card-stack" aria-live="polite"></div>
+      </div>
+    `
+  );
+  window.requestAnimationFrame(() => document.getElementById("trackShipmentSearchInput")?.focus());
+}
+
+function runTrackShipmentSearch() {
+  const input = document.getElementById("trackShipmentSearchInput");
+  const results = document.getElementById("trackShipmentSearchResults");
+  if (!input || !results) {
+    return;
+  }
+  const query = String(input.value || "").trim().toLowerCase();
+  if (!query) {
+    results.innerHTML = `<div class="empty-state">${t("No matching shipments found.")}</div>`;
+    return;
+  }
+  const exact = state.shipments.filter((shipment) =>
+    [shipment.confirmationNumber, shipment.referenceNumber].some((value) => String(value || "").trim().toLowerCase() === query)
+  );
+  if (exact.length === 1) {
+    openShipmentTracking(exact[0].id);
+    return;
+  }
+  const matches = exact.length
+    ? exact
+    : state.shipments.filter((shipment) =>
+        [shipment.confirmationNumber, shipment.referenceNumber].some((value) => String(value || "").toLowerCase().includes(query))
+      );
+  if (!matches.length) {
+    results.innerHTML = `<div class="empty-state">${t("No matching shipments found.")}</div>`;
+    return;
+  }
+  results.innerHTML = `
+    <strong>${t("Select a shipment")}</strong>
+    ${matches.slice(0, 8).map((shipment) => `
+      <button class="track-result" type="button" data-track-result="${escapeHtml(shipment.id)}">
+        <span>${escapeHtml(shipment.confirmationNumber || "")}</span>
+        <small>${escapeHtml(routeLabel(shipment.pickup, shipment.delivery))}${shipment.referenceNumber ? ` · PO ${escapeHtml(shipment.referenceNumber)}` : ""}</small>
+      </button>
+    `).join("")}
+  `;
+}
+
+function openContactSupport() {
+  const configuredEmail = String(window.TMS_PUBLIC_SUPPORT_EMAIL || window.PUBLIC_SUPPORT_EMAIL || "").trim();
+  if (configuredEmail) {
+    window.location.href = `mailto:${encodeURIComponent(configuredEmail)}?subject=${encodeURIComponent("Customer portal support")}`;
+    return;
+  }
+  openModal(t("Customer support"), `<div class="empty-state">${escapeHtml(t("Please contact customer service for help with your shipment, invoice, or quote."))}</div>`);
+}
+
+async function openCustomerShipmentDocuments(shipmentId) {
+  const shipment = state.shipments.find((item) => item.id === shipmentId);
+  if (!shipment) {
+    return;
+  }
+  const title = `${t("Documents")} ${shipment.confirmationNumber || ""}`.trim();
+  openModal(title, customerDocumentsPanelHtml(shipment, [], true));
+  try {
+    const response = await api(`/api/shipments/${shipmentId}/documents`);
+    if (!state.modal || state.modal.title !== title) {
+      return;
+    }
+    paintModal(title, customerDocumentsPanelHtml(shipment, response.documents || [], false));
+  } catch {
+    if (!state.modal || state.modal.title !== title) {
+      return;
+    }
+    paintModal(title, customerDocumentsPanelHtml(shipment, [], false));
+  }
+}
+
+function customerDocumentsPanelHtml(shipment, documents = [], loading = false) {
+  const bol = filterShipmentDocumentsByKind(documents, "bol");
+  const pod = filterShipmentDocumentsByKind(documents, "pod");
+  const other = documents.filter((document) => !bol.includes(document) && !pod.includes(document));
+  const rows = [
+    customerDocumentStatusRow(t("Bill of Lading"), bol, loading, shipment),
+    customerDocumentStatusRow(t("Proof of Delivery"), pod, loading, shipment),
+    customerDocumentStatusRow(t("Other Documents"), other, loading, shipment)
+  ];
+  return `
+    <div class="detail-grid">
+      ${detailSection(
+        t("Documents"),
+        `
+          <div class="meta-line">
+            <span class="pill">${escapeHtml(shipment.confirmationNumber || "")}</span>
+            <span class="pill">${escapeHtml(routeLabel(shipment.pickup, shipment.delivery))}</span>
+          </div>
+          <div class="customer-card-stack">${rows.join("")}</div>
+        `
+      )}
+    </div>
+  `;
+}
+
+function customerDocumentStatusRow(label, documents, loading, shipment) {
+  const status = loading ? t("Pending") : documents.length ? t("Available") : t("Unavailable");
+  const first = documents[0];
+  return `
+    <article class="document-status-row">
+      <div>
+        <strong>${escapeHtml(label)}</strong>
+        <small>${escapeHtml(status)}</small>
+      </div>
+      ${first?.url ? `<a class="secondary-action document-link" href="${escapeHtml(first.url)}" target="_blank" rel="noopener noreferrer">${t("Open document")}</a>` : `<span class="pill">${escapeHtml(status)}</span>`}
+    </article>
+  `;
 }
 
 function renderQuoteResults(quote) {
