@@ -71,6 +71,26 @@ export function customerVisibleRates(quote) {
   return Array.isArray(quote?.rates) ? quote.rates : [];
 }
 
+export function quoteLowestSellPrice(quote) {
+  return customerVisibleRates(quote).reduce((lowest, rate) => {
+    const value = Number(rate?.sellPrice);
+    return Number.isFinite(value) ? Math.min(lowest, value) : lowest;
+  }, Number.POSITIVE_INFINITY);
+}
+
+export function customerQuoteNumber(quote) {
+  const explicit = quote?.quoteNumber || quote?.quoteNo || quote?.number || quote?.displayId || quote?.referenceId;
+  if (explicit) {
+    return String(explicit);
+  }
+  const id = String(quote?.id || "").trim();
+  if (!id) {
+    return "Quote";
+  }
+  const compact = id.replace(/[^a-z0-9]/gi, "").slice(-8).toUpperCase();
+  return compact ? `Q-${compact}` : "Quote";
+}
+
 export function quoteHasShipment(quote, shipments = []) {
   return shipments.some((shipment) => shipment.quoteId && shipment.quoteId === quote?.id);
 }
@@ -153,6 +173,9 @@ export function quoteStatusLabelKey(quote, shipments = []) {
   if (status === "expired") {
     return "Expired";
   }
+  if (status === "failed") {
+    return "Exception";
+  }
   if (customerVisibleRates(quote).length === 0) {
     return "No Rates";
   }
@@ -193,6 +216,58 @@ export function activeShipmentSortDate(shipment) {
 
 export function recentByCreatedAt(items = []) {
   return [...items].sort((left, right) => (parseDate(right?.createdAt)?.getTime() || 0) - (parseDate(left?.createdAt)?.getTime() || 0));
+}
+
+export function aggregateReadyQuoteAttentionItems(items = []) {
+  const passthrough = [];
+  const groups = new Map();
+  items.forEach((item) => {
+    if (item?.type !== "ready_quote" || !item.quote) {
+      passthrough.push(item);
+      return;
+    }
+    const key = quoteRouteGroupKey(item.quote);
+    const existing = groups.get(key) || {
+      type: "ready_quote_group",
+      priority: item.priority || 4,
+      date: item.date,
+      quote: item.quote,
+      quotes: [],
+      routeKey: key,
+      rateCount: 0,
+      lowestSellPrice: Number.POSITIVE_INFINITY
+    };
+    existing.quotes.push(item.quote);
+    existing.rateCount += customerVisibleRates(item.quote).length;
+    existing.lowestSellPrice = Math.min(existing.lowestSellPrice, quoteLowestSellPrice(item.quote));
+    const existingDate = parseDate(existing.date)?.getTime() || 0;
+    const itemDate = parseDate(item.date)?.getTime() || 0;
+    if (itemDate > existingDate) {
+      existing.date = item.date;
+      existing.quote = item.quote;
+    }
+    groups.set(key, existing);
+  });
+
+  const groupedReadyItems = [...groups.values()].map((group) => {
+    group.quotes = recentByCreatedAt(group.quotes);
+    if (group.quotes.length === 1) {
+      const quote = group.quotes[0];
+      return {
+        type: "ready_quote",
+        priority: group.priority,
+        date: quote.createdAt,
+        quote,
+        rateCount: group.rateCount,
+        lowestSellPrice: group.lowestSellPrice
+      };
+    }
+    return group;
+  });
+
+  return [...passthrough, ...groupedReadyItems].sort(
+    (left, right) => (left.priority || 99) - (right.priority || 99) || ((parseDate(left.date)?.getTime() || 0) - (parseDate(right.date)?.getTime() || 0))
+  );
 }
 
 export function dashboardAttentionItems({ quotes = [], shipments = [], invoices = [] }, now = new Date()) {
@@ -252,4 +327,14 @@ function calendarDayDiff(from, to) {
   const start = new Date(from.getFullYear(), from.getMonth(), from.getDate());
   const end = new Date(to.getFullYear(), to.getMonth(), to.getDate());
   return Math.round((end.getTime() - start.getTime()) / 86400000);
+}
+
+function quoteRouteGroupKey(quote) {
+  const pickup = cityStateKey(quote?.pickup?.address || quote?.pickup);
+  const delivery = cityStateKey(quote?.delivery?.address || quote?.delivery);
+  return `${pickup}>${delivery}`;
+}
+
+function cityStateKey(address = {}) {
+  return [address.city, address.state].map((value) => String(value || "").trim().toLowerCase()).join("|");
 }

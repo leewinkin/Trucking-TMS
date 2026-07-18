@@ -5,6 +5,8 @@ import {
   accessorialLabel
 } from "./accessorial-catalog.js";
 import {
+  aggregateReadyQuoteAttentionItems,
+  customerQuoteNumber,
   customerDashboardViewModel,
   customerVisibleRates,
   isActiveShipment,
@@ -14,6 +16,7 @@ import {
   normalizeInvoiceStatus,
   normalizeQuoteStatus,
   normalizeShipmentStatus,
+  quoteLowestSellPrice,
   quoteHasShipment,
   quoteStatusLabelKey,
   recentByCreatedAt,
@@ -44,6 +47,7 @@ const translations = {
     "Sign in with your company employee account.": "使用你的公司员工账号登录。",
     "Checking server": "正在检查服务器",
     "Dashboard": "仪表盘",
+    "Review your current shipping activity.": "查看您当前的报价、货件和账单状态。",
     "Customers": "客户",
     "New Quote": "新建报价",
     "Shipments": "发运",
@@ -55,14 +59,16 @@ const translations = {
     "Refresh": "刷新",
     "Refreshing...": "刷新中...",
     "Watch quote activity, shipment status, and invoice drafts.": "查看报价动态、发运状态和发票草稿。",
-    "Track your quotes, shipments, and invoices.": "跟踪你的报价、发运和发票。",
+    "Track your quotes, shipments, and invoices.": "查看您的报价、货件和账单。",
+    "Review your shipments.": "查看您的货件。",
+    "Review your invoices.": "查看您的账单。",
     "Manage customer accounts and tariff rules.": "管理客户账户和费率规则。",
     "Review local bookings and carrier shipment references.": "查看本地预订和承运商发运引用。",
     "See draft invoices created from booked shipments.": "查看根据已预订发运创建的发票草稿。",
     "Your Account": "你的账户",
     "My Quotes": "我的报价",
-    "My Shipments": "我的发运",
-    "My Invoices": "我的发票",
+    "My Shipments": "我的货件",
+    "My Invoices": "我的账单",
     "Draft invoices": "发票草稿",
     "Recent Shipments": "最近发运",
     "Welcome back, {companyName}": "欢迎回来，{companyName}",
@@ -103,9 +109,10 @@ const translations = {
     "Documents could not be loaded.": "文件加载失败。",
     "Try Again": "重试",
     "No active shipments. Book a quote to start a shipment.": "当前没有运输中的货件，您可以先选择报价并完成订舱。",
+    "View Ready-to-Book Quotes": "查看可订舱报价",
     "View all shipments": "查看全部货件",
     "View Details": "查看详情",
-    "Track": "查询轨迹",
+    "Track": "运输轨迹",
     "Documents": "文件",
     "ETA": "预计送达",
     "Pickup date": "提货日期",
@@ -121,17 +128,24 @@ const translations = {
     "Recent Quotes": "最近报价",
     "No quotes yet. Create your first quote.": "您还没有报价记录，请创建第一份报价。",
     "View all quotes": "查看全部报价",
+    "View all": "查看全部",
     "Repeat Quote": "重复报价",
+    "{count} more items": "还有 {count} 项",
+    "{count} ready quotes": "{count} 个可订舱报价",
+    "Quote {quoteNumber}": "报价 {quoteNumber}",
+    "Reference {reference}": "参考号 {reference}",
     "No Rates": "暂无报价",
     "Expired": "已过期",
     "available rate(s)": "条可用报价",
     "Lowest price": "最低报价",
     "Quick Actions": "快捷操作",
+    "Dashboard actions": "仪表盘操作",
     "View Saved Addresses": "查看地址簿",
     "Contact Support": "联系客服",
     "Customer support": "客户服务",
     "Please contact customer service for help with your shipment, invoice, or quote.": "如需货件、账单或报价帮助，请联系客服。",
     "Track Shipment": "查询货件",
+    "Tracking": "运输轨迹",
     "Track a shipment": "查询货件",
     "Enter a confirmation number or PO/reference number.": "请输入确认号或 PO/参考号。",
     "Confirmation or PO/reference number": "确认号或 PO/参考号",
@@ -385,7 +399,7 @@ const translations = {
     "View POD": "查看回单",
     "View Payload": "查看载荷",
     "View Invoice": "查看发票",
-    "Track Shipment": "跟踪发运",
+    "Track Shipment": "查询货件",
     "Open document": "打开文档",
     "Self-owned Truck": "自有卡车",
     "Mothership": "Mothership",
@@ -429,11 +443,11 @@ const translations = {
     "Outbound request": "外发请求",
     "Carrier response": "承运商响应",
     "No carrier audit data recorded for this quote.": "该报价没有承运商审计数据。",
-    "No tracking events yet.": "暂无跟踪事件。",
+    "No tracking events yet.": "暂无运输轨迹。",
     "Quote Details": "报价详情",
-    "Tracking {confirmationNumber}": "跟踪 {confirmationNumber}",
-    "Loading tracking details...": "正在加载跟踪详情...",
-    "Tracking lookup failed.": "跟踪查询失败。",
+    "Tracking {confirmationNumber}": "运输轨迹 {confirmationNumber}",
+    "Loading tracking details...": "正在加载运输轨迹...",
+    "Tracking lookup failed.": "运输轨迹查询失败。",
     "Proof of Delivery": "签收证明",
     "Bill of Lading": "提单",
     "Carrier Documents": "承运商文档",
@@ -464,7 +478,8 @@ const translations = {
     "Confirm Booking": "确认预订",
     "Shipment Summary": "发运摘要",
     "Last update": "最近更新",
-    "No tracking updates yet": "暂无跟踪更新",
+    "No tracking updates yet": "暂无运输轨迹更新",
+    "Tracking Timeline": "运输轨迹",
     "View Shipment": "查看发运",
     "Shipment booking is disabled for this carrier.": "该承运商的发运预订已禁用。",
     "Booking disabled for this carrier.": "该承运商已禁用预订。",
@@ -547,6 +562,7 @@ function setLanguage(language) {
   renderDashboard();
   renderCustomers();
   renderUserChip();
+  updateRolePresentation();
   const portalSubtitle = document.getElementById("portalSubtitle");
   if (portalSubtitle) {
     portalSubtitle.textContent = isCustomerUser() ? t("Customer Portal") : t("Operations portal");
@@ -797,13 +813,13 @@ const accessorialTooltipState = {
 const viewMeta = {
   dashboard: () =>
     isCustomerUser()
-      ? [t("Welcome back, {companyName}", { companyName: currentCustomer()?.companyName || t("Your account") }), t("Manage your quotes, shipments, documents, and invoices.")]
+      ? [t("Dashboard"), t("Review your current shipping activity.")]
       : [t("Dashboard"), t("Watch quote activity, shipment status, and invoice drafts.")],
   customers: [t("Customers"), t("Manage customer accounts and tariff rules.")],
-  quotes: [t("Quotes"), t("Track your quotes, shipments, and invoices.")],
-  quote: [t("New Quote"), ""],
-  shipments: [t("Shipments"), t("Review local bookings and carrier shipment references.")],
-  invoices: [t("Invoices"), t("See draft invoices created from booked shipments.")]
+  quotes: () => isCustomerUser() ? [t("My Quotes"), t("Track your quotes, shipments, and invoices.")] : [t("Quotes"), t("Track your quotes, shipments, and invoices.")],
+  quote: () => [t("New Quote"), ""],
+  shipments: () => isCustomerUser() ? [t("My Shipments"), t("Review your shipments.")] : [t("Shipments"), t("Review local bookings and carrier shipment references.")],
+  invoices: () => isCustomerUser() ? [t("My Invoices"), t("Review your invoices.")] : [t("Invoices"), t("See draft invoices created from booked shipments.")]
 };
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -1422,6 +1438,7 @@ function showApp() {
 function applyPermissions() {
   const isStaff = isStaffUser();
   const isCustomer = isCustomerUser();
+  updateRolePresentation();
   document.querySelectorAll(".admin-only").forEach((element) => {
     element.classList.toggle("hidden", !isStaff);
   });
@@ -1480,6 +1497,34 @@ function applyPermissions() {
   renderDashboardSupportPanel();
 }
 
+function updateRolePresentation() {
+  const isCustomer = isCustomerUser();
+  const appShell = document.getElementById("appShell");
+  if (appShell) {
+    appShell.classList.toggle("customer-session", isCustomer);
+    appShell.classList.toggle("staff-session", Boolean(state.user) && !isCustomer);
+  }
+  const labels = {
+    dashboard: "Dashboard",
+    quotes: isCustomer ? "My Quotes" : "Quotes",
+    quote: "New Quote",
+    shipments: isCustomer ? "My Shipments" : "Shipments",
+    invoices: isCustomer ? "My Invoices" : "Invoices"
+  };
+  Object.entries(labels).forEach(([view, label]) => {
+    const button = document.querySelector(`.nav-button[data-view="${view}"]`);
+    if (button) {
+      button.textContent = t(label);
+    }
+  });
+  const refreshButton = document.getElementById("refreshButton");
+  if (refreshButton) {
+    refreshButton.classList.toggle("primary-action", !isCustomer);
+    refreshButton.classList.toggle("secondary-action", isCustomer);
+    refreshButton.classList.toggle("refresh-action", isCustomer);
+  }
+}
+
 function isStaffUser() {
   return ["admin", "operations", "staff"].includes(state.user?.role);
 }
@@ -1534,6 +1579,7 @@ function customerAllowedBookingModes(customer) {
 function renderHealth() {
   const dot = document.getElementById("statusDot");
   const healthText = document.getElementById("healthText");
+  const sidebarHealth = document.getElementById("sidebarHealthStatus");
   const loginDot = document.getElementById("loginStatusDot");
   const loginHealthText = document.getElementById("loginHealthText");
 
@@ -1545,6 +1591,9 @@ function renderHealth() {
   }
 
   const message = state.health?.ok ? t("Server ready") : t("Checking server");
+  if (sidebarHealth) {
+    sidebarHealth.classList.toggle("hidden", Boolean(state.user && isCustomerUser() && state.health?.ok));
+  }
   if (healthText) {
     healthText.textContent = state.user
       ? message
@@ -1568,9 +1617,10 @@ function renderUserChip() {
 
   if (isCustomerUser()) {
     const customer = currentCustomer();
+    const identifier = state.user.email || state.user.username || state.user.name || "";
     chip.innerHTML = `
       <strong>${escapeHtml(customer?.companyName || t("Your account"))}</strong>
-      <small>${escapeHtml(state.user.email || "")}</small>
+      <small>${escapeHtml(identifier)}</small>
     `;
     return;
   }
@@ -4495,6 +4545,7 @@ function renderCustomerDashboard() {
     shipments: state.shipments,
     invoices: state.invoices
   });
+  const attentionItems = aggregateReadyQuoteAttentionItems(model.attentionItems);
   const latestQuote = latestCustomerQuote();
   const repeatDisabled = !latestQuote;
   dashboard.innerHTML = `
@@ -4507,20 +4558,23 @@ function renderCustomerDashboard() {
           <h2>${escapeHtml(t("Welcome back, {companyName}", { companyName: customer?.companyName || t("Your account") }))}</h2>
           <p>${escapeHtml(t("Manage your quotes, shipments, documents, and invoices."))}</p>
         </div>
-        <div class="customer-dashboard-actions" aria-label="${escapeHtml(t("Quick Actions"))}">
-          <button class="primary-action" type="button" data-customer-dashboard-action="newQuote">${t("+ New Quote")}</button>
+        <div class="customer-dashboard-actions" aria-label="${escapeHtml(t("Dashboard actions"))}">
+          <button class="primary-action" type="button" data-customer-dashboard-action="newQuote">${t("New Quote")}</button>
           <button class="secondary-action" type="button" data-customer-dashboard-action="trackShipment">${t("Track Shipment")}</button>
-          <button class="secondary-action" type="button" data-customer-dashboard-action="repeatLastQuote" ${repeatDisabled ? "disabled" : ""} aria-label="${escapeHtml(repeatDisabled ? t("No previous quotes to repeat.") : t("Repeat Last Quote"))}">${t("Repeat Last Quote")}</button>
+          <div class="customer-dashboard-aux-actions">
+            <button class="link-action" type="button" data-customer-dashboard-action="repeatLastQuote" ${repeatDisabled ? "disabled" : ""} aria-label="${escapeHtml(repeatDisabled ? t("No previous quotes to repeat.") : t("Repeat Last Quote"))}">${t("Repeat Last Quote")}</button>
+            <button class="link-action" type="button" data-customer-dashboard-action="savedAddresses">${t("View Saved Addresses")}</button>
+            <button class="link-action" type="button" data-customer-dashboard-action="contactSupport">${t("Contact Support")}</button>
+          </div>
         </div>
       </section>
       ${customerKpiGridHtml(model.metrics)}
       <div class="customer-dashboard-main">
         ${activeShipmentsSectionHtml(model.activeShipments.slice(0, 5))}
-        ${needsAttentionSectionHtml(model.attentionItems.slice(0, 5))}
+        ${needsAttentionSectionHtml(attentionItems)}
       </div>
-      <div class="customer-dashboard-lower">
+      <div class="customer-dashboard-lower customer-dashboard-lower-full">
         ${recentQuotesSectionHtml(model.recentQuotes.slice(0, 5))}
-        ${quickActionsPanelHtml(Boolean(latestQuote))}
       </div>
     </div>
   `;
@@ -4564,7 +4618,8 @@ function customerKpiGridHtml(metrics) {
   return `
     <section class="customer-kpi-grid" aria-label="${escapeHtml(t("Dashboard"))}">
       ${cards.map((card) => `
-        <button class="customer-kpi-card" type="button" data-dashboard-filter="${escapeHtml(card.key)}">
+        <button class="customer-kpi-card ${card.count > 0 ? "has-count" : "is-zero"}" type="button" data-dashboard-filter="${escapeHtml(card.key)}">
+          <i aria-hidden="true">${escapeHtml(customerKpiMarker(card.key))}</i>
           <span>${escapeHtml(card.label)}</span>
           <strong>${escapeHtml(String(card.count))}</strong>
           <small>${escapeHtml(card.helper)}</small>
@@ -4573,6 +4628,15 @@ function customerKpiGridHtml(metrics) {
       `).join("")}
     </section>
   `;
+}
+
+function customerKpiMarker(key) {
+  return {
+    readyQuotes: "Q",
+    activeShipments: "S",
+    openInvoices: "I",
+    deliveredThisMonth: "D"
+  }[key] || "";
 }
 
 function activeShipmentsSectionHtml(shipments) {
@@ -4588,7 +4652,10 @@ function activeShipmentsSectionHtml(shipments) {
           : `
             <div class="empty-state action-empty">
               <p>${t("No active shipments. Book a quote to start a shipment.")}</p>
-              <button class="primary-action" type="button" data-customer-dashboard-action="newQuote">${t("+ New Quote")}</button>
+              <div class="row-actions compact-actions">
+                <button class="secondary-action" type="button" data-dashboard-filter="readyQuotes">${t("View Ready-to-Book Quotes")}</button>
+                <button class="primary-action" type="button" data-customer-dashboard-action="newQuote">${t("New Quote")}</button>
+              </div>
             </div>
           `}
       </div>
@@ -4623,19 +4690,27 @@ function customerShipmentCardHtml(shipment) {
 }
 
 function needsAttentionSectionHtml(items) {
+  const preview = items.slice(0, 3);
+  const remaining = Math.max(items.length - preview.length, 0);
+  const viewAllAttrs = attentionViewAllAttrs(items);
   return `
     <section class="panel customer-panel customer-attention">
       <div class="panel-heading">
         <h2>${t("Needs Attention")}</h2>
+        ${items.length ? `<button class="link-action" type="button" ${viewAllAttrs}>${t("View all")}</button>` : ""}
       </div>
       <div class="customer-card-stack">
-        ${items.length ? items.map(attentionItemHtml).join("") : `<div class="empty-state">${t("You're all caught up.")}</div>`}
+        ${preview.length ? preview.map(attentionItemHtml).join("") : `<div class="empty-state">${t("You're all caught up.")}</div>`}
+        ${remaining > 0 ? `<button class="link-action attention-more-action" type="button" ${viewAllAttrs}>${escapeHtml(t("{count} more items", { count: remaining }))}</button>` : ""}
       </div>
     </section>
   `;
 }
 
 function attentionItemHtml(item) {
+  if (item.type === "ready_quote" || item.type === "ready_quote_group") {
+    return readyQuoteAttentionItemHtml(item);
+  }
   const config = {
     shipment_exception: {
       marker: "!",
@@ -4657,13 +4732,6 @@ function attentionItemHtml(item) {
       detail: item.invoice?.invoiceNumber || "",
       action: t("Review invoice"),
       actionAttrs: `data-view-invoice="${escapeHtml(item.invoice?.id || "")}"`
-    },
-    ready_quote: {
-      marker: "✓",
-      title: t("Quote ready to book"),
-      detail: routeLabel(item.quote?.pickup, item.quote?.delivery),
-      action: t("Review quote"),
-      actionAttrs: `data-dashboard-filter="readyQuotes"`
     }
   }[item.type];
   return `
@@ -4676,6 +4744,43 @@ function attentionItemHtml(item) {
       <button class="link-action" type="button" ${config.actionAttrs}>${escapeHtml(config.action)} →</button>
     </article>
   `;
+}
+
+function readyQuoteAttentionItemHtml(item) {
+  const quote = item.quote || item.quotes?.[0] || {};
+  const grouped = item.type === "ready_quote_group";
+  const count = grouped ? item.quotes.length : 1;
+  const rateCount = item.rateCount ?? customerVisibleRates(quote).length;
+  const lowest = item.lowestSellPrice ?? quoteLowestSellPrice(quote);
+  const title = grouped
+    ? t("{count} ready quotes", { count })
+    : t("Quote {quoteNumber}", { quoteNumber: customerQuoteNumber(quote) });
+  return `
+    <article class="attention-item attention-ready-quote">
+      <span class="attention-marker" aria-hidden="true">Q</span>
+      <div>
+        <strong>${escapeHtml(title)}</strong>
+        <small>${escapeHtml(routeLabel(quote.pickup, quote.delivery))}</small>
+        <div class="customer-safe-meta attention-meta">
+          ${!grouped ? `<span>${escapeHtml(t("Quote {quoteNumber}", { quoteNumber: customerQuoteNumber(quote) }))}</span>` : ""}
+          ${Number.isFinite(lowest) ? `<span class="price-meta">${escapeHtml(t("Lowest price"))} ${money.format(lowest)}</span>` : ""}
+          <span>${escapeHtml(String(rateCount))} ${t("available rate(s)")}</span>
+          ${item.date ? `<span>${escapeHtml(formatDateTime(item.date))}</span>` : ""}
+        </div>
+      </div>
+      <button class="link-action" type="button" data-dashboard-filter="readyQuotes">${escapeHtml(t("Review quote"))} →</button>
+    </article>
+  `;
+}
+
+function attentionViewAllAttrs(items) {
+  if (items.some((item) => item.type === "ready_quote" || item.type === "ready_quote_group")) {
+    return `data-dashboard-filter="readyQuotes"`;
+  }
+  if (items.some((item) => item.type === "shipment_exception")) {
+    return `data-dashboard-filter="activeShipments"`;
+  }
+  return `data-dashboard-filter="openInvoices"`;
 }
 
 function recentQuotesSectionHtml(quotes) {
@@ -4701,41 +4806,48 @@ function recentQuotesSectionHtml(quotes) {
 
 function customerQuoteRowHtml(quote) {
   const rates = customerVisibleRates(quote);
-  const lowest = rates.reduce((min, rate) => Math.min(min, Number(rate.sellPrice || Infinity)), Infinity);
+  const lowest = quoteLowestSellPrice(quote);
+  const quoteNumber = customerQuoteNumber(quote);
+  const reference = quote.referenceNumber || quote.poNumber || quote.customerReference || "";
   return `
     <article class="customer-quote-row">
-      <div>
-        <strong>${escapeHtml(routeLabel(quote.pickup, quote.delivery))}</strong>
-        <small>${escapeHtml(formatDate(quote.createdAt))}</small>
-        <div class="customer-safe-meta">
+      <div class="customer-quote-content">
+        <div class="customer-quote-title-row">
+          <strong>${escapeHtml(t("Quote {quoteNumber}", { quoteNumber }))}</strong>
+          ${customerQuoteStatusBadgeHtml(quote)}
+        </div>
+        <p class="customer-quote-route">${escapeHtml(routeLabel(quote.pickup, quote.delivery))}</p>
+        <div class="customer-quote-meta">
+          <span>${escapeHtml(formatDateTime(quote.createdAt))}</span>
+          ${reference ? `<span>${escapeHtml(t("Reference {reference}", { reference }))}</span>` : ""}
           <span>${escapeHtml(String(rates.length))} ${t("available rate(s)")}</span>
-          ${Number.isFinite(lowest) ? `<span>${t("Lowest price")} ${money.format(lowest)}</span>` : ""}
-          <span>${escapeHtml(t(quoteStatusLabelKey(quote, state.shipments)))}</span>
         </div>
       </div>
-      <div class="row-actions">
-        <button class="secondary-action" type="button" data-view-quote="${escapeHtml(quote.id)}">${t("View Quote")}</button>
-        <button class="secondary-action" type="button" data-reenter-quote="${escapeHtml(quote.id)}">${t("Repeat Quote")}</button>
+      <div class="customer-quote-side">
+        <div class="customer-quote-price">
+          <small>${escapeHtml(t("Lowest price"))}</small>
+          <strong>${Number.isFinite(lowest) ? money.format(lowest) : escapeHtml(t("No Rates"))}</strong>
+        </div>
+        <div class="row-actions">
+          <button class="secondary-action" type="button" data-view-quote="${escapeHtml(quote.id)}">${t("View Quote")}</button>
+          <button class="secondary-action" type="button" data-reenter-quote="${escapeHtml(quote.id)}">${t("Repeat Quote")}</button>
+        </div>
       </div>
     </article>
   `;
 }
 
-function quickActionsPanelHtml(hasQuote) {
-  return `
-    <section class="panel customer-panel customer-quick-actions">
-      <div class="panel-heading">
-        <h2>${t("Quick Actions")}</h2>
-      </div>
-      <div class="quick-action-grid">
-        <button class="secondary-action" type="button" data-customer-dashboard-action="newQuote">${t("New Quote")}</button>
-        <button class="secondary-action" type="button" data-customer-dashboard-action="repeatLastQuote" ${hasQuote ? "" : "disabled"}>${t("Repeat Last Quote")}</button>
-        <button class="secondary-action" type="button" data-customer-dashboard-action="trackShipment">${t("Track Shipment")}</button>
-        <button class="secondary-action" type="button" data-customer-dashboard-action="savedAddresses">${t("View Saved Addresses")}</button>
-        <button class="secondary-action" type="button" data-customer-dashboard-action="contactSupport">${t("Contact Support")}</button>
-      </div>
-    </section>
-  `;
+function customerQuoteStatusBadgeHtml(quote) {
+  const label = quoteStatusLabelKey(quote, state.shipments);
+  const variant = {
+    "Ready to Book": "blue",
+    Booked: "green",
+    "No Rates": "neutral",
+    Expired: "gray",
+    Exception: "red",
+    "Status Pending": "neutral"
+  }[label] || "neutral";
+  return `<span class="status-badge status-${escapeHtml(variant)}">${escapeHtml(t(label))}</span>`;
 }
 
 function currentCustomer() {

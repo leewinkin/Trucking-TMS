@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import {
+  aggregateReadyQuoteAttentionItems,
+  customerQuoteNumber,
   customerDashboardMetrics,
   customerDashboardViewModel,
   dashboardAttentionItems,
@@ -10,6 +12,7 @@ import {
   isQuoteReadyToBook,
   normalizeInvoiceStatus,
   normalizeShipmentStatus,
+  quoteLowestSellPrice,
   quoteStatusLabelKey,
   shipmentStatusLabelKey
 } from "../public/customer-dashboard.js";
@@ -61,6 +64,9 @@ assert.equal(normalizeShipmentStatus("booked_with_carrier"), "booked");
 assert.equal(shipmentStatusLabelKey("booked_with_carrier"), "Booked");
 assert.equal(quoteStatusLabelKey(quotes[0], shipments), "Ready to Book");
 assert.equal(quoteStatusLabelKey(quotes[3], shipments), "No Rates");
+assert.equal(quoteStatusLabelKey(quote("quote_failed", "2026-07-18T12:00:00Z", "failed", []), shipments), "Exception");
+assert.equal(customerQuoteNumber(quotes[0]), "Q-READYOLD");
+assert.equal(quoteLowestSellPrice(quote("quote_multi", "2026-07-18T12:00:00Z", "quoted", [{ sellPrice: 125 }, { sellPrice: 95 }])), 95);
 
 assert.deepEqual(
   quotes.filter((item) => quoteStatusLabelKey(item, shipments) === "Ready to Book").map((item) => item.id),
@@ -112,13 +118,26 @@ assert.deepEqual(
   ["shipment_exception", "invoice_overdue", "invoice_due_soon", "ready_quote", "ready_quote"],
   "attention items should be sorted by urgency"
 );
+const aggregatedAttentionItems = aggregateReadyQuoteAttentionItems(model.attentionItems);
+assert.deepEqual(
+  aggregatedAttentionItems.map((item) => item.type),
+  ["shipment_exception", "invoice_overdue", "invoice_due_soon", "ready_quote_group"],
+  "same-route ready quotes should aggregate without merging invoice or shipment alerts"
+);
+const readyGroup = aggregatedAttentionItems.find((item) => item.type === "ready_quote_group");
+assert.equal(readyGroup.quotes.length, 2, "same-route ready quote group should retain matching quote count");
+assert.equal(readyGroup.rateCount, 2, "same-route ready quote group should include available-rate count");
+assert.equal(readyGroup.lowestSellPrice, 80, "same-route ready quote group should expose the lowest customer sell price");
 
 const app = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
 const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
 const styles = await readFile(new URL("../public/styles.css", import.meta.url), "utf8");
 const renderCustomerDashboardSlice = app.slice(app.indexOf("function renderCustomerDashboard"), app.indexOf("function customerKpiGridHtml"));
 const renderStaffDashboardSlice = app.slice(app.indexOf("function renderStaffDashboard"), app.indexOf("function staffDashboardShellHtml"));
-const customerQuoteRowSlice = app.slice(app.indexOf("function customerQuoteRowHtml"), app.indexOf("function quickActionsPanelHtml"));
+const viewMetaSlice = app.slice(app.indexOf("const viewMeta"), app.indexOf("document.addEventListener"));
+const customerQuoteRowSlice = app.slice(app.indexOf("function customerQuoteRowHtml"), app.indexOf("function customerQuoteStatusBadgeHtml"));
+const quoteStatusBadgeSlice = app.slice(app.indexOf("function customerQuoteStatusBadgeHtml"), app.indexOf("function currentCustomer"));
+const needsAttentionSlice = app.slice(app.indexOf("function needsAttentionSectionHtml"), app.indexOf("function recentQuotesSectionHtml"));
 const documentErrorSlice = app.slice(app.indexOf('if (loadState === "error")'), app.indexOf("  const bol = filterShipmentDocumentsByKind"));
 assert.match(app, /function renderDashboard\(\) {\n\s+if \(isCustomerUser\(\)\) {\n\s+renderCustomerDashboard\(\);/, "customer and employee dashboards should use separate render paths");
 assert.match(app, /function renderStaffDashboard\(\)/, "staff dashboard path should be preserved");
@@ -128,6 +147,9 @@ assert.match(app, /document\.querySelectorAll\("\.view"\)\.forEach\(\(view\) => 
 assert.match(app, /setView\(button\.dataset\.view, \{ resetCustomerFilter: true \}\)/, "side navigation should reset customer filters to all");
 assert.match(app, /data-modal="customers"/, "employee Customers KPI modal should remain in staff shell");
 assert.doesNotMatch(app.slice(app.indexOf("function customerKpiGridHtml"), app.indexOf("function renderQuoteResults")), /Customers KPI|customerCount|carrierCost|margin|markup|providerScac|carrierAudit|carrierExclusionAudit|rawCarrierResponse/, "customer dashboard render path should not include internal pricing or provider fields");
+assert.doesNotMatch(viewMetaSlice, /Welcome back, \{companyName\}/, "dashboard topbar should not duplicate the customer welcome headline");
+assert.match(viewMetaSlice, /\? \[t\("Dashboard"\), t\("Review your current shipping activity\."\)\]/, "customer Dashboard topbar should use the generic Dashboard title and shipping activity subtitle");
+assert.equal((renderCustomerDashboardSlice.match(/Welcome back, \{companyName\}/g) || []).length, 1, "customer hero should be the only dashboard welcome headline");
 assert.match(app, /data-customer-dashboard-action="newQuote"/, "New Quote dashboard action should exist");
 assert.match(app, /reenterQuote\(quote\.id\)/, "Repeat Last Quote should use existing re-entry flow");
 assert.match(app, /No previous quotes to repeat/, "Repeat Last Quote should explain disabled state");
@@ -143,14 +165,33 @@ assert.match(app, /state\.customerFilters\.quotes = filter === "readyQuotes" \? 
 assert.match(app, /state\.customerFilters\.invoices = "open";\n\s+setView\("invoices"\);/, "Open invoice KPI should navigate to filtered customer Invoices");
 assert.match(app, /state\.customerFilters\.shipments = "active";/, "Active shipment KPI should set the customer shipment filter");
 assert.match(app, /state\.customerFilters\.shipments = "deliveredThisMonth";/, "Delivered KPI should set the delivered-this-month shipment filter");
+assert.match(renderCustomerDashboardSlice, /aggregateReadyQuoteAttentionItems\(model\.attentionItems\)/, "customer dashboard should aggregate same-route ready quote attention rows");
+assert.match(needsAttentionSlice, /items\.slice\(0, 3\)/, "Needs Attention preview should be limited to three rows");
+assert.match(needsAttentionSlice, /\{count\} more items/, "Needs Attention should show a customer-friendly more-items count");
+assert.match(needsAttentionSlice, /Quote \{quoteNumber\}/, "ready quote attention rows should include a distinguishing quote number");
+assert.match(needsAttentionSlice, /Lowest price/, "ready quote attention rows should include lowest customer sell price");
+assert.match(needsAttentionSlice, /available rate\(s\)/, "ready quote attention rows should include available-rate count");
+assert.match(needsAttentionSlice, /formatDateTime\(item\.date\)/, "ready quote attention rows should include created date and time");
 assert.match(app, /function renderQuotesView\(\)/, "customer Quotes view renderer should exist");
 assert.match(html, /id="quotesNavButton"/, "customer Quotes navigation item should exist");
 assert.match(html, /id="quotesView"/, "customer Quotes view should exist");
 assert.match(customerQuoteRowSlice, /available rate\(s\)/, "customer quote rows should show rate counts");
 assert.match(customerQuoteRowSlice, /Lowest price/, "customer quote rows should show the lowest customer sell price");
+assert.match(customerQuoteRowSlice, /Quote \{quoteNumber\}/, "customer quote rows should show a customer-safe quote number");
+assert.match(customerQuoteRowSlice, /formatDateTime\(quote\.createdAt\)/, "customer quote rows should show full created date and time");
+assert.match(customerQuoteRowSlice, /customerQuoteStatusBadgeHtml\(quote\)/, "customer quote rows should render a real status badge");
+assert.match(quoteStatusBadgeSlice, /"Ready to Book": "blue"/, "ready quote badge should use the blue status treatment");
+assert.match(quoteStatusBadgeSlice, /Booked: "green"/, "booked quote badge should use the green status treatment");
+assert.match(quoteStatusBadgeSlice, /"No Rates": "neutral"/, "no-rates quote badge should use a neutral status treatment");
+assert.match(quoteStatusBadgeSlice, /Expired: "gray"/, "expired quote badge should use the gray status treatment");
+assert.match(quoteStatusBadgeSlice, /Exception: "red"/, "exception quote badge should use the red status treatment");
 assert.match(customerQuoteRowSlice, /data-view-quote/, "customer quote rows should allow viewing a quote");
 assert.match(customerQuoteRowSlice, /data-reenter-quote/, "customer quote rows should allow repeating a quote");
 assert.doesNotMatch(customerQuoteRowSlice, /carrierAudit|carrierExclusionAudit|rawCarrierResponse|providerScac|carrierCost|margin|markup|Mothership|SpeedShip|Priority1/, "customer quote rows should not expose carrier diagnostics or internal pricing");
+assert.doesNotMatch(renderCustomerDashboardSlice, /quickActionsPanelHtml|Quick Actions/, "duplicated Quick Actions panel should not render in the dashboard lower row");
+assert.match(renderCustomerDashboardSlice, /customer-dashboard-lower customer-dashboard-lower-full/, "Recent Quotes should use the full-width lower dashboard layout");
+assert.match(renderCustomerDashboardSlice, /View Saved Addresses/, "saved-address action should move to compact customer auxiliary actions");
+assert.match(renderCustomerDashboardSlice, /Contact Support/, "support action should move to compact customer auxiliary actions");
 assert.match(app, /customerFilterBarHtml\("quotes"/, "Quotes view should render a filter bar");
 assert.match(app, /customerFilterBarHtml\("shipments"/, "Shipments view should render customer filters");
 assert.match(app, /customerFilterBarHtml\("invoices"/, "Invoices view should render customer filters");
@@ -164,9 +205,24 @@ assert.match(styles, /customer-kpi-grid/, "responsive customer KPI layout classe
 assert.match(styles, /repeat\(4, minmax\(0, 1fr\)\)/, "desktop KPI layout should have four balanced columns");
 assert.match(styles, /repeat\(2, minmax\(0, 1fr\)\)/, "tablet KPI layout should have two columns");
 assert.match(styles, /customer-dashboard-main/, "customer dashboard main layout should exist");
+assert.match(styles, /customer-dashboard-lower-full[\s\S]*grid-template-columns: 1fr/, "Recent Quotes full-width layout should exist");
+assert.match(styles, /action-empty[\s\S]*min-height: 132px/, "empty active shipment state should stay compact");
+assert.doesNotMatch(styles, /action-empty[\s\S]*min-height:\s*(?:2\d\d|3\d\d|4\d\d)px/, "empty active shipment state should not use excessive min-height");
+assert.match(styles, /customer-session #refreshButton\.refresh-action/, "customer Refresh should be visually secondary");
+assert.match(app, /refreshButton\.classList\.toggle\("primary-action", !isCustomer\)/, "employee Refresh primary behavior should be preserved");
+assert.match(app, /refreshButton\.classList\.toggle\("secondary-action", isCustomer\)/, "customer Refresh should not remain a primary action");
+assert.match(app, /const identifier = state\.user\.email \|\| state\.user\.username \|\| state\.user\.name \|\| "";/, "customer chip should show email or username separately");
+assert.match(app, /sidebarHealth\.classList\.toggle\("hidden", Boolean\(state\.user && isCustomerUser\(\) && state\.health\?\.ok\)\)/, "customer should not see the low-level server-ready indicator");
+assert.match(app, /const message = state\.health\?\.ok \? t\("Server ready"\) : t\("Checking server"\);/, "employee health indicator message should remain unchanged");
 assert.match(styles, /customer-filter-bar/, "customer filter chip layout should exist");
 assert.match(styles, /repeat\(auto-fit, minmax\(92px, 1fr\)\)/, "mobile nav should adapt when customer Quotes nav is visible");
 assert.match(app, /"Customer Portal": "客户门户"/, "Customer Portal Chinese translation should exist");
+assert.match(app, /"My Quotes": "我的报价"/, "customer Quotes Chinese navigation should use 我的报价");
+assert.match(app, /"New Quote": "新建报价"/, "customer New Quote Chinese navigation should use 新建报价");
+assert.match(app, /"My Shipments": "我的货件"/, "customer Shipments Chinese navigation should use 我的货件");
+assert.match(app, /"Track Shipment": "查询货件"/, "customer Track Shipment Chinese terminology should be consistent");
+assert.match(app, /"Tracking": "运输轨迹"/, "customer Tracking Chinese terminology should be consistent");
+assert.match(app, /"My Invoices": "我的账单"/, "customer Invoices Chinese navigation should use 我的账单");
 assert.match(app, /"Welcome back, \{companyName\}": "欢迎回来，\{companyName\}"/, "welcome translation should exist");
 assert.match(app, /"Clear Filter": "清除筛选"/, "Clear Filter Chinese translation should exist");
 assert.match(app, /"Documents could not be loaded\.": "文件加载失败。"/, "document failure Chinese translation should exist");

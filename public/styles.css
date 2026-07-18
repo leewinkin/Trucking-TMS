@@ -227,8 +227,8 @@ button {
 }
 
 .user-chip {
-  display: inline-flex;
-  align-items: center;
+  display: inline-grid;
+  align-content: center;
   min-height: 38px;
   padding: 0 10px;
   border: 1px solid var(--line);
@@ -237,6 +237,7 @@ button {
   color: var(--muted);
   font-size: 13px;
   font-weight: 700;
+  max-width: 260px;
 }
 
 h1,
@@ -278,6 +279,17 @@ h2 {
   color: var(--ink);
   border-color: var(--line);
   background: #ffffff;
+}
+
+.customer-session #refreshButton.refresh-action {
+  color: var(--ink);
+  border-color: var(--line);
+  background: #ffffff;
+}
+
+.customer-session #refreshButton.refresh-action::before {
+  content: "↻";
+  margin-right: 6px;
 }
 
 .danger-action {
@@ -386,6 +398,19 @@ button.metric {
   gap: 10px;
 }
 
+.customer-dashboard-actions {
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.customer-dashboard-aux-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  justify-content: flex-end;
+  width: 100%;
+}
+
 .customer-kpi-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -399,6 +424,28 @@ button.metric {
   text-align: left;
   cursor: pointer;
   box-shadow: none;
+}
+
+.customer-kpi-card.has-count {
+  background: linear-gradient(180deg, #f8fbff 0%, #eef6ff 100%);
+  border-color: #bfdbfe;
+}
+
+.customer-kpi-card.is-zero {
+  background: #ffffff;
+  color: #64748b;
+}
+
+.customer-kpi-card i {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 10px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-style: normal;
+  font-weight: 900;
 }
 
 .customer-kpi-card:hover,
@@ -422,6 +469,10 @@ button.metric {
   font-size: 32px;
 }
 
+.customer-kpi-card.is-zero strong {
+  color: #94a3b8;
+}
+
 .customer-kpi-card em,
 .link-action {
   color: #2563eb;
@@ -438,6 +489,7 @@ button.metric {
 .customer-dashboard-main {
   display: grid;
   grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr);
+  align-items: start;
   gap: 18px;
 }
 
@@ -445,6 +497,23 @@ button.metric {
   display: grid;
   grid-template-columns: minmax(0, 1.4fr) minmax(280px, 0.6fr);
   gap: 18px;
+}
+
+.customer-dashboard-lower-full {
+  grid-template-columns: 1fr;
+}
+
+.compact-actions {
+  justify-content: center;
+}
+
+.action-empty {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  min-height: 132px;
+  padding: 18px;
+  text-align: center;
 }
 
 .customer-card-stack {
@@ -471,6 +540,61 @@ button.metric {
 .customer-quote-row {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
+}
+
+.customer-quote-row {
+  grid-template-columns: minmax(0, 1fr) minmax(210px, auto);
+  align-items: center;
+}
+
+.customer-quote-content {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+
+.customer-quote-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.customer-quote-route {
+  color: var(--text);
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.customer-quote-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.customer-quote-side {
+  display: grid;
+  justify-items: end;
+  gap: 10px;
+  text-align: right;
+}
+
+.customer-quote-price small,
+.customer-quote-price strong {
+  display: block;
+}
+
+.customer-quote-price small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.customer-quote-price strong {
+  color: #0f766e;
+  font-size: 20px;
 }
 
 .customer-card-title-row {
@@ -520,6 +644,16 @@ button.metric {
   color: #b91c1c;
 }
 
+.status-neutral {
+  background: #f1f5f9;
+  color: #334155;
+}
+
+.status-gray {
+  background: #e5e7eb;
+  color: #4b5563;
+}
+
 .attention-item {
   grid-template-columns: auto minmax(0, 1fr) auto;
 }
@@ -533,6 +667,14 @@ button.metric {
   background: #fef3c7;
   color: #92400e;
   font-weight: 900;
+}
+
+.attention-meta {
+  margin-top: 8px;
+}
+
+.attention-more-action {
+  justify-self: start;
 }
 
 .customer-filter-note {
@@ -577,6 +719,10 @@ button.metric {
 .user-chip strong,
 .user-chip small {
   display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .user-chip small {
@@ -1782,6 +1928,11 @@ select:focus {
     grid-template-columns: 1fr;
   }
 
+  .customer-quote-side {
+    justify-items: start;
+    text-align: left;
+  }
+
   .quote-meta-grid,
   .quote-stops-grid {
     grid-template-columns: 1fr;
@@ -1850,9 +2001,12 @@ select:focus {
   }
 
   .customer-dashboard-actions,
-  .quick-action-grid,
   .row-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .customer-dashboard-aux-actions {
+    justify-content: flex-start;
   }
 }
