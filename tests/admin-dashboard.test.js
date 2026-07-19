@@ -100,6 +100,21 @@ assert.equal(adminShipmentMatchesFilter(shipments[2], "exceptions"), true, "staf
 assert.equal(adminQuoteMatchesFilter(quotes[2], "partialFailure", shipments, now), true, "partial-failure quote filter should exist");
 assert.equal(adminQuoteMatchesFilter(quotes[1], "noRates", shipments, now), true, "no-rates quote filter should remain distinct");
 
+const partialCarrierExclusionQuote = {
+  ...quote("quote_partial_preference", "cust_a", "2026-07-19T08:30:00", "quoted", [
+    { id: "rate_abf", sellPrice: 250 },
+    { id: "rate_saia", sellPrice: 270 }
+  ], [
+    { mode: "speedshipLtl", status: "success", rateCount: 2 },
+    { mode: "priority1Ltl", excluded: true, status: "blocked", reason: "customer preference" }
+  ]),
+  carrierExclusionAudit: [{ carrierCode: "XPO", reason: "customer preference" }]
+};
+assert.equal(isPreferenceExcludedQuote(partialCarrierExclusionQuote), false, "partial carrier exclusion with usable rates should not be fully preference-filtered");
+assert.equal(isAdminReadyToBookQuote(partialCarrierExclusionQuote, shipments), true, "partial carrier exclusion with usable rates should remain ready to book");
+assert.equal(adminQuoteMatchesFilter(partialCarrierExclusionQuote, "customerPreferences", shipments, now), false, "partial carrier exclusion should not match the Customer Preferences filter");
+assert.equal(adminQuoteMatchesFilter(partialCarrierExclusionQuote, "issues", shipments, now), false, "partial carrier exclusion should not become a quote issue without a separate carrier failure");
+
 const preferenceExcludedQuote = {
   ...quote("quote_preference_filtered", "cust_a", "2026-07-19T08:00:00", "quoted", [], [
     { mode: "speedshipLtl", status: "blocked", excluded: true, reason: "customer preference" },
@@ -112,6 +127,20 @@ assert.equal(isPreferenceExcludedQuote(preferenceExcludedQuote), true, "preferen
 assert.equal(adminQuoteMatchesFilter(preferenceExcludedQuote, "issues", shipments, now), false, "preference-filtered quotes should not count as quote issues");
 assert.equal(adminQuoteMatchesFilter(preferenceExcludedQuote, "noRates", shipments, now), false, "preference-filtered quotes should not count as no-rate failures");
 assert.equal(adminQuoteMatchesFilter(preferenceExcludedQuote, "customerPreferences", shipments, now), true, "preference-filtered quote filter should exist");
+assert.equal(isAdminReadyToBookQuote(preferenceExcludedQuote, shipments), false, "fully preference-filtered quotes should not be ready to book");
+
+const legacyPreferenceExcludedQuote = {
+  ...quote("quote_legacy_preference_filtered", "cust_a", "2026-07-19T07:30:00", "quoted", [], []),
+  carrierExclusionAudit: [{ carrierCode: "XPO", reason: "customer preference" }]
+};
+assert.equal(isPreferenceExcludedQuote(legacyPreferenceExcludedQuote), true, "legacy records with no rates and explicit exclusion audit should be preference-filtered");
+const failedHistoricalExclusionQuote = {
+  ...legacyPreferenceExcludedQuote,
+  id: "quote_failed_historical_preference",
+  status: "failed"
+};
+assert.equal(isPreferenceExcludedQuote(failedHistoricalExclusionQuote), false, "failed quotes with historical exclusion audit should remain failed");
+assert.equal(adminQuoteMatchesFilter(failedHistoricalExclusionQuote, "failed", shipments, now), true, "failed quotes with historical exclusion audit should still match Failed");
 
 const auditWithExcludedRows = quoteCarrierAuditSummary({
   carrierAudit: [
@@ -141,6 +170,11 @@ assert.equal(conversion.bookedShipments, 1, "conversion should count only reliab
 assert.equal(conversion.deliveredShipments, 0, "conversion should not guess delivered shipments without selected-range quote links");
 assert.equal(adminQuoteConversion({ quotes: [], shipments }, "last7", now).quoteSuccessRate, null, "conversion should not divide by zero");
 assert.equal(adminQuoteConversion({ quotes: [preferenceExcludedQuote, quotes[0]], shipments: [] }, "last7", now).quotesWithRates, 1, "preference-filtered quotes should be excluded from no-rate failure conversion metrics");
+const preferenceConversion = adminQuoteConversion({ quotes: [preferenceExcludedQuote, partialCarrierExclusionQuote], shipments: [] }, "last7", now);
+assert.equal(preferenceConversion.quotesCreated, 2, "quote-created metric should still count preference-filtered quotes");
+assert.equal(preferenceConversion.quotesWithRates, 1, "partial carrier exclusion with usable rates should count as a successful quote");
+assert.equal(preferenceConversion.quoteSuccessRate, 1, "fully preference-filtered quotes should be excluded from the quote success-rate denominator");
+assert.equal(preferenceConversion.quoteToBookingRate, 0, "quote-to-booking conversion intentionally uses all created quotes as its denominator");
 
 const attention = adminAttentionItems({ quotes, shipments, invoices, customers, tariffs }, "last7", now);
 assert.equal(attention[0].type, "shipment_exception", "attention items should prioritize shipment exceptions");
@@ -148,6 +182,7 @@ assert(attention.some((item) => item.type === "quote_no_rates"), "no-rates atten
 assert(attention.some((item) => item.type === "quote_partial_failure"), "partial-failure attention item should remain distinct");
 assert(attention.some((item) => item.type === "customer_missing_tariff"), "customer missing tariff warning should exist");
 assert(attention.some((item) => item.type === "customer_no_carriers"), "customer no-carrier warning should exist");
+assert.equal(adminAttentionItems({ quotes: [preferenceExcludedQuote], shipments: [], invoices: [], customers, tariffs }, "last7", now).some((item) => item.type === "quote_no_rates"), false, "fully preference-filtered quotes should not create no-rate attention items");
 
 const completeSetup = adminSetupChecklist({
   customers: [{ id: "cust_ok", allowedCarrierModes: ["speedship"], allowedBookingCarrierModes: ["speedshipLtl"], allowedBooking: true }],

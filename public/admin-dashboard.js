@@ -226,7 +226,8 @@ export function adminQuoteConversion({ quotes = [], shipments = [] }, range = "l
     readyToBook: rangeQuotes.filter((quote) => isAdminReadyToBookQuote(quote, shipments)).length,
     bookedShipments: bookedShipments.length,
     deliveredShipments: deliveredShipments.length,
-    quoteSuccessRate: created > 0 ? withRates / created : null,
+    quoteSuccessRate: conversionEligibleQuotes.length > 0 ? withRates / conversionEligibleQuotes.length : null,
+    // Quote-to-booking conversion intentionally uses all created quotes as the funnel denominator.
     quoteToBookingRate: created > 0 ? bookedShipments.length / created : null
   };
 }
@@ -391,16 +392,12 @@ export function isPreferenceExcludedQuote(quote) {
     return true;
   }
   const audit = quote?.carrierExclusionAudit;
-  if (Array.isArray(audit) && audit.length > 0) {
-    return true;
-  }
-  if (audit && typeof audit === "object" && Object.keys(audit).length > 0) {
-    return true;
-  }
-  if (quote?.excludedByCustomerPreferences || quote?.customerPreferenceExcluded) {
-    return true;
-  }
-  return false;
+  const hasExclusionAudit = (Array.isArray(audit) && audit.length > 0) ||
+    (audit && typeof audit === "object" && Object.keys(audit).length > 0);
+  const hasExplicitExclusionMetadata = hasExclusionAudit || quote?.excludedByCustomerPreferences || quote?.customerPreferenceExcluded;
+  const status = normalizeAdminQuoteStatus(quote?.status);
+  const isOtherTerminalOutcome = ["booked", "cancelled", "expired", "failed"].includes(status);
+  return !quoteHasUsableRates(quote) && hasExplicitExclusionMetadata && !isOtherTerminalOutcome;
 }
 
 export function isCustomerOnlineBookingEnabled(customer) {
