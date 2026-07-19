@@ -6705,7 +6705,7 @@ function renderInvoices() {
           ${t("Imported from Mothership")} <span class="tab-count">${mothershipInvoices.length}</span>
         </button>
         <button class="invoice-tab ${activeTab === "local" ? "active" : ""}" type="button" data-invoice-tab="local" role="tab" aria-selected="${activeTab === "local"}">
-          ${t("Other invoices")} <span class="tab-count">${otherInvoices.length}</span>
+          ${t("Other invoices")} <span class="tab-count">${visibleOtherInvoices.length}</span>
         </button>
       </div>
       <div class="invoice-tab-panel">
