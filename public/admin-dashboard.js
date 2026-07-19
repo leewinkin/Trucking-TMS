@@ -4,8 +4,15 @@ const closedInvoiceStatuses = new Set(["void", "cancelled", "canceled", "closed"
 const activeShipmentStatuses = new Set(["booked", "booked_with_carrier", "pickup_scheduled", "scheduled", "pickup_appointment", "picked_up", "pickup_complete", "in_transit", "transit", "out_for_delivery", "ofd"]);
 const shipmentExceptionStatuses = new Set(["exception", "delayed", "rejected", "failed", "error"]);
 const terminalQuoteStatuses = new Set(["booked", "cancelled", "canceled", "failed", "error", "rejected", "expired"]);
+const customerTimestampToleranceMs = 1000;
 
 export const adminDateRanges = ["today", "last7", "last30", "all"];
+export const adminCarrierModes = [
+  { key: "mothershipSandbox", name: "Mothership", aliases: ["mothership", "mothership_sandbox", "mothershipsandbox"] },
+  { key: "speedshipLtl", name: "SpeedShip", aliases: ["speedship", "speedship_ltl", "speedshipltl", "speedshipLtl"] },
+  { key: "priority1Ltl", name: "Priority1", aliases: ["priority1", "priority_1", "priority1_ltl", "priority1ltl", "p1"] },
+  { key: "fedexFreight", name: "FedEx Freight", aliases: ["fedex", "fedex_freight", "fedexfreight", "fxfe"] }
+];
 
 export function adminDateRangeBounds(range = "last7", now = new Date()) {
   const selected = adminDateRanges.includes(range) ? range : "last7";
@@ -84,7 +91,29 @@ export function normalizeAdminQuoteStatus(status) {
 }
 
 export function quoteHasUsableRates(quote) {
-  return Array.isArray(quote?.rates) && quote.rates.some((rate) => Number.isFinite(Number(rate?.sellPrice)));
+  return countUsableRates(quote) > 0;
+}
+
+export function validAdminSellPrice(rate) {
+  const raw = rate?.sellPrice;
+  if (raw === null || raw === undefined) {
+    return Number.POSITIVE_INFINITY;
+  }
+  if (typeof raw === "string" && raw.trim() === "") {
+    return Number.POSITIVE_INFINITY;
+  }
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? value : Number.POSITIVE_INFINITY;
+}
+
+export function countUsableRates(quote) {
+  return Array.isArray(quote?.rates) ? quote.rates.filter((rate) => Number.isFinite(validAdminSellPrice(rate))).length : 0;
+}
+
+export function lowestUsableSellPrice(quote) {
+  return Array.isArray(quote?.rates)
+    ? quote.rates.reduce((lowest, rate) => Math.min(lowest, validAdminSellPrice(rate)), Number.POSITIVE_INFINITY)
+    : Number.POSITIVE_INFINITY;
 }
 
 export function quoteLinkedShipment(quote, shipments = []) {
@@ -101,7 +130,7 @@ export function quoteCarrierAuditSummary(quote) {
   const rows = Array.isArray(quote?.carrierAudit) ? quote.carrierAudit : [];
   const requested = rows.length;
   const failedRows = rows.filter(isFailedCarrierAuditRow);
-  const successRows = rows.filter((row) => !isFailedCarrierAuditRow(row) && Number(row?.rateCount || row?.ratesReturned || 0) > 0);
+  const successRows = rows.filter(isSuccessfulCarrierAuditRow);
   return {
     requested,
     failed: failedRows.length,
@@ -150,6 +179,10 @@ export function adminQuoteMatchesFilter(quote, filter = "all", shipments = [], n
   return true;
 }
 
+export function adminRecordMatchesDateRange(record, range = "all", field = "createdAt", now = new Date()) {
+  return recordInDateRange(record, range || "all", field, now);
+}
+
 export function adminShipmentMatchesFilter(shipment, filter = "all") {
   const status = normalizeAdminShipmentStatus(shipment?.status);
   return filter === "all" ||
@@ -164,7 +197,7 @@ export function adminInvoiceMatchesFilter(invoice, filter = "all", now = new Dat
   const dueDate = parseReliableDate(invoice?.dueAt || invoice?.dueDate);
   return filter === "all" ||
     (filter === "draft" && status === "draft") ||
-    (filter === "open" && status === "open") ||
+    (filter === "open" && ["draft", "open", "overdue"].includes(status)) ||
     (filter === "overdue" && (status === "overdue" || (status === "open" && dueDate && dueDate < now))) ||
     (filter === "paid" && status === "paid") ||
     (filter === "importIssues" && status === "unknown");
@@ -255,9 +288,9 @@ export function adminRecentActivity({ quotes = [], shipments = [], invoices = []
     }
   });
   customers.forEach((customer) => {
-    const date = customer.updatedAt || customer.createdAt;
-    if (date && recordInDateRange({ date }, bounds, "date")) {
-      rows.push(activity("customer_updated", customer.id, customer.id, customer.companyName || customer.id, date, customer.updatedAt ? "Customer updated." : "Customer created.", customerMap));
+    const classification = classifyCustomerActivity(customer);
+    if (classification.date && recordInDateRange({ date: classification.date }, bounds, "date")) {
+      rows.push(activity(classification.type, customer.id, customer.id, customer.companyName || customer.id, classification.date, classification.detail, customerMap));
     }
   });
   return rows
@@ -270,7 +303,7 @@ export function adminSetupChecklist({ customers = [], tariffs = [], quotes = [],
   if (customers.length === 0) items.push({ key: "customers", label: "Add at least one customer." });
   if (customers.some((customer) => !tariffs.some((tariff) => tariff.customerId === customer.id))) items.push({ key: "tariffs", label: "Configure customer tariff rules." });
   if (!carrierModesConfigured(health)) items.push({ key: "carriers", label: "Configure at least one carrier channel." });
-  if (!customers.some((customer) => customer.allowedBooking !== false)) items.push({ key: "booking", label: "Enable online booking for at least one customer." });
+  if (!customers.some((customer) => isCustomerOnlineBookingEnabled(customer))) items.push({ key: "booking", label: "Enable online booking for at least one customer." });
   if (!quotes.some(quoteHasUsableRates)) items.push({ key: "quotes", label: "Create one successful quote." });
   return { total: 5, remaining: items, completed: 5 - items.length };
 }
@@ -286,7 +319,7 @@ export function adminCustomerOverview({ customers = [], tariffs = [], quotes = [
     disabledCustomers: customers.length - activeCustomers.length,
     missingTariffRules: missingTariffCustomers.length,
     withoutCarrierModes: noCarrierCustomers.length,
-    onlineBookingEnabled: customers.filter((customer) => customer.allowedBooking !== false).length,
+    onlineBookingEnabled: customers.filter(isCustomerOnlineBookingEnabled).length,
     noQuoteActivity: noActivityCustomers.length,
     needsConfiguration: [...new Map([...missingTariffCustomers, ...noCarrierCustomers].map((customer) => [customer.id, customer])).values()].slice(0, 5)
   };
@@ -295,30 +328,80 @@ export function adminCustomerOverview({ customers = [], tariffs = [], quotes = [
 export function adminCarrierChannels(health = {}, quotes = []) {
   const configuredModes = health?.configuredCarrierModes || health?.carrierModes || health?.configuredCarriers || [];
   const carrierHealth = health?.carrierHealth || health?.carriers || {};
-  return [
-    { key: "mothershipSandbox", name: "Mothership" },
-    { key: "speedship", name: "SpeedShip" },
-    { key: "priority1", name: "Priority1" },
-    { key: "fedexFreight", name: "FedEx Freight" }
-  ].map((mode) => {
-    const modeHealth = carrierHealth[mode.key] || carrierHealth[mode.name] || {};
-    const configured = Array.isArray(configuredModes)
-      ? configuredModes.includes(mode.key) || configuredModes.includes(mode.name)
-      : Boolean(configuredModes?.[mode.key] || configuredModes?.[mode.name] || modeHealth.configured);
-    const lastQuote = quotes
-      .filter((quote) => Array.isArray(quote.carrierAudit) && quote.carrierAudit.some((row) => normalizeToken(row.mode || row.carrier) === normalizeToken(mode.key) || normalizeToken(row.carrier) === normalizeToken(mode.name)))
-      .map((quote) => parseReliableDate(quote.createdAt))
+  return adminCarrierModes.map((mode) => {
+    const modeHealth = lookupModeRecord(carrierHealth, mode.key) || {};
+    const configured = carrierModeConfigured(configuredModes, mode.key) || Boolean(modeHealth.configured);
+    const matchingQuotes = quotes
+      .map((quote) => ({
+        quote,
+        rows: Array.isArray(quote.carrierAudit)
+          ? quote.carrierAudit.filter((row) => normalizeCarrierMode(row.mode || row.carrier || row.provider || row.carrierSource) === mode.key)
+          : []
+      }))
+      .filter((entry) => entry.rows.length > 0);
+    const successfulQuote = matchingQuotes
+      .filter((entry) => entry.rows.some(isSuccessfulCarrierAuditRow))
+      .map((entry) => parseReliableDate(entry.quote.createdAt))
       .filter(Boolean)
       .sort((left, right) => right - left)[0] || null;
+    const latestFailure = matchingQuotes
+      .flatMap((entry) => entry.rows.filter(isFailedCarrierAuditRow).map((row) => ({ row, date: parseReliableDate(entry.quote.createdAt), quote: entry.quote })))
+      .filter((entry) => entry.date)
+      .sort((left, right) => right.date - left.date)[0] || null;
     return {
       ...mode,
       configured: configured ? "configured" : configured === false ? "not_configured" : "unknown",
       health: normalizeChannelHealth(modeHealth.status || modeHealth.health || (configured ? "unknown" : "unknown")),
       bookingEnabled: modeHealth.bookingEnabled,
-      lastSuccessfulQuoteAt: lastQuote ? lastQuote.toISOString() : "",
-      lastErrorSummary: sanitizeChannelMessage(modeHealth.lastError || modeHealth.error || "")
+      lastSuccessfulQuoteAt: successfulQuote ? successfulQuote.toISOString() : "",
+      lastErrorSummary: sanitizeChannelMessage(modeHealth.lastError || modeHealth.error || latestFailure?.row?.message || latestFailure?.row?.error || ""),
+      failedQuoteIds: matchingQuotes
+        .filter((entry) => entry.rows.some(isFailedCarrierAuditRow))
+        .map((entry) => entry.quote.id)
+        .filter(Boolean)
+        .slice(0, 5)
     };
   });
+}
+
+export function normalizeCarrierMode(value) {
+  const token = normalizeToken(value);
+  const match = adminCarrierModes.find((mode) =>
+    normalizeToken(mode.key) === token ||
+    normalizeToken(mode.name) === token ||
+    mode.aliases.some((alias) => normalizeToken(alias) === token)
+  );
+  return match?.key || token;
+}
+
+export function isCustomerOnlineBookingEnabled(customer) {
+  if (!customer || customer.disabled || customer.active === false || customer.allowedBooking === false) {
+    return false;
+  }
+  const allowed = normalizeModeList(customer.allowedCarrierModes || customer.carrierModes || []);
+  if (allowed.length === 0) {
+    return false;
+  }
+  const booking = normalizeModeList(customer.allowedBookingCarrierModes || []);
+  if (booking.length === 0) {
+    return false;
+  }
+  return booking.some((mode) => allowed.includes(mode));
+}
+
+export function classifyCustomerActivity(customer) {
+  const createdAt = parseReliableDate(customer?.createdAt);
+  const updatedAt = parseReliableDate(customer?.updatedAt);
+  if (updatedAt && createdAt && updatedAt.getTime() - createdAt.getTime() > customerTimestampToleranceMs) {
+    return { type: "customer_updated", date: updatedAt.toISOString(), detail: "Customer updated." };
+  }
+  if (createdAt) {
+    return { type: "customer_created", date: createdAt.toISOString(), detail: "Customer created." };
+  }
+  if (updatedAt) {
+    return { type: "customer_updated", date: updatedAt.toISOString(), detail: "Customer updated." };
+  }
+  return { type: "", date: "", detail: "" };
 }
 
 function attentionItem(type, priority, customerId, recordId, recordNumber, date, reason, customerMap) {
@@ -354,9 +437,33 @@ function carrierModesConfigured(health) {
 }
 
 function isFailedCarrierAuditRow(row) {
+  if (row?.excluded) return false;
   const status = normalizeToken(row?.status || row?.result || "");
   if (["failed", "error", "timeout", "rejected"].includes(status)) return true;
-  return Boolean(row?.error || row?.failed || row?.timedOut) && !row?.excluded;
+  return Boolean(row?.error || row?.failed || row?.timedOut);
+}
+
+function isSuccessfulCarrierAuditRow(row) {
+  return !row?.excluded && !isFailedCarrierAuditRow(row) && Number(row?.rateCount || row?.ratesReturned || 0) > 0;
+}
+
+function normalizeModeList(values) {
+  return Array.isArray(values) ? values.map(normalizeCarrierMode).filter(Boolean) : [];
+}
+
+function carrierModeConfigured(configuredModes, modeKey) {
+  if (Array.isArray(configuredModes)) {
+    return configuredModes.some((mode) => normalizeCarrierMode(mode) === modeKey);
+  }
+  if (configuredModes && typeof configuredModes === "object") {
+    return Object.entries(configuredModes).some(([key, value]) => value && normalizeCarrierMode(key) === modeKey);
+  }
+  return false;
+}
+
+function lookupModeRecord(records, modeKey) {
+  if (!records || typeof records !== "object") return null;
+  return Object.entries(records).find(([key]) => normalizeCarrierMode(key) === modeKey)?.[1] || null;
 }
 
 function normalizeChannelHealth(value) {

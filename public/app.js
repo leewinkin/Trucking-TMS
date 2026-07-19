@@ -7,11 +7,14 @@ import {
   adminInvoiceMatchesFilter,
   adminQuoteConversion,
   adminQuoteMatchesFilter,
+  adminRecordMatchesDateRange,
   adminRecentActivity,
   adminSetupChecklist,
   adminShipmentMatchesFilter,
+  countUsableRates,
   isAdminQuoteIssue,
   isAdminReadyToBookQuote,
+  lowestUsableSellPrice,
   quoteCarrierAuditSummary,
   quoteHasUsableRates
 } from "./admin-dashboard.js";
@@ -136,6 +139,9 @@ const translations = {
     "Status Pending": "状态待更新",
     "All": "全部",
     "Clear Filter": "清除筛选",
+    "Clear status": "清除状态",
+    "Clear date range": "清除日期范围",
+    "Clear all filters": "清除全部筛选",
     "Today": "今天",
     "Last 7 Days": "最近 7 天",
     "Last 30 Days": "最近 30 天",
@@ -297,6 +303,7 @@ const translations = {
     "No Rates": "暂无报价",
     "Expired": "已过期",
     "available rate(s)": "条可用报价",
+    "usable rate(s)": "条有效报价",
     "Lowest price": "最低报价",
     "Quick Actions": "快捷操作",
     "Dashboard actions": "仪表盘操作",
@@ -310,6 +317,12 @@ const translations = {
     "Enter a confirmation number or PO/reference number.": "请输入确认号或 PO/参考号。",
     "Confirmation or PO/reference number": "确认号或 PO/参考号",
     "Search": "搜索",
+    "Search operations": "搜索运营数据",
+    "Search by quote, PO, shipment, invoice, or customer.": "按报价、PO、货件、账单或客户搜索。",
+    "Search terms": "搜索内容",
+    "No search results.": "没有搜索结果。",
+    "Carrier Diagnostics": "承运商诊断",
+    "Failed quotes": "失败报价",
     "No matching shipments found.": "未找到匹配货件。",
     "Select a shipment": "选择货件",
     "Bill of Lading": "提单",
@@ -963,6 +976,11 @@ const state = {
     shipments: "all",
     invoices: "all"
   },
+  staffFilterRanges: {
+    quotes: "all",
+    shipments: "all",
+    invoices: "all"
+  },
   customerFilters: {
     quotes: "all",
     shipments: "all",
@@ -1139,6 +1157,18 @@ function wireNavigation() {
       return;
     }
 
+    const staffClearDateButton = event.target.closest("[data-staff-clear-date-range]");
+    if (staffClearDateButton) {
+      clearStaffDateRangeFilter(staffClearDateButton.dataset.staffClearDateRange);
+      return;
+    }
+
+    const staffClearAllButton = event.target.closest("[data-staff-clear-all-filters]");
+    if (staffClearAllButton) {
+      clearAllStaffFilters(staffClearAllButton.dataset.staffClearAllFilters);
+      return;
+    }
+
     const invoiceTabButton = event.target.closest("[data-invoice-tab]");
     if (invoiceTabButton) {
       setInvoiceTab(invoiceTabButton.dataset.invoiceTab);
@@ -1206,6 +1236,18 @@ function wireNavigation() {
     const trackSearchButton = event.target.closest("[data-track-search]");
     if (trackSearchButton) {
       runTrackShipmentSearch();
+      return;
+    }
+
+    const staffSearchButton = event.target.closest("[data-staff-search-submit]");
+    if (staffSearchButton) {
+      runStaffSearch();
+      return;
+    }
+
+    const staffSearchResult = event.target.closest("[data-staff-search-result]");
+    if (staffSearchResult) {
+      openStaffSearchResult(staffSearchResult.dataset.staffSearchType, staffSearchResult.dataset.staffSearchResult);
       return;
     }
 
@@ -1313,6 +1355,13 @@ function wireForms() {
     }
   });
 
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && event.target?.id === "staffSearchInput") {
+      event.preventDefault();
+      runStaffSearch();
+    }
+  });
+
   document.addEventListener("change", (event) => {
     const sort = event.target.closest("[data-customer-quote-sort]");
     if (sort) {
@@ -1322,9 +1371,6 @@ function wireForms() {
     if (staffRange) {
       state.staffDashboardRange = staffRange.value || "last7";
       renderDashboard();
-      renderQuotesView();
-      renderShipments();
-      renderInvoices();
     }
   });
 
@@ -5164,6 +5210,7 @@ function renderQuotesView() {
   }
   if (!isCustomerUser()) {
     const activeFilter = state.staffFilters.quotes || "all";
+    const activeRange = state.staffFilterRanges.quotes || "all";
     const filters = [
       { value: "all", label: "All" },
       { value: "today", label: "Today" },
@@ -5174,9 +5221,12 @@ function renderQuotesView() {
       { value: "booked", label: "Booked" },
       { value: "expired", label: "Expired" }
     ];
-    const quotes = recentByCreatedAt(state.quotes).filter((quote) => adminQuoteMatchesFilter(quote, activeFilter, state.shipments));
+    const quotes = recentByCreatedAt(state.quotes).filter((quote) =>
+      adminQuoteMatchesFilter(quote, activeFilter, state.shipments) &&
+      adminRecordMatchesDateRange(quote, activeRange)
+    );
     list.innerHTML = `
-      ${staffFilterBarHtml("quotes", filters, activeFilter)}
+      ${staffFilterBarHtml("quotes", filters, activeFilter, activeRange)}
       <div class="staff-card-stack">
         ${quotes.length ? quotes.map(staffQuoteRowHtml).join("") : `<div class="empty-state">${escapeHtml(t("No filter results."))}</div>`}
       </div>
@@ -5503,23 +5553,39 @@ function formatPercent(value) {
   return Number.isFinite(value) ? `${Math.round(value * 100)}%` : "N/A";
 }
 
-function staffFilterBarHtml(view, filters, activeFilter) {
+function staffFilterBarHtml(view, filters, activeFilter, activeRange = "all") {
+  const activeLabel = filters.find((filter) => filter.value === activeFilter)?.label || "All";
+  const rangeLabel = staffDateRangeLabel(activeRange);
+  const hasStatusFilter = activeFilter !== "all";
+  const hasRangeFilter = activeRange !== "all";
   return `
     <div class="customer-filter-bar staff-filter-bar" aria-label="${escapeHtml(t("Filter: {filter}", { filter: t(filters.find((filter) => filter.value === activeFilter)?.label || "All") }))}">
+      <span class="staff-filter-summary">${escapeHtml(`${t(activeLabel)} · ${t(rangeLabel)}`)}</span>
       ${filters.map((filter) => `
         <button class="filter-chip ${activeFilter === filter.value ? "active" : ""}" type="button" data-staff-filter-view="${escapeHtml(view)}" data-staff-filter="${escapeHtml(filter.value)}">
           ${escapeHtml(t(filter.label))}
         </button>
       `).join("")}
-      ${activeFilter !== "all" ? `<button class="link-action" type="button" data-staff-filter-view="${escapeHtml(view)}" data-staff-filter="all">${escapeHtml(t("Clear Filter"))}</button>` : ""}
+      ${hasStatusFilter ? `<button class="link-action" type="button" data-staff-filter-view="${escapeHtml(view)}" data-staff-filter="all">${escapeHtml(t("Clear status"))}</button>` : ""}
+      ${hasRangeFilter ? `<button class="link-action" type="button" data-staff-clear-date-range="${escapeHtml(view)}">${escapeHtml(t("Clear date range"))}</button>` : ""}
+      ${hasStatusFilter || hasRangeFilter ? `<button class="link-action" type="button" data-staff-clear-all-filters="${escapeHtml(view)}">${escapeHtml(t("Clear all filters"))}</button>` : ""}
     </div>
   `;
 }
 
+function staffDateRangeLabel(range) {
+  return {
+    today: "Today",
+    last7: "Last 7 Days",
+    last30: "Last 30 Days",
+    all: "All Time"
+  }[range] || "All Time";
+}
+
 function staffQuoteRowHtml(quote) {
   const customer = customerById(quote.customerId);
-  const rates = Array.isArray(quote.rates) ? quote.rates : [];
-  const lowest = Math.min(...rates.map((rate) => validSellPrice(rate)).filter(Number.isFinite));
+  const usableRateCount = countUsableRates(quote);
+  const lowest = lowestUsableSellPrice(quote);
   return `
     <article class="customer-quote-row staff-quote-row">
       <div class="customer-quote-content">
@@ -5531,7 +5597,7 @@ function staffQuoteRowHtml(quote) {
         <div class="customer-quote-meta">
           <span>${escapeHtml(formatDateTime(quote.createdAt))}</span>
           <span>${escapeHtml(t("Reference / PO"))}: ${escapeHtml(quote.referenceNumber || "N/A")}</span>
-          <span>${escapeHtml(String(rates.length))} ${escapeHtml(t("available rate(s)"))}</span>
+          <span>${escapeHtml(String(usableRateCount))} ${escapeHtml(t("usable rate(s)"))}</span>
           <span>${escapeHtml(t("Lowest price"))}: ${Number.isFinite(lowest) ? money.format(lowest) : escapeHtml(t("No Rates"))}</span>
           <span>${staffCarrierAuditSummaryLabel(quote)}</span>
         </div>
@@ -5944,6 +6010,7 @@ function resetStaffFilterForView(view) {
   }
   if (["quotes", "shipments", "invoices"].includes(view)) {
     state.staffFilters[view] = "all";
+    state.staffFilterRanges[view] = "all";
   }
 }
 
@@ -5959,6 +6026,27 @@ function setStaffFilter(view, filter) {
   } else {
     renderInvoices();
   }
+}
+
+function clearStaffDateRangeFilter(view) {
+  if (isCustomerUser() || !["quotes", "shipments", "invoices"].includes(view)) {
+    return;
+  }
+  state.staffFilterRanges[view] = "all";
+  if (view === "quotes") renderQuotesView();
+  if (view === "shipments") renderShipments();
+  if (view === "invoices") renderInvoices();
+}
+
+function clearAllStaffFilters(view) {
+  if (isCustomerUser() || !["quotes", "shipments", "invoices"].includes(view)) {
+    return;
+  }
+  state.staffFilters[view] = "all";
+  state.staffFilterRanges[view] = "all";
+  if (view === "quotes") renderQuotesView();
+  if (view === "shipments") renderShipments();
+  if (view === "invoices") renderInvoices();
 }
 
 function customerFilterBarHtml(view, filters, activeFilter) {
@@ -6093,11 +6181,13 @@ function navigateStaffDashboardFilter(filter) {
   }
   if (filter === "activeShipments" || filter === "shipmentExceptions") {
     state.staffFilters.shipments = filter === "shipmentExceptions" ? "exceptions" : "active";
+    state.staffFilterRanges.shipments = state.staffDashboardRange;
     setView("shipments");
     return;
   }
   if (filter === "openInvoices") {
     state.staffFilters.invoices = "open";
+    state.staffFilterRanges.invoices = state.staffDashboardRange;
     setView("invoices");
     return;
   }
@@ -6107,6 +6197,7 @@ function navigateStaffDashboardFilter(filter) {
     quoteIssues: "issues"
   };
   state.staffFilters.quotes = quoteFilters[filter] || "all";
+  state.staffFilterRanges.quotes = state.staffDashboardRange;
   setView("quotes");
 }
 
@@ -6119,8 +6210,7 @@ function handleStaffDashboardAction(action) {
     return;
   }
   if (action === "search") {
-    state.staffFilters.quotes = "all";
-    setView("quotes");
+    openStaffSearchModal();
     return;
   }
   if (action === "customers") {
@@ -6128,8 +6218,128 @@ function handleStaffDashboardAction(action) {
     return;
   }
   if (action === "diagnostics") {
-    openDashboardModal("quotes");
+    openCarrierDiagnosticsModal();
   }
+}
+
+function openStaffSearchModal() {
+  if (isCustomerUser()) {
+    return;
+  }
+  openModal(t("Search operations"), `
+    <div class="staff-search-modal">
+      <p>${escapeHtml(t("Search by quote, PO, shipment, invoice, or customer."))}</p>
+      <label>
+        ${escapeHtml(t("Search terms"))}
+        <input id="staffSearchInput" type="search" autocomplete="off">
+      </label>
+      <div class="modal-actions">
+        <button class="primary-action" type="button" data-staff-search-submit>${escapeHtml(t("Search"))}</button>
+      </div>
+      <div id="staffSearchResults" class="staff-card-stack" aria-live="polite"></div>
+    </div>
+  `);
+  window.requestAnimationFrame(() => document.getElementById("staffSearchInput")?.focus());
+}
+
+function runStaffSearch() {
+  const input = document.getElementById("staffSearchInput");
+  const results = document.getElementById("staffSearchResults");
+  if (!input || !results) {
+    return;
+  }
+  const query = String(input.value || "").trim().toLowerCase();
+  if (!query) {
+    results.innerHTML = `<div class="empty-state">${escapeHtml(t("No search results."))}</div>`;
+    return;
+  }
+  const groups = [
+    {
+      label: "Quotes",
+      type: "quote",
+      items: state.quotes.filter((quote) => [customerQuoteNumber(quote), quote.referenceNumber, quote.poNumber, quote.customerReference].some((value) => String(value || "").toLowerCase().includes(query))),
+      render: (quote) => `${customerQuoteNumber(quote)} · ${quote.referenceNumber || quote.poNumber || ""}`
+    },
+    {
+      label: "Shipments",
+      type: "shipment",
+      items: state.shipments.filter((shipment) => [shipment.confirmationNumber, shipment.referenceNumber].some((value) => String(value || "").toLowerCase().includes(query))),
+      render: (shipment) => `${shipment.confirmationNumber || shipment.id} · ${shipment.referenceNumber || ""}`
+    },
+    {
+      label: "Invoices",
+      type: "invoice",
+      items: state.invoices.filter((invoice) => [invoice.invoiceNumber, invoice.referenceNumber].some((value) => String(value || "").toLowerCase().includes(query))),
+      render: (invoice) => `${invoice.invoiceNumber || invoice.id}`
+    },
+    {
+      label: "Customers",
+      type: "customer",
+      items: state.customers.filter((customer) => [customer.companyName, customer.name, customer.billingEmail].some((value) => String(value || "").toLowerCase().includes(query))),
+      render: (customer) => `${customer.companyName || customer.name || customer.id} · ${customer.billingEmail || ""}`
+    }
+  ];
+  const html = groups
+    .filter((group) => group.items.length)
+    .map((group) => `
+      <section class="staff-search-group">
+        <strong>${escapeHtml(t(group.label))}</strong>
+        ${group.items.slice(0, 6).map((item) => `
+          <button class="track-result" type="button" data-staff-search-type="${escapeHtml(group.type)}" data-staff-search-result="${escapeHtml(item.id)}">
+            <span>${escapeHtml(group.render(item))}</span>
+          </button>
+        `).join("")}
+      </section>
+    `).join("");
+  results.innerHTML = html || `<div class="empty-state">${escapeHtml(t("No search results."))}</div>`;
+}
+
+function openStaffSearchResult(type, id) {
+  closeModal();
+  if (type === "quote") {
+    openQuoteDetails(id);
+    return;
+  }
+  if (type === "shipment") {
+    openShipmentTracking(id);
+    return;
+  }
+  if (type === "invoice") {
+    openInvoiceDetails(id);
+    return;
+  }
+  if (type === "customer") {
+    setView("customers");
+  }
+}
+
+function openCarrierDiagnosticsModal() {
+  if (isCustomerUser()) {
+    return;
+  }
+  const channels = adminCarrierChannels(state.health || {}, state.quotes);
+  openModal(t("Carrier Diagnostics"), `
+    <div class="staff-card-stack">
+      ${channels.map((channel) => `
+        <article class="carrier-channel-card">
+          <div>
+            <strong>${escapeHtml(channel.name)}</strong>
+            <small>${escapeHtml(t(channel.configured === "configured" ? "Configured" : channel.configured === "not_configured" ? "Not Configured" : "Unknown"))}</small>
+            <small>${escapeHtml(t(channel.health === "healthy" ? "Healthy" : channel.health === "degraded" ? "Degraded" : channel.health === "error" ? "Error" : "Unknown"))}</small>
+            ${typeof channel.bookingEnabled === "boolean" ? `<small>${escapeHtml(t(channel.bookingEnabled ? "Booking enabled" : "Booking disabled"))}</small>` : ""}
+            ${channel.lastSuccessfulQuoteAt ? `<small>${escapeHtml(t("Last successful quote {time}", { time: formatDateTime(channel.lastSuccessfulQuoteAt) }))}</small>` : ""}
+            ${channel.lastErrorSummary ? `<small>${escapeHtml(t("Last error: {message}", { message: channel.lastErrorSummary }))}</small>` : ""}
+          </div>
+          ${channel.failedQuoteIds?.length ? `
+            <div class="staff-card-stack compact-stack">
+              <strong>${escapeHtml(t("Failed quotes"))}</strong>
+              ${channel.failedQuoteIds.map((quoteId) => `<button class="link-action" type="button" data-view-quote="${escapeHtml(quoteId)}">${escapeHtml(customerQuoteNumber(state.quotes.find((quote) => quote.id === quoteId) || { id: quoteId }))}</button>`).join("")}
+            </div>
+          ` : ""}
+        </article>
+      `).join("")}
+    </div>
+  `);
 }
 
 function openTrackShipmentModal() {
@@ -6435,6 +6645,7 @@ function renderShipments() {
     return;
   }
   const activeFilter = state.staffFilters.shipments || "all";
+  const activeRange = state.staffFilterRanges.shipments || "all";
   const filters = [
     { value: "all", label: "All" },
     { value: "active", label: "Active" },
@@ -6442,9 +6653,12 @@ function renderShipments() {
     { value: "delivered", label: "Delivered" },
     { value: "cancelled", label: "Cancelled" }
   ];
-  const shipments = state.shipments.filter((shipment) => adminShipmentMatchesFilter(shipment, activeFilter));
+  const shipments = state.shipments.filter((shipment) =>
+    adminShipmentMatchesFilter(shipment, activeFilter) &&
+    adminRecordMatchesDateRange(shipment, activeRange)
+  );
   list.innerHTML = `
-    ${staffFilterBarHtml("shipments", filters, activeFilter)}
+    ${staffFilterBarHtml("shipments", filters, activeFilter, activeRange)}
     <div class="customer-card-stack">
       ${shipments.length
         ? shipments.map(shipmentRow).join("")
@@ -6476,6 +6690,7 @@ function renderInvoices() {
   }
 
   const activeFilter = state.staffFilters.invoices || "all";
+  const activeRange = state.staffFilterRanges.invoices || "all";
   const filters = [
     { value: "all", label: "All" },
     { value: "draft", label: "Draft" },
@@ -6484,7 +6699,10 @@ function renderInvoices() {
     { value: "paid", label: "Paid" },
     { value: "importIssues", label: "Import Issues" }
   ];
-  const staffInvoices = state.invoices.filter((invoice) => adminInvoiceMatchesFilter(invoice, activeFilter));
+  const staffInvoices = state.invoices.filter((invoice) =>
+    adminInvoiceMatchesFilter(invoice, activeFilter) &&
+    adminRecordMatchesDateRange(invoice, activeRange)
+  );
   const mothershipInvoices = staffInvoices.filter((invoice) => invoice?.source === "mothership");
   const visibleOtherInvoices = staffInvoices.filter((invoice) => invoice?.source !== "mothership");
   const activeTab = resolveInvoiceTab(mothershipInvoices, visibleOtherInvoices);
@@ -6493,7 +6711,7 @@ function renderInvoices() {
   const activeLabel = activeTab === "mothership" ? t("Imported from Mothership") : t("Other invoices");
 
   list.innerHTML = `
-    ${staffFilterBarHtml("invoices", filters, activeFilter)}
+    ${staffFilterBarHtml("invoices", filters, activeFilter, activeRange)}
     <div class="invoice-tabs-shell">
       <div class="invoice-tabs" role="tablist" aria-label="${t("Invoice groups")}" data-i18n-aria-label="Invoice groups">
         <button class="invoice-tab ${activeTab === "mothership" ? "active" : ""}" type="button" data-invoice-tab="mothership" role="tab" aria-selected="${activeTab === "mothership"}">

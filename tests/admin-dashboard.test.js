@@ -9,16 +9,24 @@ import {
   adminInvoiceMatchesFilter,
   adminQuoteConversion,
   adminQuoteMatchesFilter,
+  adminRecordMatchesDateRange,
   adminRecentActivity,
   adminSetupChecklist,
   adminShipmentMatchesFilter,
+  classifyCustomerActivity,
+  countUsableRates,
+  isCustomerOnlineBookingEnabled,
   isAdminReadyToBookQuote,
-  normalizeAdminInvoiceStatus
+  lowestUsableSellPrice,
+  normalizeAdminInvoiceStatus,
+  normalizeCarrierMode,
+  quoteHasUsableRates,
+  validAdminSellPrice
 } from "../public/admin-dashboard.js";
 
 const now = new Date("2026-07-19T12:00:00");
 const customers = [
-  { id: "cust_a", companyName: "Alpha Logistics", allowedCarrierModes: ["speedship"], allowedBooking: true, createdAt: "2026-07-01T10:00:00" },
+  { id: "cust_a", companyName: "Alpha Logistics", allowedCarrierModes: ["speedship"], allowedBookingCarrierModes: ["speedshipLtl"], allowedBooking: true, createdAt: "2026-07-01T10:00:00" },
   { id: "cust_b", companyName: "Beta Foods", allowedCarrierModes: [], allowedBooking: false, createdAt: "2026-07-12T10:00:00" },
   { id: "cust_disabled", companyName: "Disabled Co", allowedCarrierModes: ["priority1"], allowedBooking: false, active: false, createdAt: "2026-07-12T10:00:00" }
 ];
@@ -46,6 +54,31 @@ const invoices = [
   invoice("inv_paid", "cust_a", "paid", "2026-07-18T08:00:00"),
   invoice("inv_unknown", "cust_a", "provider_review", "2026-07-18T08:00:00")
 ];
+
+const sellPriceCases = [
+  { name: "null", rate: { sellPrice: null }, valid: false },
+  { name: "undefined", rate: {}, valid: false },
+  { name: "empty string", rate: { sellPrice: "" }, valid: false },
+  { name: "whitespace", rate: { sellPrice: "   " }, valid: false },
+  { name: "NaN text", rate: { sellPrice: "NaN" }, valid: false },
+  { name: "Infinity", rate: { sellPrice: Infinity }, valid: false },
+  { name: "valid zero", rate: { sellPrice: 0 }, valid: true },
+  { name: "valid positive", rate: { sellPrice: 12.5 }, valid: true },
+  { name: "numeric string", rate: { sellPrice: "99.50" }, valid: true }
+];
+sellPriceCases.forEach((testCase) => {
+  assert.equal(Number.isFinite(validAdminSellPrice(testCase.rate)), testCase.valid, `strict sell price validation should handle ${testCase.name}`);
+});
+assert.equal(quoteHasUsableRates({ rates: [{ sellPrice: null }, { sellPrice: "" }, { sellPrice: " " }] }), false, "missing prices must not count as usable rates");
+assert.equal(quoteHasUsableRates({ rates: [{ sellPrice: "0" }] }), true, "zero sellPrice is a usable rate");
+assert.equal(countUsableRates({ rates: [{ sellPrice: null }, { sellPrice: 0 }, { sellPrice: "12" }] }), 2, "usable rate count should use strict sellPrice validation");
+assert.equal(lowestUsableSellPrice({ rates: [{ sellPrice: "" }, { sellPrice: "20" }, { sellPrice: 5 }] }), 5, "lowest price should ignore missing or invalid prices");
+
+assert.equal(normalizeCarrierMode("speedship"), "speedshipLtl", "SpeedShip alias should normalize to speedshipLtl");
+assert.equal(normalizeCarrierMode("speedshipLtl"), "speedshipLtl", "SpeedShip stable key should stay stable");
+assert.equal(normalizeCarrierMode("priority1"), "priority1Ltl", "Priority1 alias should normalize to priority1Ltl");
+assert.equal(normalizeCarrierMode("PRIORITY1_LTL"), "priority1Ltl", "Priority1 case variation should normalize");
+assert.equal(normalizeCarrierMode("mothership"), "mothershipSandbox", "Mothership alias should normalize");
 
 const todayBounds = adminDateRangeBounds("today", now);
 assert.equal(todayBounds.start.getHours(), 0, "today range should use browser-local calendar start");
@@ -80,7 +113,7 @@ assert(attention.some((item) => item.type === "customer_missing_tariff"), "custo
 assert(attention.some((item) => item.type === "customer_no_carriers"), "customer no-carrier warning should exist");
 
 const completeSetup = adminSetupChecklist({
-  customers: [{ id: "cust_ok", allowedCarrierModes: ["speedship"], allowedBooking: true }],
+  customers: [{ id: "cust_ok", allowedCarrierModes: ["speedship"], allowedBookingCarrierModes: ["speedshipLtl"], allowedBooking: true }],
   tariffs: [{ customerId: "cust_ok" }],
   quotes: [{ rates: [{ sellPrice: 1 }] }],
   health: { configuredCarrierModes: ["speedship"] }
@@ -91,6 +124,10 @@ assert.equal(adminSetupChecklist({ customers, tariffs, quotes, health: {} }).rem
 const activity = adminRecentActivity({ quotes, shipments, invoices, customers }, "last7", now);
 assert.equal(activity[0].recordId, "ship_unlinked", "recent activity should sort newest first");
 assert.equal(activity.some((item) => item.recordId === "missing_timestamp"), false, "recent activity should not fabricate missing timestamps");
+assert.equal(classifyCustomerActivity({ id: "c1", createdAt: "2026-07-19T01:00:00" }).detail, "Customer created.", "customer with only createdAt should be created");
+assert.equal(classifyCustomerActivity({ id: "c2", createdAt: "2026-07-19T01:00:00.000Z", updatedAt: "2026-07-19T01:00:00.500Z" }).detail, "Customer created.", "nearly equal customer timestamps should be created");
+assert.equal(classifyCustomerActivity({ id: "c3", createdAt: "2026-07-19T01:00:00Z", updatedAt: "2026-07-19T01:05:00Z" }).detail, "Customer updated.", "later updatedAt should be an update");
+assert.equal(classifyCustomerActivity({ id: "c4" }).date, "", "customer activity should require reliable timestamps");
 
 const overview = adminCustomerOverview({ customers, tariffs, quotes }, "last7", now);
 assert.equal(overview.activeCustomers, 2);
@@ -98,6 +135,12 @@ assert.equal(overview.disabledCustomers, 1);
 assert.equal(overview.missingTariffRules, 2);
 assert.equal(overview.withoutCarrierModes, 1);
 assert.equal(overview.onlineBookingEnabled, 1);
+assert.equal(isCustomerOnlineBookingEnabled({ allowedBooking: false, allowedCarrierModes: ["speedshipLtl"], allowedBookingCarrierModes: ["speedshipLtl"] }), false, "allowedBooking false should disable online booking");
+assert.equal(isCustomerOnlineBookingEnabled({ allowedCarrierModes: [] }), false, "no carrier modes should disable online booking");
+assert.equal(isCustomerOnlineBookingEnabled({ allowedCarrierModes: ["speedshipLtl"] }), false, "allowed mode without booking mode should not count");
+assert.equal(isCustomerOnlineBookingEnabled({ allowedCarrierModes: ["speedshipLtl"], allowedBookingCarrierModes: ["priority1Ltl"] }), false, "booking mode must overlap allowed modes");
+assert.equal(isCustomerOnlineBookingEnabled({ allowedCarrierModes: ["speedship"], allowedBookingCarrierModes: ["speedshipLtl"] }), true, "valid overlapping normalized modes should count");
+assert.equal(isCustomerOnlineBookingEnabled({ active: false, allowedCarrierModes: ["speedshipLtl"], allowedBookingCarrierModes: ["speedshipLtl"] }), false, "disabled customer should not count");
 
 const channels = adminCarrierChannels(
   {
@@ -108,7 +151,31 @@ const channels = adminCarrierChannels(
   },
   quotes
 );
-assert.equal(channels.find((item) => item.key === "speedship").lastErrorSummary.includes("abc123"), false, "carrier channel panel data should redact tokens/secrets");
+assert.equal(channels.find((item) => item.key === "speedshipLtl").configured, "configured", "carrier aliases should not show configured channels as not configured");
+assert.equal(channels.find((item) => item.key === "speedshipLtl").lastErrorSummary.includes("abc123"), false, "carrier channel panel data should redact tokens/secrets");
+
+const channelHistory = adminCarrierChannels(
+  { configuredCarrierModes: ["speedshipLtl", "priority1Ltl"] },
+  [
+    quote("latest_failed", "cust_a", "2026-07-19T11:00:00", "quoted", [], [{ mode: "speedshipLtl", status: "failed", error: "authorization=bad", rateCount: 0 }]),
+    quote("earlier_success", "cust_a", "2026-07-18T11:00:00", "quoted", [{ sellPrice: 10 }], [{ mode: "speedship", status: "success", rateCount: 1 }]),
+    quote("excluded", "cust_a", "2026-07-19T10:00:00", "quoted", [], [{ mode: "priority1", status: "failed", excluded: true, rateCount: 0 }]),
+    quote("returned", "cust_a", "2026-07-17T10:00:00", "quoted", [{ sellPrice: 30 }], [{ mode: "priority1Ltl", status: "success", ratesReturned: 2 }])
+  ]
+);
+assert.equal(channelHistory.find((item) => item.key === "speedshipLtl").lastSuccessfulQuoteAt.startsWith("2026-07-18"), true, "latest failed record should not replace earlier successful quote time");
+assert.equal(channelHistory.find((item) => item.key === "speedshipLtl").lastErrorSummary.includes("[redacted]"), true, "latest failed record may provide a sanitized error");
+assert.equal(channelHistory.find((item) => item.key === "speedshipLtl").lastErrorSummary.includes("authorization=bad"), false, "authorization details should be redacted");
+assert.equal(channelHistory.find((item) => item.key === "priority1Ltl").lastSuccessfulQuoteAt.startsWith("2026-07-17"), true, "ratesReturned should count as successful");
+assert.equal(adminCarrierChannels({}, [quote("only_failed", "cust_a", "2026-07-19T11:00:00", "failed", [], [{ mode: "speedship", status: "failed", rateCount: 0 }])]).find((item) => item.key === "speedshipLtl").lastSuccessfulQuoteAt, "", "only failed records should not show last successful quote time");
+
+const drillDownRange = "last7";
+const drillDownQuoteCount = quotes.filter((item) => adminQuoteMatchesFilter(item, "issues", shipments, now) && adminRecordMatchesDateRange(item, drillDownRange, "createdAt", now)).length;
+assert.equal(drillDownQuoteCount, metrics.quoteIssues, "Quote Issues KPI count should match drill-down record count in the same range");
+const drillDownShipmentCount = shipments.filter((item) => adminShipmentMatchesFilter(item, "active") && adminRecordMatchesDateRange(item, drillDownRange, "createdAt", now)).length;
+assert.equal(drillDownShipmentCount, metrics.activeShipments, "Active Shipments KPI count should match drill-down record count in the same range");
+const drillDownInvoiceCount = invoices.filter((item) => adminInvoiceMatchesFilter(item, "open", now) && adminRecordMatchesDateRange(item, drillDownRange, "createdAt", now)).length;
+assert.equal(drillDownInvoiceCount, metrics.openInvoices, "Open Invoices KPI count should match drill-down record count in the same range");
 
 const app = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
 const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
@@ -118,6 +185,7 @@ const renderStaffDashboardSlice = app.slice(app.indexOf("function renderStaffDas
 const renderCustomerDashboardSlice = app.slice(app.indexOf("function renderCustomerDashboard"), app.indexOf("function customerKpiGridHtml"));
 const renderQuotesViewSlice = app.slice(app.indexOf("function renderQuotesView"), app.indexOf("function renderStaffDashboard"));
 const staffNavigationSlice = app.slice(app.indexOf("function navigateStaffDashboardFilter"), app.indexOf("function handleStaffDashboardAction"));
+const staffActionSlice = app.slice(app.indexOf("function handleStaffDashboardAction"), app.indexOf("function openTrackShipmentModal"));
 const rolePresentationSlice = app.slice(app.indexOf("function updateRolePresentation"), app.indexOf("function isStaffUser"));
 
 assert.match(renderDashboardSlice, /if \(isCustomerUser\(\)\) {\n\s+renderCustomerDashboard\(\);\n\s+return;\n\s+}\n\n\s+renderStaffDashboard\(\);/, "staff and customer dashboards should keep separate render paths");
@@ -130,7 +198,19 @@ assert.doesNotMatch(html.slice(html.indexOf('id="quotesNavButton"'), html.indexO
 assert.match(rolePresentationSlice, /quotes: isCustomer \? "My Quotes" : "Quote Management"/, "customer My Quotes label should remain role-aware");
 assert.match(staffNavigationSlice, /state\.staffFilters\.shipments = filter === "shipmentExceptions" \? "exceptions" : "active"/, "staff KPI clicks should open filtered shipment views");
 assert.match(staffNavigationSlice, /state\.staffFilters\.invoices = "open"/, "staff KPI clicks should open filtered invoice view");
+assert.match(staffNavigationSlice, /state\.staffFilterRanges\.quotes = state\.staffDashboardRange/, "staff quote KPI drill-down should preserve dashboard date range");
+assert.match(staffNavigationSlice, /state\.staffFilterRanges\.shipments = state\.staffDashboardRange/, "staff shipment KPI drill-down should preserve dashboard date range");
+assert.match(staffNavigationSlice, /state\.staffFilterRanges\.invoices = state\.staffDashboardRange/, "staff invoice KPI drill-down should preserve dashboard date range");
+assert.match(app, /staff-filter-summary/, "staff filtered management views should show a visible filter summary");
+assert.match(app, /data-staff-clear-date-range/, "staff filtered management views should allow clearing date range only");
+assert.match(app, /data-staff-clear-all-filters/, "staff filtered management views should allow clearing all filters");
 assert.match(app, /resetStaffFilterForView\(name\)/, "sidebar navigation should reset staff destination filters");
+assert.match(app, /openStaffSearchModal/, "staff Search action should open a real search modal");
+assert.doesNotMatch(staffActionSlice, /action === "search"[\s\S]*setView\("quotes"\)/, "staff Search action should not be a fake Quote Management shortcut");
+assert.match(app, /function runStaffSearch\(\)/, "staff global search should be implemented");
+assert.match(app, /quote number|quote, PO, shipment, invoice, or customer|billingEmail/i, "staff search should cover safe operational identifiers");
+assert.match(app, /function openCarrierDiagnosticsModal\(\)/, "carrier diagnostics action should open a real diagnostics modal");
+assert.doesNotMatch(staffActionSlice, /action === "diagnostics"[\s\S]*openDashboardModal\("quotes"\)/, "carrier diagnostics should not open the old Quotes summary modal");
 assert.match(app, /refreshButton\.classList\.toggle\("primary-action", false\)/, "Refresh should not remain primary for staff");
 assert.match(app, /data-staff-dashboard-action="newQuote"/, "New Quote should be the primary staff top action");
 assert.match(app, /Administrator \/ Staff/, "staff account chip should hide raw role codes");

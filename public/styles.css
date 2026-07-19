@@ -487,6 +487,26 @@ button.metric {
   gap: 10px;
 }
 
+.staff-filter-summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: #eef6ff;
+  color: #1d4ed8;
+  font-weight: 900;
+}
+
+.staff-search-group {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #e6ebf2;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
 .staff-attention-item,
 .staff-activity-item,
 .carrier-channel-card,
