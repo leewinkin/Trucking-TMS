@@ -14,6 +14,7 @@ import {
   countUsableRates,
   isAdminQuoteIssue,
   isAdminReadyToBookQuote,
+  isPreferenceExcludedQuote,
   lowestUsableSellPrice,
   quoteCarrierAuditSummary,
   quoteHasUsableRates
@@ -196,6 +197,8 @@ const translations = {
     "No quote activity": "无报价活动",
     "Customers requiring configuration": "需要配置的客户",
     "Partial Failure": "部分渠道失败",
+    "Filtered by Customer Preferences": "已按客户偏好过滤",
+    "Customer Preferences": "客户偏好过滤",
     "No Rates": "暂无报价",
     "Failed": "报价失败",
     "Expired": "已过期",
@@ -227,6 +230,7 @@ const translations = {
     "Quote created": "已创建报价",
     "Shipment status updated": "货件状态已更新",
     "Invoice created/imported": "账单已创建/导入",
+    "Customer created": "客户已创建",
     "Customer updated": "客户已更新",
     "Quote completed with rates.": "报价已返回运价。",
     "Quote created.": "报价已创建。",
@@ -5216,6 +5220,7 @@ function renderQuotesView() {
       { value: "today", label: "Today" },
       { value: "ready", label: "Ready to Book" },
       { value: "noRates", label: "No Rates" },
+      { value: "customerPreferences", label: "Customer Preferences" },
       { value: "partialFailure", label: "Partial Failure" },
       { value: "failed", label: "Failed" },
       { value: "booked", label: "Booked" },
@@ -5538,6 +5543,7 @@ function staffActivityTypeLabel(type) {
     quote_created: "Quote created",
     shipment_updated: "Shipment status updated",
     invoice_created: "Invoice created/imported",
+    customer_created: "Customer created",
     customer_updated: "Customer updated"
   }[type] || "Recent Activity";
 }
@@ -5616,7 +5622,9 @@ function staffQuoteStatusBadgeHtml(quote) {
     "Ready to Book": "blue",
     "No Rates": "neutral",
     "Partial Failure": "amber",
+    "Filtered by Customer Preferences": "neutral",
     Failed: "red",
+    Cancelled: "gray",
     Booked: "green",
     Expired: "gray",
     "Status Pending": "neutral"
@@ -5626,21 +5634,25 @@ function staffQuoteStatusBadgeHtml(quote) {
 
 function staffQuoteStatusLabel(quote) {
   const audit = quoteCarrierAuditSummary(quote);
+  if (adminQuoteMatchesFilter(quote, "booked", state.shipments)) return "Booked";
+  if (adminQuoteMatchesFilter(quote, "cancelled", state.shipments)) return "Cancelled";
+  if (adminQuoteMatchesFilter(quote, "expired", state.shipments)) return "Expired";
+  if (isAdminQuoteIssue(quote) || audit.allFailed) return "Failed";
+  if (isPreferenceExcludedQuote(quote)) return "Filtered by Customer Preferences";
+  if (audit.partialFailure) return "Partial Failure";
   if (isAdminReadyToBookQuote(quote, state.shipments)) return "Ready to Book";
   if (!quoteHasUsableRates(quote)) return "No Rates";
-  if (audit.partialFailure) return "Partial Failure";
-  if (isAdminQuoteIssue(quote)) return "Failed";
-  if (adminQuoteMatchesFilter(quote, "booked", state.shipments)) return "Booked";
-  if (adminQuoteMatchesFilter(quote, "expired", state.shipments)) return "Expired";
   return "Status Pending";
 }
 
 function staffCarrierAuditSummaryLabel(quote) {
   const audit = quoteCarrierAuditSummary(quote);
+  if (!audit.requested && audit.excluded) return `${audit.excluded} ${escapeHtml(t("Customer Preferences"))}`;
   if (!audit.requested) return escapeHtml(t("No carrier audit"));
   if (audit.allFailed) return escapeHtml(t("All platforms failed"));
   if (audit.partialFailure) return escapeHtml(t("Partial platform failure"));
-  return `${escapeHtml(t("Platform summary"))}: ${audit.succeeded}/${audit.requested}`;
+  const excluded = audit.excluded ? ` · ${audit.excluded} ${escapeHtml(t("Customer Preferences"))}` : "";
+  return `${escapeHtml(t("Platform summary"))}: ${audit.succeeded}/${audit.requested}${excluded}`;
 }
 
 function customerById(customerId) {

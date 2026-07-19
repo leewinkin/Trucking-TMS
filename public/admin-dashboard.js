@@ -128,19 +128,25 @@ export function isAdminReadyToBookQuote(quote, shipments = []) {
 
 export function quoteCarrierAuditSummary(quote) {
   const rows = Array.isArray(quote?.carrierAudit) ? quote.carrierAudit : [];
-  const requested = rows.length;
-  const failedRows = rows.filter(isFailedCarrierAuditRow);
-  const successRows = rows.filter(isSuccessfulCarrierAuditRow);
+  const excludedRows = rows.filter((row) => row?.excluded);
+  const attemptedRows = rows.filter((row) => !row?.excluded);
+  const failedRows = attemptedRows.filter(isFailedCarrierAuditRow);
+  const successRows = attemptedRows.filter(isSuccessfulCarrierAuditRow);
   return {
-    requested,
+    requested: attemptedRows.length,
+    attempted: attemptedRows.length,
     failed: failedRows.length,
     succeeded: successRows.length,
-    partialFailure: requested > 0 && failedRows.length > 0 && successRows.length > 0,
-    allFailed: requested > 0 && failedRows.length === requested
+    excluded: excludedRows.length,
+    partialFailure: successRows.length > 0 && failedRows.length > 0,
+    allFailed: attemptedRows.length > 0 && failedRows.length === attemptedRows.length
   };
 }
 
 export function isAdminQuoteIssue(quote) {
+  if (isPreferenceExcludedQuote(quote)) {
+    return false;
+  }
   const status = normalizeAdminQuoteStatus(quote?.status);
   const audit = quoteCarrierAuditSummary(quote);
   if (["failed", "pending"].includes(status) && !quoteHasUsableRates(quote)) {
@@ -171,10 +177,12 @@ export function adminQuoteMatchesFilter(quote, filter = "all", shipments = [], n
   const audit = quoteCarrierAuditSummary(quote);
   if (filter === "ready") return isAdminReadyToBookQuote(quote, shipments);
   if (filter === "issues") return isAdminQuoteIssue(quote);
-  if (filter === "noRates") return !quoteHasUsableRates(quote);
+  if (filter === "noRates") return !quoteHasUsableRates(quote) && !isPreferenceExcludedQuote(quote);
+  if (filter === "customerPreferences") return isPreferenceExcludedQuote(quote);
   if (filter === "partialFailure") return audit.partialFailure;
   if (filter === "failed") return status === "failed" || audit.allFailed;
   if (filter === "booked") return status === "booked" || quoteLinkedShipment(quote, shipments);
+  if (filter === "cancelled") return status === "cancelled";
   if (filter === "expired") return status === "expired";
   return true;
 }
@@ -209,7 +217,8 @@ export function adminQuoteConversion({ quotes = [], shipments = [] }, range = "l
   const linkedShipments = shipments.filter((shipment) => shipment?.quoteId && quoteIds.has(shipment.quoteId));
   const bookedShipments = linkedShipments.filter((shipment) => ["active", "delivered"].includes(normalizeAdminShipmentStatus(shipment?.status)));
   const deliveredShipments = linkedShipments.filter((shipment) => normalizeAdminShipmentStatus(shipment?.status) === "delivered");
-  const withRates = rangeQuotes.filter(quoteHasUsableRates).length;
+  const conversionEligibleQuotes = rangeQuotes.filter((quote) => !isPreferenceExcludedQuote(quote));
+  const withRates = conversionEligibleQuotes.filter(quoteHasUsableRates).length;
   const created = rangeQuotes.length;
   return {
     quotesCreated: created,
@@ -234,6 +243,9 @@ export function adminAttentionItems({ quotes = [], shipments = [], invoices = []
   });
   quotes.filter((quote) => recordInDateRange(quote, bounds)).forEach((quote) => {
     const audit = quoteCarrierAuditSummary(quote);
+    if (isPreferenceExcludedQuote(quote)) {
+      return;
+    }
     if (!quoteHasUsableRates(quote) || normalizeAdminQuoteStatus(quote?.status) === "failed" || audit.allFailed) {
       items.push(attentionItem("quote_no_rates", 2, quote.customerId, quote.id, quote.quoteNumber || quote.id, quote.createdAt, "Quote has no available rates.", customerMap));
     } else if (audit.partialFailure) {
@@ -326,11 +338,11 @@ export function adminCustomerOverview({ customers = [], tariffs = [], quotes = [
 }
 
 export function adminCarrierChannels(health = {}, quotes = []) {
-  const configuredModes = health?.configuredCarrierModes || health?.carrierModes || health?.configuredCarriers || [];
+  const configuredModes = health?.configuredCarrierModes || health?.carrierModes || health?.configuredCarriers;
   const carrierHealth = health?.carrierHealth || health?.carriers || {};
   return adminCarrierModes.map((mode) => {
     const modeHealth = lookupModeRecord(carrierHealth, mode.key) || {};
-    const configured = carrierModeConfigured(configuredModes, mode.key) || Boolean(modeHealth.configured);
+    const configured = resolveCarrierConfigurationState(health, mode.key, modeHealth);
     const matchingQuotes = quotes
       .map((quote) => ({
         quote,
@@ -350,8 +362,8 @@ export function adminCarrierChannels(health = {}, quotes = []) {
       .sort((left, right) => right.date - left.date)[0] || null;
     return {
       ...mode,
-      configured: configured ? "configured" : configured === false ? "not_configured" : "unknown",
-      health: normalizeChannelHealth(modeHealth.status || modeHealth.health || (configured ? "unknown" : "unknown")),
+      configured,
+      health: normalizeChannelHealth(modeHealth.status || modeHealth.health || "unknown"),
       bookingEnabled: modeHealth.bookingEnabled,
       lastSuccessfulQuoteAt: successfulQuote ? successfulQuote.toISOString() : "",
       lastErrorSummary: sanitizeChannelMessage(modeHealth.lastError || modeHealth.error || latestFailure?.row?.message || latestFailure?.row?.error || ""),
@@ -372,6 +384,23 @@ export function normalizeCarrierMode(value) {
     mode.aliases.some((alias) => normalizeToken(alias) === token)
   );
   return match?.key || token;
+}
+
+export function isPreferenceExcludedQuote(quote) {
+  if (quote?.rateAvailability?.messageCode === "NO_RATES_AVAILABLE_BY_PREFERENCE") {
+    return true;
+  }
+  const audit = quote?.carrierExclusionAudit;
+  if (Array.isArray(audit) && audit.length > 0) {
+    return true;
+  }
+  if (audit && typeof audit === "object" && Object.keys(audit).length > 0) {
+    return true;
+  }
+  if (quote?.excludedByCustomerPreferences || quote?.customerPreferenceExcluded) {
+    return true;
+  }
+  return false;
 }
 
 export function isCustomerOnlineBookingEnabled(customer) {
@@ -397,9 +426,6 @@ export function classifyCustomerActivity(customer) {
   }
   if (createdAt) {
     return { type: "customer_created", date: createdAt.toISOString(), detail: "Customer created." };
-  }
-  if (updatedAt) {
-    return { type: "customer_updated", date: updatedAt.toISOString(), detail: "Customer updated." };
   }
   return { type: "", date: "", detail: "" };
 }
@@ -430,10 +456,7 @@ function activity(type, customerId, recordId, recordNumber, date, detail, custom
 }
 
 function carrierModesConfigured(health) {
-  const modes = health?.configuredCarrierModes || health?.carrierModes || health?.configuredCarriers;
-  if (Array.isArray(modes)) return modes.length > 0;
-  if (modes && typeof modes === "object") return Object.values(modes).some(Boolean);
-  return Boolean(health?.mothershipConfigured || health?.speedshipConfigured || health?.priority1Configured);
+  return adminCarrierModes.some((mode) => resolveCarrierConfigurationState(health || {}, mode.key) === "configured");
 }
 
 function isFailedCarrierAuditRow(row) {
@@ -466,6 +489,60 @@ function lookupModeRecord(records, modeKey) {
   return Object.entries(records).find(([key]) => normalizeCarrierMode(key) === modeKey)?.[1] || null;
 }
 
+function resolveCarrierConfigurationState(health = {}, modeKey, modeHealth = lookupModeRecord(health?.carrierHealth || health?.carriers || {}, modeKey) || {}) {
+  const explicitModeHealth = explicitConfiguredValue(modeHealth);
+  if (explicitModeHealth === true) return "configured";
+  if (explicitModeHealth === false) return "not_configured";
+
+  const configuredModes = health?.configuredCarrierModes || health?.carrierModes || health?.configuredCarriers;
+  if (Array.isArray(configuredModes)) {
+    return carrierModeConfigured(configuredModes, modeKey) ? "configured" : "not_configured";
+  }
+  if (configuredModes && typeof configuredModes === "object") {
+    return carrierModeConfigured(configuredModes, modeKey) ? "configured" : "not_configured";
+  }
+
+  const legacyValue = legacyConfiguredValue(health, modeKey);
+  if (legacyValue === true) return "configured";
+  if (legacyValue === false) return "not_configured";
+  return "unknown";
+}
+
+function explicitConfiguredValue(value) {
+  if (!value || typeof value !== "object" || !Object.prototype.hasOwnProperty.call(value, "configured")) {
+    return null;
+  }
+  return parseConfiguredFlag(value.configured);
+}
+
+function legacyConfiguredValue(health, modeKey) {
+  const legacyFields = {
+    mothershipSandbox: ["mothershipConfigured", "mothershipSandboxConfigured"],
+    speedshipLtl: ["speedshipConfigured", "speedshipLtlConfigured"],
+    priority1Ltl: ["priority1Configured", "priority1LtlConfigured"],
+    fedexFreight: ["fedexConfigured", "fedexFreightConfigured", "fedExConfigured"]
+  }[modeKey] || [];
+  for (const field of legacyFields) {
+    if (Object.prototype.hasOwnProperty.call(health || {}, field)) {
+      return parseConfiguredFlag(health[field]);
+    }
+  }
+  return null;
+}
+
+function parseConfiguredFlag(value) {
+  if (value === true || value === false) return value;
+  if (typeof value === "string") {
+    const token = normalizeToken(value);
+    if (["true", "1", "yes", "enabled", "configured"].includes(token)) return true;
+    if (["false", "0", "no", "disabled", "not_configured", "notconfigured"].includes(token)) return false;
+  }
+  if (typeof value === "number") {
+    return value > 0;
+  }
+  return Boolean(value);
+}
+
 function normalizeChannelHealth(value) {
   const status = normalizeToken(value);
   if (["healthy", "ok", "ready"].includes(status)) return "healthy";
@@ -475,9 +552,19 @@ function normalizeChannelHealth(value) {
 }
 
 function sanitizeChannelMessage(value) {
-  const message = String(value || "");
+  const message = typeof value === "string"
+    ? value
+    : value == null
+      ? ""
+      : JSON.stringify(value);
   if (!message) return "";
-  return message.replace(/\b(token|secret|password|authorization)=[^\s&]+/gi, "$1=[redacted]").slice(0, 160);
+  return message
+    .replace(/\b(token|secret|password|authorization|apiKey|api_key|access_token)=([^\s&"'}]+)/gi, "$1=[redacted]")
+    .replace(/(["'])(token|secret|password|authorization|apiKey|api_key|access_token)\1\s*:\s*(["'])(.*?)\3/gi, "$1$2$1: $3[redacted]$3")
+    .replace(/\bAuthorization:\s*Bearer\s+[A-Za-z0-9._~+/-]+=*/gi, "Authorization: Bearer [redacted]")
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, "Bearer [redacted]")
+    .replace(/([?&](?:token|secret|password|authorization|apiKey|api_key|access_token)=)[^&\s"'}]+/gi, "$1[redacted]")
+    .slice(0, 160);
 }
 
 function parseReliableDate(value) {

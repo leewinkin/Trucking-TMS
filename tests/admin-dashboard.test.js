@@ -15,11 +15,13 @@ import {
   adminShipmentMatchesFilter,
   classifyCustomerActivity,
   countUsableRates,
+  isPreferenceExcludedQuote,
   isCustomerOnlineBookingEnabled,
   isAdminReadyToBookQuote,
   lowestUsableSellPrice,
   normalizeAdminInvoiceStatus,
   normalizeCarrierMode,
+  quoteCarrierAuditSummary,
   quoteHasUsableRates,
   validAdminSellPrice
 } from "../public/admin-dashboard.js";
@@ -98,12 +100,47 @@ assert.equal(adminShipmentMatchesFilter(shipments[2], "exceptions"), true, "staf
 assert.equal(adminQuoteMatchesFilter(quotes[2], "partialFailure", shipments, now), true, "partial-failure quote filter should exist");
 assert.equal(adminQuoteMatchesFilter(quotes[1], "noRates", shipments, now), true, "no-rates quote filter should remain distinct");
 
+const preferenceExcludedQuote = {
+  ...quote("quote_preference_filtered", "cust_a", "2026-07-19T08:00:00", "quoted", [], [
+    { mode: "speedshipLtl", status: "blocked", excluded: true, reason: "customer preference" },
+    { mode: "priority1Ltl", status: "blocked", excluded: true, reason: "customer preference" }
+  ]),
+  rateAvailability: { messageCode: "NO_RATES_AVAILABLE_BY_PREFERENCE" },
+  carrierExclusionAudit: [{ carrierCode: "XPO", reason: "customer preference" }]
+};
+assert.equal(isPreferenceExcludedQuote(preferenceExcludedQuote), true, "preference metadata should classify a quote as preference-filtered");
+assert.equal(adminQuoteMatchesFilter(preferenceExcludedQuote, "issues", shipments, now), false, "preference-filtered quotes should not count as quote issues");
+assert.equal(adminQuoteMatchesFilter(preferenceExcludedQuote, "noRates", shipments, now), false, "preference-filtered quotes should not count as no-rate failures");
+assert.equal(adminQuoteMatchesFilter(preferenceExcludedQuote, "customerPreferences", shipments, now), true, "preference-filtered quote filter should exist");
+
+const auditWithExcludedRows = quoteCarrierAuditSummary({
+  carrierAudit: [
+    { mode: "speedshipLtl", status: "success", rateCount: 2 },
+    { mode: "priority1Ltl", status: "failed", error: "timeout" },
+    { mode: "fedexFreight", excluded: true, status: "failed", error: "customer preference" }
+  ]
+});
+assert.deepEqual(auditWithExcludedRows, {
+  requested: 2,
+  attempted: 2,
+  failed: 1,
+  succeeded: 1,
+  excluded: 1,
+  partialFailure: true,
+  allFailed: false
+}, "carrier audit summary should exclude customer-preference rows from attempted/succeeded/failed denominators");
+const onlyExcludedAudit = quoteCarrierAuditSummary({ carrierAudit: [{ mode: "speedshipLtl", excluded: true, status: "failed" }] });
+assert.equal(onlyExcludedAudit.attempted, 0, "only excluded carrier rows should have zero attempted rows");
+assert.equal(onlyExcludedAudit.allFailed, false, "only excluded carrier rows should not become an all-failed quote");
+assert.equal(quoteCarrierAuditSummary({ carrierAudit: [{ mode: "speedshipLtl", status: "failed", error: "bad lane" }] }).allFailed, true, "all attempted channels failed should be recognized");
+
 const conversion = adminQuoteConversion({ quotes, shipments }, "last7", now);
 assert.equal(conversion.quotesCreated, 4);
 assert.equal(conversion.quotesWithRates, 2);
 assert.equal(conversion.bookedShipments, 1, "conversion should count only reliably quote-linked shipments");
 assert.equal(conversion.deliveredShipments, 0, "conversion should not guess delivered shipments without selected-range quote links");
 assert.equal(adminQuoteConversion({ quotes: [], shipments }, "last7", now).quoteSuccessRate, null, "conversion should not divide by zero");
+assert.equal(adminQuoteConversion({ quotes: [preferenceExcludedQuote, quotes[0]], shipments: [] }, "last7", now).quotesWithRates, 1, "preference-filtered quotes should be excluded from no-rate failure conversion metrics");
 
 const attention = adminAttentionItems({ quotes, shipments, invoices, customers, tariffs }, "last7", now);
 assert.equal(attention[0].type, "shipment_exception", "attention items should prioritize shipment exceptions");
@@ -128,6 +165,7 @@ assert.equal(classifyCustomerActivity({ id: "c1", createdAt: "2026-07-19T01:00:0
 assert.equal(classifyCustomerActivity({ id: "c2", createdAt: "2026-07-19T01:00:00.000Z", updatedAt: "2026-07-19T01:00:00.500Z" }).detail, "Customer created.", "nearly equal customer timestamps should be created");
 assert.equal(classifyCustomerActivity({ id: "c3", createdAt: "2026-07-19T01:00:00Z", updatedAt: "2026-07-19T01:05:00Z" }).detail, "Customer updated.", "later updatedAt should be an update");
 assert.equal(classifyCustomerActivity({ id: "c4" }).date, "", "customer activity should require reliable timestamps");
+assert.equal(classifyCustomerActivity({ id: "c5", updatedAt: "2026-07-19T01:05:00Z" }).date, "", "updatedAt without createdAt should not create synthetic customer activity");
 
 const overview = adminCustomerOverview({ customers, tariffs, quotes }, "last7", now);
 assert.equal(overview.activeCustomers, 2);
@@ -153,6 +191,31 @@ const channels = adminCarrierChannels(
 );
 assert.equal(channels.find((item) => item.key === "speedshipLtl").configured, "configured", "carrier aliases should not show configured channels as not configured");
 assert.equal(channels.find((item) => item.key === "speedshipLtl").lastErrorSummary.includes("abc123"), false, "carrier channel panel data should redact tokens/secrets");
+assert.equal(adminCarrierChannels({ speedshipConfigured: true }, []).find((item) => item.key === "speedshipLtl").configured, "configured", "legacy SpeedShip booleans should use the shared carrier config resolver");
+assert.equal(adminCarrierChannels({ speedshipConfigured: "false" }, []).find((item) => item.key === "speedshipLtl").configured, "not_configured", "string false legacy config should not be treated as configured");
+assert.equal(adminCarrierChannels({}, []).find((item) => item.key === "speedshipLtl").configured, "unknown", "missing carrier config metadata should remain unknown");
+assert.equal(adminCarrierChannels({ carrierHealth: { speedship: { configured: false } } }, []).find((item) => item.key === "speedshipLtl").configured, "not_configured", "explicit carrier health configured=false should win");
+
+const sanitizedChannel = adminCarrierChannels({
+  configuredCarrierModes: ["speedship"],
+  carrierHealth: {
+    speedship: {
+      status: "error",
+      lastError: {
+        url: "https://carrier.example/rates?api_key=query-secret&access_token=access-secret",
+        headers: { Authorization: "Bearer bearer-secret-token" },
+        token: "json-token-secret",
+        apiKey: "json-api-key-secret",
+        message: "password=form-secret secret=also-secret"
+      }
+    }
+  }
+}, []).find((item) => item.key === "speedshipLtl").lastErrorSummary;
+assert.equal(sanitizedChannel.includes("query-secret"), false, "query string api_key should be redacted");
+assert.equal(sanitizedChannel.includes("access-secret"), false, "query string access_token should be redacted");
+assert.equal(sanitizedChannel.includes("bearer-secret-token"), false, "bearer tokens should be redacted");
+assert.equal(sanitizedChannel.includes("json-token-secret"), false, "JSON token fields should be redacted");
+assert.equal(sanitizedChannel.length <= 160, true, "sanitized carrier messages should be length limited");
 
 const channelHistory = adminCarrierChannels(
   { configuredCarrierModes: ["speedshipLtl", "priority1Ltl"] },
@@ -227,6 +290,10 @@ assert.match(app, /"Quote Management": "报价管理"/, "Quote Management Chines
 assert.match(app, /"Carrier Channels": "承运商渠道"/, "Carrier Channels Chinese translation should exist");
 assert.match(app, /"System Setup": "系统设置"/, "System Setup Chinese translation should exist");
 assert.match(app, /"Customer Overview": "客户概况"/, "Customer Overview Chinese translation should exist");
+assert.match(app, /"Customer created": "客户已创建"/, "Customer created Chinese translation should exist");
+assert.match(app, /"Filtered by Customer Preferences": "已按客户偏好过滤"/, "preference-filtered quote status Chinese translation should exist");
+assert.match(app, /"Customer Preferences": "客户偏好过滤"/, "customer preferences filter Chinese translation should exist");
+assert.match(app, /staffQuoteStatusLabel[\s\S]*Booked[\s\S]*Cancelled[\s\S]*Expired[\s\S]*Failed[\s\S]*Filtered by Customer Preferences[\s\S]*Partial Failure[\s\S]*Ready to Book[\s\S]*No Rates[\s\S]*Status Pending/, "staff quote classification should keep the required priority order");
 assert.match(app, /sidebarHealth\.classList\.toggle\("hidden", Boolean\(state\.user && isCustomerUser\(\) && state\.health\?\.ok\)\)/, "customer health indicator should remain hidden when healthy");
 assert.match(app, /const message = state\.health\?\.ok \? t\("Server ready"\) : t\("Checking server"\);/, "employee health indicator should remain available");
 
