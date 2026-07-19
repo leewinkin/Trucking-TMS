@@ -197,7 +197,7 @@ assert.doesNotMatch(renderCustomerDashboardSlice, /className\s*=\s*"view active"
 assert.doesNotMatch(renderStaffDashboardSlice, /className\s*=\s*"view active"|classList\.(?:add|toggle)\("active"/, "staff dashboard renderer must not own active view state");
 assert.match(app, /document\.querySelectorAll\("\.view"\)\.forEach\(\(view\) => {\n\s+view\.classList\.toggle\("active", view\.id === `\$\{name\}View`\);/, "setView should be the single owner of active view state");
 assert.match(app, /setView\(button\.dataset\.view, \{ resetCustomerFilter: true \}\)/, "side navigation should reset customer filters to all");
-assert.match(app, /data-modal="customers"/, "employee Customers KPI modal should remain in staff shell");
+assert.match(app, /data-staff-dashboard-action="customers"/, "employee customer dashboard actions should navigate to Customer Management instead of old KPI modals");
 assert.doesNotMatch(app.slice(app.indexOf("function customerKpiGridHtml"), app.indexOf("function renderQuoteResults")), /Customers KPI|customerCount|carrierCost|margin|markup|providerScac|carrierAudit|carrierExclusionAudit|rawCarrierResponse/, "customer dashboard render path should not include internal pricing or provider fields");
 assert.doesNotMatch(viewMetaSlice, /Welcome back, \{companyName\}/, "dashboard topbar should not duplicate the customer welcome headline");
 assert.match(viewMetaSlice, /\? \[t\("Dashboard"\), t\("Review your current shipping activity\."\)\]/, "customer Dashboard topbar should use the generic Dashboard title and shipping activity subtitle");
@@ -261,8 +261,8 @@ assert.match(styles, /customer-dashboard-lower-full[\s\S]*grid-template-columns:
 assert.match(styles, /action-empty[\s\S]*min-height: 132px/, "empty active shipment state should stay compact");
 assert.doesNotMatch(styles, /action-empty[\s\S]*min-height:\s*(?:2\d\d|3\d\d|4\d\d)px/, "empty active shipment state should not use excessive min-height");
 assert.match(styles, /customer-session #refreshButton\.refresh-action/, "customer Refresh should be visually secondary");
-assert.match(app, /refreshButton\.classList\.toggle\("primary-action", !isCustomer\)/, "employee Refresh primary behavior should be preserved");
-assert.match(app, /refreshButton\.classList\.toggle\("secondary-action", isCustomer\)/, "customer Refresh should not remain a primary action");
+assert.match(app, /refreshButton\.classList\.toggle\("primary-action", false\)/, "Refresh should not remain a primary action");
+assert.match(app, /refreshButton\.classList\.toggle\("secondary-action", true\)/, "Refresh should be visually secondary");
 assert.match(app, /const identifier = state\.user\.email \|\| state\.user\.username \|\| state\.user\.name \|\| "";/, "customer chip should show email or username separately");
 assert.match(app, /sidebarHealth\.classList\.toggle\("hidden", Boolean\(state\.user && isCustomerUser\(\) && state\.health\?\.ok\)\)/, "customer should not see the low-level server-ready indicator");
 assert.match(app, /const message = state\.health\?\.ok \? t\("Server ready"\) : t\("Checking server"\);/, "employee health indicator message should remain unchanged");

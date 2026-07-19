@@ -351,6 +351,290 @@ button.metric {
   margin: 0 auto;
 }
 
+.staff-dashboard-view {
+  max-width: 1500px;
+  margin: 0 auto;
+}
+
+.staff-dashboard-shell {
+  display: grid;
+  gap: 16px;
+}
+
+.staff-dashboard-header,
+.staff-panel,
+.staff-kpi-card {
+  border: 1px solid #dfe5ee;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.05);
+}
+
+.staff-dashboard-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+  padding: 18px;
+  background: linear-gradient(135deg, #f8fbff 0%, #eef6ff 100%);
+}
+
+.staff-dashboard-header h2 {
+  margin: 2px 0 6px;
+  font-size: clamp(22px, 2.4vw, 32px);
+}
+
+.staff-dashboard-header small {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.staff-dashboard-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+  align-items: end;
+}
+
+.staff-range-control {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.staff-range-control select {
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0 10px;
+  background: #ffffff;
+}
+
+.staff-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.staff-kpi-card {
+  display: grid;
+  min-height: 150px;
+  gap: 8px;
+  padding: 14px;
+  text-align: left;
+}
+
+.staff-kpi-card:focus-visible,
+.staff-account-chip:focus-visible,
+.staff-filter-bar .filter-chip:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.35);
+  outline-offset: 2px;
+}
+
+.staff-kpi-card span {
+  color: var(--muted);
+  font-weight: 900;
+}
+
+.staff-kpi-card strong {
+  font-size: 30px;
+}
+
+.staff-kpi-card small {
+  color: #475467;
+  line-height: 1.35;
+}
+
+.staff-kpi-card em {
+  color: var(--blue);
+  font-style: normal;
+  font-weight: 900;
+}
+
+.staff-kpi-blue {
+  border-top: 4px solid var(--blue);
+}
+
+.staff-kpi-green {
+  border-top: 4px solid #15803d;
+}
+
+.staff-kpi-amber {
+  border-top: 4px solid var(--amber);
+}
+
+.staff-kpi-red {
+  border-top: 4px solid var(--red);
+}
+
+.staff-dashboard-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.staff-dashboard-row-main {
+  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+}
+
+.staff-card-stack,
+.conversion-steps {
+  display: grid;
+  gap: 10px;
+}
+
+.staff-attention-item,
+.staff-activity-item,
+.carrier-channel-card,
+.setup-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid #e6ebf2;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.staff-activity-item {
+  grid-template-columns: 150px 160px minmax(0, 1fr) auto;
+}
+
+.carrier-channel-card {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.carrier-channel-card small,
+.staff-activity-item p,
+.staff-attention-item small {
+  color: var(--muted);
+}
+
+.severity-red .attention-marker {
+  background: #fee4e2;
+  color: var(--red);
+}
+
+.severity-amber .attention-marker {
+  background: #fef3c7;
+  color: var(--amber);
+}
+
+.severity-blue .attention-marker {
+  background: #dbeafe;
+  color: var(--blue);
+}
+
+.conversion-step {
+  display: grid;
+  gap: 6px;
+}
+
+.conversion-step div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.conversion-bar {
+  height: 9px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e8edf5;
+}
+
+.conversion-bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--blue);
+}
+
+.customer-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.customer-overview-grid div {
+  padding: 10px;
+  border: 1px solid #e6ebf2;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.customer-overview-grid small,
+.customer-overview-grid strong {
+  display: block;
+}
+
+.customer-overview-grid small {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.customer-overview-grid strong {
+  margin-top: 4px;
+  font-size: 22px;
+}
+
+.compact-stack {
+  margin-top: 12px;
+}
+
+.user-chip {
+  position: relative;
+}
+
+.staff-account-chip {
+  display: grid;
+  min-width: 190px;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #ffffff;
+  color: var(--ink);
+  text-align: left;
+}
+
+.staff-account-chip small {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.staff-account-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 10;
+  display: none;
+  min-width: 180px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12);
+}
+
+.user-chip:focus-within .staff-account-menu,
+.user-chip:hover .staff-account-menu {
+  display: grid;
+}
+
+.staff-account-menu button {
+  min-height: 34px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+}
+
 .customer-dashboard-shell {
   display: grid;
   gap: 18px;
@@ -2007,6 +2291,15 @@ select:focus {
 }
 
 @media (max-width: 1100px) {
+  .staff-kpi-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .staff-dashboard-row,
+  .staff-dashboard-row-main {
+    grid-template-columns: 1fr;
+  }
+
   .customer-kpi-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -2048,10 +2341,25 @@ select:focus {
   }
 
   .metric-grid,
+  .staff-kpi-grid,
   .two-column,
   .form-grid,
   .form-grid.compact {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .staff-dashboard-header,
+  .staff-activity-item {
     grid-template-columns: 1fr;
+  }
+
+  .staff-dashboard-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .staff-dashboard-actions {
+    justify-content: flex-start;
   }
 
   .customer-dashboard-hero {
@@ -2152,6 +2460,15 @@ select:focus {
 }
 
 @media (max-width: 560px) {
+  .metric-grid,
+  .staff-kpi-grid,
+  .customer-overview-grid,
+  .staff-attention-item,
+  .carrier-channel-card,
+  .setup-item {
+    grid-template-columns: 1fr;
+  }
+
   .customer-kpi-grid {
     grid-template-columns: 1fr;
   }

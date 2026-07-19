@@ -1,5 +1,21 @@
 import { carrierStatusLine, pickupTimeErrorCodes, validatePickupReadyWindow } from "./quote-time-validation.js";
 import {
+  adminAttentionItems,
+  adminCarrierChannels,
+  adminCustomerOverview,
+  adminDashboardMetrics,
+  adminInvoiceMatchesFilter,
+  adminQuoteConversion,
+  adminQuoteMatchesFilter,
+  adminRecentActivity,
+  adminSetupChecklist,
+  adminShipmentMatchesFilter,
+  isAdminQuoteIssue,
+  isAdminReadyToBookQuote,
+  quoteCarrierAuditSummary,
+  quoteHasUsableRates
+} from "./admin-dashboard.js";
+import {
   accessorialChargeNotice,
   accessorialExplanation,
   accessorialLabel
@@ -51,7 +67,18 @@ const translations = {
     "Checking server": "正在检查服务器",
     "Dashboard": "仪表盘",
     "Review your current shipping activity.": "查看您当前的报价、货件和账单状态。",
+    "Operations Overview": "运营总览",
+    "Monitor quotes, shipments, customers, invoices, and carrier activity.": "查看报价、货件、客户、账单和承运商运行情况。",
+    "Last updated {time}": "最后更新：{time}",
+    "Administrator / Staff": "管理员 / 员工",
+    "Account": "账户信息",
+    "System status": "系统状态",
     "Customers": "客户",
+    "Customer Management": "客户管理",
+    "Quote Management": "报价管理",
+    "Monitor quote activity and carrier results.": "查看报价动态和承运商结果。",
+    "Shipment Management": "货件管理",
+    "Invoice Management": "账单管理",
     "New Quote": "新建报价",
     "Shipments": "发运",
     "Invoices": "发票",
@@ -109,6 +136,100 @@ const translations = {
     "Status Pending": "状态待更新",
     "All": "全部",
     "Clear Filter": "清除筛选",
+    "Today": "今天",
+    "Last 7 Days": "最近 7 天",
+    "Last 30 Days": "最近 30 天",
+    "All Time": "全部时间",
+    "Date Range": "日期范围",
+    "Created during the selected period.": "在所选时间范围内创建。",
+    "Rates available and awaiting booking.": "已有运价，等待订舱。",
+    "No-rate or carrier-response issues.": "无报价或承运商响应异常。",
+    "Booked or currently moving.": "已订舱或正在运输。",
+    "Shipments requiring operational review.": "需要运营人员处理的货件。",
+    "Draft, unpaid, due, or overdue.": "草稿、未付款、到期或逾期账单。",
+    "Quote Issues": "报价异常",
+    "Shipment Exceptions": "货件异常",
+    "View quotes": "查看报价",
+    "View shipments": "查看货件",
+    "View invoices": "查看账单",
+    "No urgent items require attention.": "目前没有需要紧急处理的事项。",
+    "Quote Conversion": "报价转化",
+    "Quotes Created": "新建报价",
+    "Quotes With Rates": "有报价",
+    "Booked Shipments": "已订舱货件",
+    "Delivered Shipments": "已送达货件",
+    "Quote success rate": "报价成功率",
+    "Quote-to-booking conversion": "报价到订舱转化率",
+    "Recent Activity": "最近活动",
+    "No recent operational activity.": "暂无近期运营活动。",
+    "Carrier Channels": "承运商渠道",
+    "Configured": "已配置",
+    "Not Configured": "未配置",
+    "Unknown": "未知",
+    "Healthy": "健康",
+    "Degraded": "降级",
+    "Error": "错误",
+    "Booking enabled": "已启用订舱",
+    "Booking disabled": "订舱已禁用",
+    "Last successful quote {time}": "最近成功报价：{time}",
+    "Last error: {message}": "最近错误：{message}",
+    "View diagnostics": "查看诊断",
+    "System Setup": "系统设置",
+    "{completed} of {total} setup steps completed": "已完成 {completed}/{total} 项设置",
+    "Add at least one customer.": "至少添加一个客户。",
+    "Configure customer tariff rules.": "配置客户费率规则。",
+    "Configure at least one carrier channel.": "至少配置一个承运商渠道。",
+    "Enable online booking for at least one customer.": "为至少一个客户启用在线订舱。",
+    "Create one successful quote.": "创建一个成功报价。",
+    "Customer Overview": "客户概况",
+    "Active customers": "活跃客户",
+    "Disabled customers": "已禁用客户",
+    "Missing tariff rules": "缺少费率规则",
+    "Without carrier modes": "无承运商渠道",
+    "Online booking enabled": "已启用在线订舱",
+    "No quote activity": "无报价活动",
+    "Customers requiring configuration": "需要配置的客户",
+    "Partial Failure": "部分渠道失败",
+    "No Rates": "暂无报价",
+    "Failed": "报价失败",
+    "Expired": "已过期",
+    "Active": "活跃",
+    "Exceptions": "异常",
+    "Delivered": "已送达",
+    "Cancelled": "已取消",
+    "Draft": "草稿",
+    "Open": "未结",
+    "Overdue": "逾期",
+    "Paid": "已付款",
+    "Import Issues": "导入异常",
+    "Platform summary": "渠道摘要",
+    "Partial platform failure": "部分渠道失败",
+    "All platforms failed": "全部渠道失败",
+    "No carrier audit": "无渠道审计",
+    "No filter results.": "没有匹配结果。",
+    "Unknown": "未知",
+    "N/A": "不适用",
+    "Shipment requires operational review.": "货件需要运营人员处理。",
+    "Quote has no available rates.": "报价没有可用运价。",
+    "Some carrier channels did not return rates.": "部分承运商渠道未返回报价。",
+    "Ready-to-book quote awaiting action.": "可订舱报价等待处理。",
+    "Invoice is overdue.": "账单已逾期。",
+    "Draft invoice awaiting review.": "草稿账单等待审核。",
+    "Customer is missing tariff configuration.": "客户缺少费率配置。",
+    "Customer has no allowed carrier modes.": "客户未启用承运商渠道。",
+    "Customer account is disabled.": "客户账户已禁用。",
+    "Quote created": "已创建报价",
+    "Shipment status updated": "货件状态已更新",
+    "Invoice created/imported": "账单已创建/导入",
+    "Customer updated": "客户已更新",
+    "Quote completed with rates.": "报价已返回运价。",
+    "Quote created.": "报价已创建。",
+    "Shipment booked or moving.": "货件已订舱或运输中。",
+    "Invoice created or imported.": "账单已创建或导入。",
+    "Customer created.": "客户已创建。",
+    "Customer updated.": "客户已更新。",
+    "Loading operations dashboard...": "正在加载运营总览...",
+    "Dashboard data could not be refreshed. Please try again.": "仪表盘数据刷新失败，请重试。",
     "Documents could not be loaded.": "文件加载失败。",
     "Try Again": "重试",
     "No active shipments. Book a quote to start a shipment.": "当前没有运输中的货件，您可以先选择报价并完成订舱。",
@@ -835,6 +956,13 @@ const state = {
   dashboardLoading: false,
   dashboardError: "",
   dashboardFilter: "",
+  staffDashboardRange: "last7",
+  lastSuccessfulRefreshAt: "",
+  staffFilters: {
+    quotes: "all",
+    shipments: "all",
+    invoices: "all"
+  },
   customerFilters: {
     quotes: "all",
     shipments: "all",
@@ -863,12 +991,12 @@ const viewMeta = {
   dashboard: () =>
     isCustomerUser()
       ? [t("Dashboard"), t("Review your current shipping activity.")]
-      : [t("Dashboard"), t("Watch quote activity, shipment status, and invoice drafts.")],
-  customers: [t("Customers"), t("Manage customer accounts and tariff rules.")],
-  quotes: () => isCustomerUser() ? [t("My Quotes"), t("Track your quotes, shipments, and invoices.")] : [t("Quotes"), t("Track your quotes, shipments, and invoices.")],
+      : [t("Operations Overview"), t("Monitor quotes, shipments, customers, invoices, and carrier activity.")],
+  customers: () => [t("Customer Management"), t("Manage customer accounts and tariff rules.")],
+  quotes: () => isCustomerUser() ? [t("My Quotes"), t("Track your quotes, shipments, and invoices.")] : [t("Quote Management"), t("Monitor quote activity and carrier results.")],
   quote: () => [t("New Quote"), ""],
-  shipments: () => isCustomerUser() ? [t("My Shipments"), t("Review your shipments.")] : [t("Shipments"), t("Review local bookings and carrier shipment references.")],
-  invoices: () => isCustomerUser() ? [t("My Invoices"), t("Review your invoices.")] : [t("Invoices"), t("See draft invoices created from booked shipments.")]
+  shipments: () => isCustomerUser() ? [t("My Shipments"), t("Review your shipments.")] : [t("Shipment Management"), t("Review local bookings and carrier shipment references.")],
+  invoices: () => isCustomerUser() ? [t("My Invoices"), t("Review your invoices.")] : [t("Invoice Management"), t("See draft invoices created from booked shipments.")]
 };
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -999,6 +1127,18 @@ function wireNavigation() {
       return;
     }
 
+    const staffActionButton = event.target.closest("[data-staff-dashboard-action]");
+    if (staffActionButton) {
+      handleStaffDashboardAction(staffActionButton.dataset.staffDashboardAction);
+      return;
+    }
+
+    const staffFilterButton = event.target.closest("[data-staff-filter-view]");
+    if (staffFilterButton) {
+      setStaffFilter(staffFilterButton.dataset.staffFilterView, staffFilterButton.dataset.staffFilter || "all");
+      return;
+    }
+
     const invoiceTabButton = event.target.closest("[data-invoice-tab]");
     if (invoiceTabButton) {
       setInvoiceTab(invoiceTabButton.dataset.invoiceTab);
@@ -1043,6 +1183,10 @@ function wireNavigation() {
 
     const dashboardFilterButton = event.target.closest("[data-dashboard-filter]");
     if (dashboardFilterButton) {
+      if (!isCustomerUser()) {
+        navigateStaffDashboardFilter(dashboardFilterButton.dataset.dashboardFilter);
+        return;
+      }
       navigateCustomerDashboardFilter(dashboardFilterButton.dataset.dashboardFilter);
       return;
     }
@@ -1173,6 +1317,14 @@ function wireForms() {
     const sort = event.target.closest("[data-customer-quote-sort]");
     if (sort) {
       updateCustomerQuoteDetailsSort(sort.dataset.customerQuoteSort, sort.value);
+    }
+    const staffRange = event.target.closest("[data-staff-dashboard-range]");
+    if (staffRange) {
+      state.staffDashboardRange = staffRange.value || "last7";
+      renderDashboard();
+      renderQuotesView();
+      renderShipments();
+      renderInvoices();
     }
   });
 
@@ -1418,6 +1570,7 @@ async function refreshAll(options = {}) {
     state.quotes = quotes.quotes;
     state.shipments = shipments.shipments;
     state.invoices = invoices.invoices;
+    state.lastSuccessfulRefreshAt = new Date().toISOString();
 
     renderHealth();
     renderUserChip();
@@ -1488,6 +1641,7 @@ async function api(path, options = {}) {
 function setView(name, options = {}) {
   if (options.resetCustomerFilter) {
     resetCustomerFilterForView(name);
+    resetStaffFilterForView(name);
   }
   document.querySelectorAll(".nav-button").forEach((button) => {
     button.classList.toggle("active", button.dataset.view === name);
@@ -1596,10 +1750,11 @@ function updateRolePresentation() {
   }
   const labels = {
     dashboard: "Dashboard",
-    quotes: isCustomer ? "My Quotes" : "Quotes",
+    customers: isCustomer ? "Customers" : "Customer Management",
+    quotes: isCustomer ? "My Quotes" : "Quote Management",
     quote: "New Quote",
-    shipments: isCustomer ? "My Shipments" : "Shipments",
-    invoices: isCustomer ? "My Invoices" : "Invoices"
+    shipments: isCustomer ? "My Shipments" : "Shipment Management",
+    invoices: isCustomer ? "My Invoices" : "Invoice Management"
   };
   Object.entries(labels).forEach(([view, label]) => {
     const button = document.querySelector(`.nav-button[data-view="${view}"]`);
@@ -1609,8 +1764,8 @@ function updateRolePresentation() {
   });
   const refreshButton = document.getElementById("refreshButton");
   if (refreshButton) {
-    refreshButton.classList.toggle("primary-action", !isCustomer);
-    refreshButton.classList.toggle("secondary-action", isCustomer);
+    refreshButton.classList.toggle("primary-action", false);
+    refreshButton.classList.toggle("secondary-action", true);
     refreshButton.classList.toggle("refresh-action", isCustomer);
   }
 }
@@ -1722,7 +1877,18 @@ function renderUserChip() {
     return;
   }
 
-  chip.textContent = `${state.user.email} · ${state.user.role}`;
+  const identifier = state.user.name || state.user.displayName || state.user.email || state.user.username || t("Account");
+  chip.innerHTML = `
+    <button class="staff-account-chip" type="button" aria-haspopup="menu">
+      <span>${escapeHtml(identifier)}</span>
+      <small>${escapeHtml(t("Administrator / Staff"))}</small>
+    </button>
+    <div class="staff-account-menu" role="menu" aria-label="${escapeHtml(t("Account"))}">
+      <button type="button" role="menuitem">${escapeHtml(t("Account"))}</button>
+      <button type="button" role="menuitem">${escapeHtml(t("System status"))}</button>
+      <button type="button" role="menuitem" onclick="document.getElementById('logoutButton')?.click()">${escapeHtml(t("Logout"))}</button>
+    </div>
+  `;
 }
 
 async function logout() {
@@ -4997,7 +5163,24 @@ function renderQuotesView() {
     return;
   }
   if (!isCustomerUser()) {
-    list.innerHTML = `<div class="empty-state">${t("Select a customer")}</div>`;
+    const activeFilter = state.staffFilters.quotes || "all";
+    const filters = [
+      { value: "all", label: "All" },
+      { value: "today", label: "Today" },
+      { value: "ready", label: "Ready to Book" },
+      { value: "noRates", label: "No Rates" },
+      { value: "partialFailure", label: "Partial Failure" },
+      { value: "failed", label: "Failed" },
+      { value: "booked", label: "Booked" },
+      { value: "expired", label: "Expired" }
+    ];
+    const quotes = recentByCreatedAt(state.quotes).filter((quote) => adminQuoteMatchesFilter(quote, activeFilter, state.shipments));
+    list.innerHTML = `
+      ${staffFilterBarHtml("quotes", filters, activeFilter)}
+      <div class="staff-card-stack">
+        ${quotes.length ? quotes.map(staffQuoteRowHtml).join("") : `<div class="empty-state">${escapeHtml(t("No filter results."))}</div>`}
+      </div>
+    `;
     return;
   }
   const activeFilter = state.customerFilters.quotes || "all";
@@ -5022,60 +5205,380 @@ function renderStaffDashboard() {
   if (!dashboard) {
     return;
   }
-  if (!dashboard.querySelector(".metric-grid")) {
-    dashboard.classList.remove("customer-dashboard-view");
-    dashboard.classList.add("staff-dashboard-view");
-    dashboard.innerHTML = staffDashboardShellHtml();
-    bindDashboardModalButtons(dashboard);
+  dashboard.classList.remove("customer-dashboard-view");
+  dashboard.classList.add("staff-dashboard-view");
+  if (state.dashboardLoading && !state.lastSuccessfulRefreshAt && !state.quotes.length && !state.shipments.length && !state.invoices.length) {
+    dashboard.innerHTML = `<div class="staff-dashboard-shell"><div class="empty-state" aria-live="polite">${t("Loading operations dashboard...")}</div></div>`;
+    return;
   }
-  document.getElementById("customerCount").textContent = state.customers.length;
-  document.getElementById("quoteCount").textContent = state.quotes.length;
-  document.getElementById("shipmentCount").textContent = state.shipments.length;
-  document.getElementById("invoiceCount").textContent = state.invoices.filter((invoice) => invoice.status === "draft").length;
-
-  const recent = document.getElementById("recentShipments");
-  recent.innerHTML = state.shipments.length
-    ? state.shipments.slice(0, 5).map(shipmentRow).join("")
-    : `<div class="empty-state">${t("No shipments booked yet.")}</div>`;
-
-  renderDashboardSupportPanel();
+  dashboard.innerHTML = staffDashboardShellHtml();
 }
 
 function staffDashboardShellHtml() {
+  const data = adminDashboardData();
+  const checklist = adminSetupChecklist({
+    customers: state.customers,
+    tariffs: state.tariffs,
+    quotes: state.quotes,
+    health: state.health
+  });
   return `
-    <div class="metric-grid">
-      <button class="metric metric-button" type="button" data-modal="customers" id="customersMetricButton">
-        <span id="customerMetricLabel">${t("Customers")}</span>
-        <strong id="customerCount">0</strong>
-      </button>
-      <button class="metric metric-button" type="button" data-modal="quotes">
-        <span id="quoteMetricLabel">${t("Quotes")}</span>
-        <strong id="quoteCount">0</strong>
-      </button>
-      <button class="metric metric-button" type="button" data-modal="shipments">
-        <span id="shipmentMetricLabel">${t("Shipments")}</span>
-        <strong id="shipmentCount">0</strong>
-      </button>
-      <button class="metric metric-button" type="button" data-modal="invoices">
-        <span id="invoiceMetricLabel">${t("Draft invoices")}</span>
-        <strong id="invoiceCount">0</strong>
-      </button>
-    </div>
-    <div class="two-column">
-      <section class="panel">
-        <div class="panel-heading">
-          <h2>${t("Recent Shipments")}</h2>
+    <div class="staff-dashboard-shell">
+      ${state.dashboardError ? `<div class="quote-status notice-state" role="alert">${escapeHtml(state.dashboardError)}</div>` : ""}
+      <section class="staff-dashboard-header">
+        <div>
+          <p class="eyebrow">${escapeHtml(t("Operations Overview"))}</p>
+          <h2>${escapeHtml(t("Monitor quotes, shipments, customers, invoices, and carrier activity."))}</h2>
+          ${state.lastSuccessfulRefreshAt ? `<small>${escapeHtml(t("Last updated {time}", { time: formatDateTime(state.lastSuccessfulRefreshAt) }))}</small>` : ""}
         </div>
-        <div id="recentShipments" class="table-list"></div>
-      </section>
-      <section class="panel">
-        <div class="panel-heading">
-          <h2 id="dashboardSupportHeading">${t("Next Setup Steps")}</h2>
+        <div class="staff-dashboard-actions">
+          <button class="primary-action" type="button" data-staff-dashboard-action="newQuote">${t("+ New Quote")}</button>
+          <button class="secondary-action" type="button" data-staff-dashboard-action="search">${t("Search")}</button>
+          <label class="staff-range-control">
+            <span>${escapeHtml(t("Date Range"))}</span>
+            <select data-staff-dashboard-range>
+              ${staffDateRangeOptionsHtml()}
+            </select>
+          </label>
         </div>
-        <div id="dashboardSupportBody"></div>
       </section>
+      ${staffKpiGridHtml(data.metrics)}
+      <div class="staff-dashboard-row staff-dashboard-row-main">
+        ${staffAttentionHtml(data.attentionItems)}
+        ${checklist.remaining.length ? staffSetupChecklistHtml(checklist) : staffCarrierChannelsHtml(data.carrierChannels)}
+      </div>
+      <div class="staff-dashboard-row">
+        ${staffConversionHtml(data.conversion)}
+        ${staffCustomerOverviewHtml(data.customerOverview)}
+      </div>
+      ${checklist.remaining.length ? `<div class="staff-dashboard-row">${staffCarrierChannelsHtml(data.carrierChannels)}</div>` : ""}
+      ${staffRecentActivityHtml(data.activity)}
     </div>
   `;
+}
+
+function adminDashboardData() {
+  const now = new Date();
+  const data = {
+    quotes: state.quotes,
+    shipments: state.shipments,
+    invoices: state.invoices,
+    customers: state.customers,
+    tariffs: state.tariffs
+  };
+  return {
+    metrics: adminDashboardMetrics(data, state.staffDashboardRange, now),
+    attentionItems: adminAttentionItems(data, state.staffDashboardRange, now),
+    conversion: adminQuoteConversion(data, state.staffDashboardRange, now),
+    activity: adminRecentActivity(data, state.staffDashboardRange, now),
+    customerOverview: adminCustomerOverview(data, state.staffDashboardRange, now),
+    carrierChannels: adminCarrierChannels(state.health || {}, state.quotes)
+  };
+}
+
+function staffDateRangeOptionsHtml() {
+  return [
+    ["today", "Today"],
+    ["last7", "Last 7 Days"],
+    ["last30", "Last 30 Days"],
+    ["all", "All Time"]
+  ].map(([value, label]) => `<option value="${value}" ${state.staffDashboardRange === value ? "selected" : ""}>${escapeHtml(t(label))}</option>`).join("");
+}
+
+function staffKpiGridHtml(metrics) {
+  const cards = [
+    { key: "quotesCreated", label: "Quotes Created", count: metrics.quotesCreated, helper: "Created during the selected period.", filter: "quotesCreated", action: "View quotes", state: "blue" },
+    { key: "readyToBook", label: "Ready to Book", count: metrics.readyToBook, helper: "Rates available and awaiting booking.", filter: "readyQuotes", action: "View quotes", state: "green" },
+    { key: "quoteIssues", label: "Quote Issues", count: metrics.quoteIssues, helper: "No-rate or carrier-response issues.", filter: "quoteIssues", action: "View quotes", state: "amber" },
+    { key: "activeShipments", label: "Active Shipments", count: metrics.activeShipments, helper: "Booked or currently moving.", filter: "activeShipments", action: "View shipments", state: "blue" },
+    { key: "shipmentExceptions", label: "Shipment Exceptions", count: metrics.shipmentExceptions, helper: "Shipments requiring operational review.", filter: "shipmentExceptions", action: "View shipments", state: "red" },
+    { key: "openInvoices", label: "Open Invoices", count: metrics.openInvoices, helper: "Draft, unpaid, due, or overdue.", filter: "openInvoices", action: "View invoices", state: "amber" }
+  ];
+  return `
+    <section class="staff-kpi-grid" aria-label="${escapeHtml(t("Operations Overview"))}">
+      ${cards.map((card) => `
+        <button class="staff-kpi-card staff-kpi-${card.state}" type="button" data-dashboard-filter="${escapeHtml(card.filter)}">
+          <span>${escapeHtml(t(card.label))}</span>
+          <strong>${escapeHtml(String(card.count))}</strong>
+          <small>${escapeHtml(t(card.helper))}</small>
+          <em>${escapeHtml(t(card.action))} →</em>
+        </button>
+      `).join("")}
+    </section>
+  `;
+}
+
+function staffAttentionHtml(items) {
+  const preview = items.slice(0, 5);
+  return `
+    <section class="panel staff-panel staff-attention-panel">
+      <div class="panel-heading">
+        <h2>${escapeHtml(t("Needs Attention"))}</h2>
+      </div>
+      <div class="staff-card-stack">
+        ${preview.length ? preview.map(staffAttentionItemHtml).join("") : `<div class="empty-state">${escapeHtml(t("No urgent items require attention."))}</div>`}
+      </div>
+    </section>
+  `;
+}
+
+function staffAttentionItemHtml(item) {
+  const action = staffActionForAttention(item);
+  return `
+    <article class="staff-attention-item severity-${escapeHtml(staffSeverityForPriority(item.priority))}">
+      <span class="attention-marker" aria-hidden="true">${escapeHtml(staffSeverityLabel(item.priority))}</span>
+      <div>
+        <strong>${escapeHtml(item.customerName)}</strong>
+        <small>${escapeHtml(item.recordNumber || item.recordId || "")} · ${escapeHtml(t(item.reason))}${item.date ? ` · ${escapeHtml(formatDateTime(item.date))}` : ""}</small>
+      </div>
+      <button class="link-action" type="button" ${action.attrs}>${escapeHtml(t(action.label))} →</button>
+    </article>
+  `;
+}
+
+function staffActionForAttention(item) {
+  if (String(item.type).startsWith("shipment")) {
+    return { label: "View Shipment", attrs: `data-view-shipment="${escapeHtml(item.recordId || "")}"` };
+  }
+  if (String(item.type).startsWith("invoice")) {
+    return { label: "View Invoice", attrs: `data-view-invoice="${escapeHtml(item.recordId || "")}"` };
+  }
+  if (String(item.type).startsWith("customer")) {
+    return { label: "Customer Management", attrs: `data-staff-dashboard-action="customers"` };
+  }
+  return { label: "View Quote", attrs: `data-view-quote="${escapeHtml(item.recordId || "")}"` };
+}
+
+function staffSeverityForPriority(priority) {
+  if (priority <= 2) return "red";
+  if (priority <= 5) return "amber";
+  return "blue";
+}
+
+function staffSeverityLabel(priority) {
+  if (priority <= 2) return "!";
+  if (priority <= 5) return "Review";
+  return "Info";
+}
+
+function staffConversionHtml(conversion) {
+  const steps = [
+    ["Quotes Created", conversion.quotesCreated],
+    ["Quotes With Rates", conversion.quotesWithRates],
+    ["Ready to Book", conversion.readyToBook],
+    ["Booked Shipments", conversion.bookedShipments],
+    ["Delivered Shipments", conversion.deliveredShipments]
+  ];
+  const max = Math.max(...steps.map(([, count]) => count), 1);
+  return `
+    <section class="panel staff-panel">
+      <div class="panel-heading">
+        <h2>${escapeHtml(t("Quote Conversion"))}</h2>
+      </div>
+      <div class="conversion-steps">
+        ${steps.map(([label, count]) => `
+          <div class="conversion-step">
+            <div><strong>${escapeHtml(String(count))}</strong><span>${escapeHtml(t(label))}</span></div>
+            <span class="conversion-bar"><i style="width:${Math.round((count / max) * 100)}%"></i></span>
+          </div>
+        `).join("")}
+      </div>
+      <div class="customer-safe-meta">
+        <span>${escapeHtml(t("Quote success rate"))}: ${formatPercent(conversion.quoteSuccessRate)}</span>
+        <span>${escapeHtml(t("Quote-to-booking conversion"))}: ${formatPercent(conversion.quoteToBookingRate)}</span>
+      </div>
+    </section>
+  `;
+}
+
+function staffCarrierChannelsHtml(channels) {
+  return `
+    <section class="panel staff-panel staff-carrier-panel">
+      <div class="panel-heading">
+        <h2>${escapeHtml(t("Carrier Channels"))}</h2>
+        <button class="link-action" type="button" data-staff-dashboard-action="diagnostics">${escapeHtml(t("View diagnostics"))}</button>
+      </div>
+      <div class="staff-card-stack">
+        ${channels.map((channel) => `
+          <article class="carrier-channel-card">
+            <div>
+              <strong>${escapeHtml(channel.name)}</strong>
+              <small>${escapeHtml(t(channel.configured === "configured" ? "Configured" : channel.configured === "not_configured" ? "Not Configured" : "Unknown"))}</small>
+            </div>
+            <span class="status-badge status-${escapeHtml(channel.health === "error" ? "red" : channel.health === "healthy" ? "green" : channel.health === "degraded" ? "amber" : "neutral")}">${escapeHtml(t(channel.health === "healthy" ? "Healthy" : channel.health === "degraded" ? "Degraded" : channel.health === "error" ? "Error" : "Unknown"))}</span>
+            ${typeof channel.bookingEnabled === "boolean" ? `<small>${escapeHtml(t(channel.bookingEnabled ? "Booking enabled" : "Booking disabled"))}</small>` : ""}
+            ${channel.lastSuccessfulQuoteAt ? `<small>${escapeHtml(t("Last successful quote {time}", { time: formatDateTime(channel.lastSuccessfulQuoteAt) }))}</small>` : ""}
+            ${channel.lastErrorSummary ? `<small>${escapeHtml(t("Last error: {message}", { message: channel.lastErrorSummary }))}</small>` : ""}
+          </article>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function staffSetupChecklistHtml(checklist) {
+  return `
+    <section class="panel staff-panel staff-setup-panel">
+      <div class="panel-heading">
+        <h2>${escapeHtml(t("System Setup"))}</h2>
+        <span class="pill">${escapeHtml(t("{completed} of {total} setup steps completed", { completed: checklist.completed, total: checklist.total }))}</span>
+      </div>
+      <div class="staff-card-stack">
+        ${checklist.remaining.map((item) => `<article class="setup-item"><span class="attention-marker" aria-hidden="true">!</span><span>${escapeHtml(t(item.label))}</span></article>`).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function staffCustomerOverviewHtml(overview) {
+  const rows = [
+    ["Active customers", overview.activeCustomers],
+    ["Disabled customers", overview.disabledCustomers],
+    ["Missing tariff rules", overview.missingTariffRules],
+    ["Without carrier modes", overview.withoutCarrierModes],
+    ["Online booking enabled", overview.onlineBookingEnabled],
+    ["No quote activity", overview.noQuoteActivity]
+  ];
+  return `
+    <section class="panel staff-panel">
+      <div class="panel-heading">
+        <h2>${escapeHtml(t("Customer Overview"))}</h2>
+        <button class="link-action" type="button" data-staff-dashboard-action="customers">${escapeHtml(t("Customer Management"))}</button>
+      </div>
+      <div class="customer-overview-grid">
+        ${rows.map(([label, count]) => `<div><small>${escapeHtml(t(label))}</small><strong>${escapeHtml(String(count))}</strong></div>`).join("")}
+      </div>
+      ${overview.needsConfiguration.length ? `
+        <div class="staff-card-stack compact-stack">
+          <strong>${escapeHtml(t("Customers requiring configuration"))}</strong>
+          ${overview.needsConfiguration.map((customer) => `<button class="link-action" type="button" data-staff-dashboard-action="customers">${escapeHtml(customer.companyName || customer.name || customer.id)}</button>`).join("")}
+        </div>
+      ` : ""}
+    </section>
+  `;
+}
+
+function staffRecentActivityHtml(activity) {
+  return `
+    <section class="panel staff-panel staff-recent-activity">
+      <div class="panel-heading">
+        <h2>${escapeHtml(t("Recent Activity"))}</h2>
+      </div>
+      <div class="staff-card-stack">
+        ${activity.slice(0, 10).length ? activity.slice(0, 10).map(staffActivityItemHtml).join("") : `<div class="empty-state">${escapeHtml(t("No recent operational activity."))}</div>`}
+      </div>
+    </section>
+  `;
+}
+
+function staffActivityItemHtml(item) {
+  return `
+    <article class="staff-activity-item">
+      <small>${escapeHtml(formatDateTime(item.date))}</small>
+      <strong>${escapeHtml(t(staffActivityTypeLabel(item.type)))}</strong>
+      <span>${escapeHtml(item.customerName)} · ${escapeHtml(item.recordNumber || item.recordId || "")}</span>
+      <p>${escapeHtml(t(item.detail))}</p>
+      <button class="link-action" type="button" ${staffActivityActionAttrs(item)}>${escapeHtml(t("View Details"))} →</button>
+    </article>
+  `;
+}
+
+function staffActivityTypeLabel(type) {
+  return {
+    quote_created: "Quote created",
+    shipment_updated: "Shipment status updated",
+    invoice_created: "Invoice created/imported",
+    customer_updated: "Customer updated"
+  }[type] || "Recent Activity";
+}
+
+function staffActivityActionAttrs(item) {
+  if (String(item.type).startsWith("quote")) return `data-view-quote="${escapeHtml(item.recordId || "")}"`;
+  if (String(item.type).startsWith("shipment")) return `data-view-shipment="${escapeHtml(item.recordId || "")}"`;
+  if (String(item.type).startsWith("invoice")) return `data-view-invoice="${escapeHtml(item.recordId || "")}"`;
+  return `data-staff-dashboard-action="customers"`;
+}
+
+function formatPercent(value) {
+  return Number.isFinite(value) ? `${Math.round(value * 100)}%` : "N/A";
+}
+
+function staffFilterBarHtml(view, filters, activeFilter) {
+  return `
+    <div class="customer-filter-bar staff-filter-bar" aria-label="${escapeHtml(t("Filter: {filter}", { filter: t(filters.find((filter) => filter.value === activeFilter)?.label || "All") }))}">
+      ${filters.map((filter) => `
+        <button class="filter-chip ${activeFilter === filter.value ? "active" : ""}" type="button" data-staff-filter-view="${escapeHtml(view)}" data-staff-filter="${escapeHtml(filter.value)}">
+          ${escapeHtml(t(filter.label))}
+        </button>
+      `).join("")}
+      ${activeFilter !== "all" ? `<button class="link-action" type="button" data-staff-filter-view="${escapeHtml(view)}" data-staff-filter="all">${escapeHtml(t("Clear Filter"))}</button>` : ""}
+    </div>
+  `;
+}
+
+function staffQuoteRowHtml(quote) {
+  const customer = customerById(quote.customerId);
+  const rates = Array.isArray(quote.rates) ? quote.rates : [];
+  const lowest = Math.min(...rates.map((rate) => validSellPrice(rate)).filter(Number.isFinite));
+  return `
+    <article class="customer-quote-row staff-quote-row">
+      <div class="customer-quote-content">
+        <div class="customer-quote-title-row">
+          <strong>${escapeHtml(t("Quote {quoteNumber}", { quoteNumber: customerQuoteNumber(quote) }))}</strong>
+          ${staffQuoteStatusBadgeHtml(quote)}
+        </div>
+        <p class="customer-quote-route">${escapeHtml(customer?.companyName || customer?.name || t("Unknown"))} · ${escapeHtml(routeLabel(quote.pickup, quote.delivery))}</p>
+        <div class="customer-quote-meta">
+          <span>${escapeHtml(formatDateTime(quote.createdAt))}</span>
+          <span>${escapeHtml(t("Reference / PO"))}: ${escapeHtml(quote.referenceNumber || "N/A")}</span>
+          <span>${escapeHtml(String(rates.length))} ${escapeHtml(t("available rate(s)"))}</span>
+          <span>${escapeHtml(t("Lowest price"))}: ${Number.isFinite(lowest) ? money.format(lowest) : escapeHtml(t("No Rates"))}</span>
+          <span>${staffCarrierAuditSummaryLabel(quote)}</span>
+        </div>
+      </div>
+      <div class="row-actions">
+        <button class="secondary-action" type="button" data-view-quote="${escapeHtml(quote.id)}">${escapeHtml(t("View Details"))}</button>
+        <button class="secondary-action" type="button" data-reenter-quote="${escapeHtml(quote.id)}">${escapeHtml(t("Repeat Quote"))}</button>
+      </div>
+    </article>
+  `;
+}
+
+function staffQuoteStatusBadgeHtml(quote) {
+  const label = staffQuoteStatusLabel(quote);
+  const variant = {
+    "Ready to Book": "blue",
+    "No Rates": "neutral",
+    "Partial Failure": "amber",
+    Failed: "red",
+    Booked: "green",
+    Expired: "gray",
+    "Status Pending": "neutral"
+  }[label] || "neutral";
+  return `<span class="status-badge status-${escapeHtml(variant)}">${escapeHtml(t(label))}</span>`;
+}
+
+function staffQuoteStatusLabel(quote) {
+  const audit = quoteCarrierAuditSummary(quote);
+  if (isAdminReadyToBookQuote(quote, state.shipments)) return "Ready to Book";
+  if (!quoteHasUsableRates(quote)) return "No Rates";
+  if (audit.partialFailure) return "Partial Failure";
+  if (isAdminQuoteIssue(quote)) return "Failed";
+  if (adminQuoteMatchesFilter(quote, "booked", state.shipments)) return "Booked";
+  if (adminQuoteMatchesFilter(quote, "expired", state.shipments)) return "Expired";
+  return "Status Pending";
+}
+
+function staffCarrierAuditSummaryLabel(quote) {
+  const audit = quoteCarrierAuditSummary(quote);
+  if (!audit.requested) return escapeHtml(t("No carrier audit"));
+  if (audit.allFailed) return escapeHtml(t("All platforms failed"));
+  if (audit.partialFailure) return escapeHtml(t("Partial platform failure"));
+  return `${escapeHtml(t("Platform summary"))}: ${audit.succeeded}/${audit.requested}`;
+}
+
+function customerById(customerId) {
+  return state.customers.find((customer) => customer.id === customerId) || null;
 }
 
 function renderCustomerDashboard() {
@@ -5435,6 +5938,29 @@ function setCustomerFilter(view, filter) {
   }
 }
 
+function resetStaffFilterForView(view) {
+  if (isCustomerUser()) {
+    return;
+  }
+  if (["quotes", "shipments", "invoices"].includes(view)) {
+    state.staffFilters[view] = "all";
+  }
+}
+
+function setStaffFilter(view, filter) {
+  if (isCustomerUser() || !["quotes", "shipments", "invoices"].includes(view)) {
+    return;
+  }
+  state.staffFilters[view] = filter || "all";
+  if (view === "quotes") {
+    renderQuotesView();
+  } else if (view === "shipments") {
+    renderShipments();
+  } else {
+    renderInvoices();
+  }
+}
+
 function customerFilterBarHtml(view, filters, activeFilter) {
   const activeLabel = filters.find((filter) => filter.value === activeFilter)?.label || "All";
   return `
@@ -5529,7 +6055,7 @@ function handleCustomerDashboardAction(action) {
 
 function navigateCustomerDashboardFilter(filter) {
   if (!isCustomerUser()) {
-    openDashboardModal(filter);
+    navigateStaffDashboardFilter(filter);
     return;
   }
   const filterLabels = {
@@ -5559,6 +6085,51 @@ function navigateCustomerDashboardFilter(filter) {
     state.customerFilters.shipments = "deliveredThisMonth";
   }
   setView("shipments");
+}
+
+function navigateStaffDashboardFilter(filter) {
+  if (isCustomerUser()) {
+    return;
+  }
+  if (filter === "activeShipments" || filter === "shipmentExceptions") {
+    state.staffFilters.shipments = filter === "shipmentExceptions" ? "exceptions" : "active";
+    setView("shipments");
+    return;
+  }
+  if (filter === "openInvoices") {
+    state.staffFilters.invoices = "open";
+    setView("invoices");
+    return;
+  }
+  const quoteFilters = {
+    quotesCreated: "all",
+    readyQuotes: "ready",
+    quoteIssues: "issues"
+  };
+  state.staffFilters.quotes = quoteFilters[filter] || "all";
+  setView("quotes");
+}
+
+function handleStaffDashboardAction(action) {
+  if (isCustomerUser()) {
+    return;
+  }
+  if (action === "newQuote") {
+    setView("quote");
+    return;
+  }
+  if (action === "search") {
+    state.staffFilters.quotes = "all";
+    setView("quotes");
+    return;
+  }
+  if (action === "customers") {
+    setView("customers");
+    return;
+  }
+  if (action === "diagnostics") {
+    openDashboardModal("quotes");
+  }
 }
 
 function openTrackShipmentModal() {
@@ -5863,9 +6434,23 @@ function renderShipments() {
     `;
     return;
   }
-  list.innerHTML = state.shipments.length
-    ? state.shipments.map(shipmentRow).join("")
-    : `<div class="empty-state">${t("No shipments yet.")}</div>`;
+  const activeFilter = state.staffFilters.shipments || "all";
+  const filters = [
+    { value: "all", label: "All" },
+    { value: "active", label: "Active" },
+    { value: "exceptions", label: "Exceptions" },
+    { value: "delivered", label: "Delivered" },
+    { value: "cancelled", label: "Cancelled" }
+  ];
+  const shipments = state.shipments.filter((shipment) => adminShipmentMatchesFilter(shipment, activeFilter));
+  list.innerHTML = `
+    ${staffFilterBarHtml("shipments", filters, activeFilter)}
+    <div class="customer-card-stack">
+      ${shipments.length
+        ? shipments.map(shipmentRow).join("")
+        : `<div class="empty-state">${escapeHtml(t("No filter results."))}</div>`}
+    </div>
+  `;
 }
 
 function renderInvoices() {
@@ -5890,14 +6475,25 @@ function renderInvoices() {
     return;
   }
 
-  const mothershipInvoices = state.invoices.filter((invoice) => invoice?.source === "mothership");
-  const otherInvoices = state.invoices.filter((invoice) => invoice?.source !== "mothership");
-  const activeTab = resolveInvoiceTab(mothershipInvoices, otherInvoices);
-  const visibleInvoices = activeTab === "mothership" ? mothershipInvoices : otherInvoices;
-  const hiddenInvoices = activeTab === "mothership" ? otherInvoices : mothershipInvoices;
+  const activeFilter = state.staffFilters.invoices || "all";
+  const filters = [
+    { value: "all", label: "All" },
+    { value: "draft", label: "Draft" },
+    { value: "open", label: "Open" },
+    { value: "overdue", label: "Overdue" },
+    { value: "paid", label: "Paid" },
+    { value: "importIssues", label: "Import Issues" }
+  ];
+  const staffInvoices = state.invoices.filter((invoice) => adminInvoiceMatchesFilter(invoice, activeFilter));
+  const mothershipInvoices = staffInvoices.filter((invoice) => invoice?.source === "mothership");
+  const visibleOtherInvoices = staffInvoices.filter((invoice) => invoice?.source !== "mothership");
+  const activeTab = resolveInvoiceTab(mothershipInvoices, visibleOtherInvoices);
+  const visibleInvoices = activeTab === "mothership" ? mothershipInvoices : visibleOtherInvoices;
+  const hiddenInvoices = activeTab === "mothership" ? visibleOtherInvoices : mothershipInvoices;
   const activeLabel = activeTab === "mothership" ? t("Imported from Mothership") : t("Other invoices");
 
   list.innerHTML = `
+    ${staffFilterBarHtml("invoices", filters, activeFilter)}
     <div class="invoice-tabs-shell">
       <div class="invoice-tabs" role="tablist" aria-label="${t("Invoice groups")}" data-i18n-aria-label="Invoice groups">
         <button class="invoice-tab ${activeTab === "mothership" ? "active" : ""}" type="button" data-invoice-tab="mothership" role="tab" aria-selected="${activeTab === "mothership"}">
