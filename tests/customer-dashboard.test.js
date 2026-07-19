@@ -272,8 +272,8 @@ assert.match(app, /"Customer Portal": "客户门户"/, "Customer Portal Chinese 
 assert.match(app, /"My Quotes": "我的报价"/, "customer Quotes Chinese navigation should use 我的报价");
 assert.match(app, /"New Quote": "新建报价"/, "customer New Quote Chinese navigation should use 新建报价");
 assert.match(app, /"My Shipments": "我的货件"/, "customer Shipments Chinese navigation should use 我的货件");
-assert.match(app, /"Track Shipment": "查询货件"/, "customer Track Shipment Chinese terminology should be consistent");
-assert.match(app, /"Tracking": "运输轨迹"/, "customer Tracking Chinese terminology should be consistent");
+assert.match(app, /"Track Shipment": "追踪货件"/, "customer Track Shipment Chinese terminology should be consistent");
+assert.match(app, /"Tracking": "货件追踪"/, "customer Tracking Chinese terminology should be consistent");
 assert.match(app, /"My Invoices": "我的账单"/, "customer Invoices Chinese navigation should use 我的账单");
 assert.match(app, /"Welcome back, \{companyName\}": "欢迎回来，\{companyName\}"/, "welcome translation should exist");
 assert.match(app, /"Clear Filter": "清除筛选"/, "Clear Filter Chinese translation should exist");
@@ -339,17 +339,17 @@ assert.match(employeeQuoteDetailsSlice, /Quote Audit/, "employee quote audit scr
 assert.match(employeeQuoteDetailsSlice, /quoteAuditHtml\(quote\)/, "employee quote details should retain quote audit rendering");
 assert.match(app, /"Your Price": "您的报价"/, "Your Price Chinese translation should exist");
 assert.match(app, /"Price unavailable": "价格暂不可用"/, "Price unavailable Chinese translation should exist");
-assert.match(app, /"Book Shipment": "订舱"/, "Book Shipment Chinese translation should be 订舱");
+assert.match(app, /"Book Shipment": "预约运输"/, "Book Shipment Chinese translation should use trucking booking terminology");
 assert.match(app, /"Use as New Quote": "复制为新报价"/, "Use as New Quote Chinese translation should exist");
 assert.match(app, /"Close": "关闭"/, "Close Chinese translation should exist");
-assert.match(app, /"Lowest Price": "最低价格"/, "Lowest Price Chinese translation should exist");
+assert.match(app, /"Lowest Price": "最低报价"/, "Lowest Price Chinese translation should exist");
 assert.match(app, /"Fastest Transit": "最快运输"/, "Fastest Transit Chinese translation should exist");
 assert.match(app, /"Earliest ETA": "最早送达"/, "Earliest ETA Chinese translation should exist");
 assert.match(app, /"Search carrier": "搜索承运商"/, "Search carrier Chinese translation should exist");
 assert.match(app, /"Load More": "加载更多"/, "Load More Chinese translation should exist");
-assert.match(app, /"Showing \{visible\}\/\{total\} rates": "当前显示 \{visible\}\/\{total\} 条报价"/, "showing rate count Chinese translation should exist");
-assert.match(app, /"Showing \{visible\} of \{total\} rates": "当前显示 \{visible\}\/\{total\} 条报价"/, "customer quote detail visible-total Chinese translation should exist");
-assert.match(app, /"Showing \{visible\} of \{matching\} matching rates · \{total\} total": "当前显示 \{visible\}\/\{matching\} 条匹配报价 · 共 \{total\} 条"/, "customer quote detail search-count Chinese translation should exist");
+assert.match(app, /"Showing \{visible\}\/\{total\} rates": "当前显示 \{visible\}\/\{total\} 条运价"/, "showing rate count Chinese translation should exist");
+assert.match(app, /"Showing \{visible\} of \{total\} rates": "当前显示 \{visible\}\/\{total\} 条运价"/, "customer quote detail visible-total Chinese translation should exist");
+assert.match(app, /"Showing \{visible\} of \{matching\} matching rates · \{total\} total": "当前显示 \{visible\}\/\{matching\} 条匹配运价 · 共 \{total\} 条"/, "customer quote detail search-count Chinese translation should exist");
 
 assert.match(bookingConfirmationSlice, /if \(customerView\) {\n\s+return customerBookingConfirmationHtml\(quote, rate\);/, "customer booking confirmation should use a dedicated customer-safe renderer");
 assert.match(customerBookingConfirmationSlice, /<small>\$\{t\("Your Price"\)\}<\/small>/, "customer booking confirmation should label sellPrice as Your Price");
@@ -368,8 +368,8 @@ assert.match(staffBookingConfirmationSlice, /Purchase eligibility/, "staff booki
 assert.match(staffBookingConfirmationSlice, /Pickup suggestions/, "staff booking confirmation should retain pickup suggestion details");
 assert.match(staffBookingConfirmationSlice, /Delivery suggestions/, "staff booking confirmation should retain delivery suggestion details");
 assert.match(staffBookingConfirmationSlice, /<small>\$\{t\("Cost"\)\}<\/small>/, "staff booking confirmation may retain internal Cost label");
-assert.match(app, /"This will submit the selected rate for shipment booking\. Please confirm before continuing\.": "系统将使用所选报价提交订舱，请确认信息后继续。"/, "customer-safe confirmation wording Chinese translation should exist");
-assert.match(app, /"This rate cannot be booked online\. Please choose another rate or contact customer service\.": "此报价暂无法在线订舱，请选择其他报价或联系客服。"/, "customer-safe blocked booking Chinese translation should exist");
+assert.match(app, /"This will submit the selected rate for shipment booking\. Please confirm before continuing\.": "系统将使用所选运价提交运输预约，请确认信息后继续。"/, "customer-safe confirmation wording Chinese translation should exist");
+assert.match(app, /"This rate cannot be booked online\. Please choose another rate or contact customer service\.": "此运价暂无法在线预约运输，请选择其他运价或联系客服。"/, "customer-safe blocked booking Chinese translation should exist");
 
 console.log("customer dashboard tests passed");
 
