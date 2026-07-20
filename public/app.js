@@ -50,6 +50,7 @@ import {
 import {
   canEnableBookingMode,
   carrierModeMatrixRows,
+  customerExplicitBookingModes,
   customerManagementViewModel,
   customerStatusLabelKey,
   normalizeCustomerAccountStatus
@@ -403,7 +404,12 @@ const translations = {
     "Hide password": "隐藏密码",
     "Generate temporary password": "生成临时密码",
     "Copy temporary password": "复制临时密码",
+    "Copy failed. Select and copy the temporary password manually.": "复制失败，请在输入框中手动选择并复制临时密码。",
     "Leave blank to keep the existing password.": "留空则保留现有密码。",
+    "Opening time must be earlier than closing time.": "营业开始时间必须早于营业结束时间。",
+    "Password could not be generated securely.": "无法安全生成密码。",
+    "Not enabled": "未启用",
+    "Blocking carrier...": "正在屏蔽承运商...",
     "No customer selected.": "未选择客户。",
     "View customer details": "查看客户详情",
     "Open customer drawer": "打开客户抽屉",
@@ -789,7 +795,7 @@ function setLanguage(language) {
   renderInvoices();
   renderQuotesView();
   renderDashboard();
-  renderCustomers();
+  renderCustomers({ forceControls: true });
   renderUserChip();
   updateRolePresentation();
   const portalSubtitle = document.getElementById("portalSubtitle");
@@ -1057,7 +1063,17 @@ const state = {
     temporaryPassword: "",
     saving: "",
     blockedCarrierLoading: false,
-    error: ""
+    error: "",
+    draft: {
+      basic: {},
+      pricing: {},
+      portal: {},
+      blocked: {},
+      carrierModes: {
+        allowedCarrierModes: [],
+        allowedBookingCarrierModes: []
+      }
+    }
   },
   lastModalFocus: null,
   modal: null
@@ -1477,11 +1493,12 @@ function wireForms() {
     const customerSearch = event.target.closest("[data-customer-management-query]");
     if (customerSearch) {
       state.customerManagement.query = customerSearch.value;
-      renderCustomers();
+      renderCustomerManagementList();
       return;
     }
     if (event.target.closest("[data-customer-drawer-field]")) {
       state.customerManagement.dirty = true;
+      captureCustomerManagementDraft();
     }
     if (event.target.closest("#customerPricingForm")) {
       updateCustomerPricingPreview();
@@ -1508,15 +1525,17 @@ function wireForms() {
     const customerManagementFilter = event.target.closest("[data-customer-management-filter]");
     if (customerManagementFilter) {
       state.customerManagement[customerManagementFilter.dataset.customerManagementFilter] = customerManagementFilter.value;
-      renderCustomers();
+      renderCustomerManagementList();
       return;
     }
     const drawerField = event.target.closest("[data-customer-drawer-field]");
     if (drawerField) {
       state.customerManagement.dirty = true;
+      captureCustomerManagementDraft();
     }
     const pricingRuleType = event.target.closest("#customerPricingForm [name='ruleType']");
     if (pricingRuleType) {
+      captureCustomerManagementDraft();
       renderCustomerManagementDrawer();
       return;
     }
@@ -1796,6 +1815,9 @@ async function refreshAll(options = {}) {
     state.shipments = shipments.shipments;
     state.invoices = invoices.invoices;
     state.lastSuccessfulRefreshAt = new Date().toISOString();
+    if (state.modal?.type === "customerManagement" && !state.customerManagement.dirty) {
+      initializeCustomerManagementDraft(selectedCustomer());
+    }
 
     renderHealth();
     renderUserChip();
@@ -2131,6 +2153,8 @@ async function logout() {
   });
   state.user = null;
   state.currentQuote = null;
+  resetCustomerManagementDraft();
+  state.customerManagement.dirty = false;
   closeModal();
   showLogin();
   renderUserChip();
@@ -2182,6 +2206,7 @@ function closeModal(options = {}) {
       return false;
     }
   }
+  const wasCustomerManagementDrawer = state.modal?.modalClass === "customer-management-drawer-modal";
   const overlay = document.getElementById("modalOverlay");
   overlay.classList.add("hidden");
   overlay.classList.remove("customer-quote-details-modal");
@@ -2190,7 +2215,12 @@ function closeModal(options = {}) {
   document.getElementById("modalBody").innerHTML = "";
   state.modal = null;
   state.pendingBooking = null;
-  clearCustomerTemporaryPassword();
+  if (wasCustomerManagementDrawer) {
+    resetCustomerManagementDraft();
+    state.customerManagement.dirty = false;
+  } else {
+    clearCustomerTemporaryPassword();
+  }
   if (state.lastModalFocus && document.contains(state.lastModalFocus)) {
     state.lastModalFocus.focus();
   }
@@ -2524,12 +2554,13 @@ function openCustomerManagementDrawer(customerId = "", mode = "edit", tab = "bas
   if (state.customerManagement.dirty && state.modal?.modalClass === "customer-management-drawer-modal" && !window.confirm(t("Unsaved changes will be lost. Continue?"))) {
     return;
   }
+  resetCustomerManagementDraft();
   state.customerManagement.selectedCustomerId = customerId;
   state.customerManagement.drawerMode = mode;
   state.customerManagement.drawerTab = tab;
   state.customerManagement.dirty = false;
   state.customerManagement.error = "";
-  clearCustomerTemporaryPassword();
+  initializeCustomerManagementDraft(customerId ? state.customers.find((customer) => customer.id === customerId) : null);
   state.modal = {
     type: "customerManagement",
     modalClass: "customer-management-drawer-modal"
@@ -2556,6 +2587,7 @@ function customerManagementDrawerHtml() {
   }
   const customer = selectedCustomer();
   const isCreate = state.customerManagement.drawerMode === "create";
+  const isView = state.customerManagement.drawerMode === "view";
   const title = isCreate ? t("+ Add Customer") : customer?.companyName || t("No customer selected.");
   const subtitle = isCreate ? t("Customer created. Configure pricing and carrier channels.") : customerAddressLine(customer);
   const tabs = [
@@ -2572,6 +2604,7 @@ function customerManagementDrawerHtml() {
           <h2>${escapeHtml(title)}</h2>
           ${subtitle ? `<p>${escapeHtml(subtitle)}</p>` : ""}
         </div>
+        ${isView && customer?.id ? `<button class="secondary-action" type="button" data-customer-management-edit="${escapeHtml(customer.id)}">${escapeHtml(t("Edit"))}</button>` : ""}
       </header>
       <nav class="customer-drawer-tabs" aria-label="${escapeHtml(t("Customer Management"))}">
         ${tabs.map(([key, label]) => `<button type="button" class="${state.customerManagement.drawerTab === key ? "active" : ""}" data-customer-drawer-tab="${escapeHtml(key)}">${escapeHtml(t(label))}</button>`).join("")}
@@ -2594,73 +2627,79 @@ function customerDrawerTabHtml(customer) {
 
 function customerBasicDrawerHtml(customer = {}) {
   const isCreate = state.customerManagement.drawerMode === "create";
+  const isView = state.customerManagement.drawerMode === "view";
+  const draft = state.customerManagement.draft.basic || {};
+  const readOnlyAttr = isView ? "readonly" : "";
+  const disabledAttr = isView ? "disabled" : "";
   return `
     <form id="customerBasicForm" class="customer-drawer-form form-grid compact">
       <label>
         <span>${escapeHtml(t("Company name"))}</span>
-        <input data-customer-drawer-field name="companyName" required value="${escapeHtml(customer?.companyName || "")}">
+        <input data-customer-drawer-field name="companyName" required ${readOnlyAttr} value="${escapeHtml(draft.companyName || "")}">
       </label>
       <label>
         <span>${escapeHtml(t("Billing email"))}</span>
-        <input data-customer-drawer-field name="billingEmail" type="email" value="${escapeHtml(customer?.billingEmail || "")}">
+        <input data-customer-drawer-field name="billingEmail" type="email" ${readOnlyAttr} value="${escapeHtml(draft.billingEmail || "")}">
       </label>
       <label>
         <span>${escapeHtml(t("Payment terms"))}</span>
-        <input data-customer-drawer-field name="paymentTerms" value="${escapeHtml(customer?.paymentTerms || "Net 15")}">
+        <input data-customer-drawer-field name="paymentTerms" ${readOnlyAttr} value="${escapeHtml(draft.paymentTerms || "Net 15")}">
       </label>
       <label>
         <span>${escapeHtml(t("Company phone"))}</span>
-        <input data-customer-drawer-field name="companyPhone" type="tel" inputmode="numeric" autocomplete="tel" value="${escapeHtml(customer?.companyPhone || "")}">
+        <input data-customer-drawer-field name="companyPhone" type="tel" inputmode="numeric" autocomplete="tel" ${readOnlyAttr} value="${escapeHtml(draft.companyPhone || "")}">
       </label>
       <label class="span-2">
         <span>${escapeHtml(t("Company street"))}</span>
-        <input data-customer-drawer-field name="companyStreet" value="${escapeHtml(customer?.companyStreet || "")}">
+        <input data-customer-drawer-field name="companyStreet" ${readOnlyAttr} value="${escapeHtml(draft.companyStreet || "")}">
       </label>
       <label>
         <span>${escapeHtml(t("Company city"))}</span>
-        <input data-customer-drawer-field name="companyCity" value="${escapeHtml(customer?.companyCity || "")}">
+        <input data-customer-drawer-field name="companyCity" ${readOnlyAttr} value="${escapeHtml(draft.companyCity || "")}">
       </label>
       <label>
         <span>${escapeHtml(t("Company state"))}</span>
-        <input data-customer-drawer-field name="companyState" maxlength="2" value="${escapeHtml(customer?.companyState || "")}">
+        <input data-customer-drawer-field name="companyState" maxlength="2" ${readOnlyAttr} value="${escapeHtml(draft.companyState || "")}">
       </label>
       <label>
         <span>${escapeHtml(t("Company ZIP"))}</span>
-        <input data-customer-drawer-field name="companyZip" data-zip-autofill="company" value="${escapeHtml(customer?.companyZip || "")}">
+        <input data-customer-drawer-field name="companyZip" data-zip-autofill="company" ${readOnlyAttr} value="${escapeHtml(draft.companyZip || "")}">
       </label>
       <label>
         <span>${escapeHtml(t("business.openingTime"))}</span>
-        <select data-customer-drawer-field name="companyOpenTime" data-time-select><option value="">${escapeHtml(t("Select time"))}</option></select>
+        <select data-customer-drawer-field name="companyOpenTime" data-time-select ${disabledAttr}><option value="">${escapeHtml(t("Select time"))}</option></select>
       </label>
       <label>
         <span>${escapeHtml(t("business.closingTime"))}</span>
-        <select data-customer-drawer-field name="companyCloseTime" data-time-select><option value="">${escapeHtml(t("Select time"))}</option></select>
+        <select data-customer-drawer-field name="companyCloseTime" data-time-select ${disabledAttr}><option value="">${escapeHtml(t("Select time"))}</option></select>
       </label>
       <label>
         <span>${escapeHtml(t("Account status"))}</span>
-        <select data-customer-drawer-field name="status">
-          <option value="active" ${normalizeCustomerAccountStatus(customer?.status) === "active" ? "selected" : ""}>${escapeHtml(t("account.status.active"))}</option>
-          <option value="disabled" ${normalizeCustomerAccountStatus(customer?.status) === "disabled" ? "selected" : ""}>${escapeHtml(t("account.status.disabled"))}</option>
+        <select data-customer-drawer-field name="status" ${disabledAttr}>
+          <option value="active" ${normalizeCustomerAccountStatus(draft.status) === "active" ? "selected" : ""}>${escapeHtml(t("account.status.active"))}</option>
+          <option value="disabled" ${normalizeCustomerAccountStatus(draft.status) === "disabled" ? "selected" : ""}>${escapeHtml(t("account.status.disabled"))}</option>
         </select>
       </label>
       ${isCreate ? customerPortalFieldsHtml(customer) : ""}
-      <div class="modal-actions span-2">
+      ${isView ? "" : `<div class="modal-actions span-2">
         <button class="primary-action" type="submit" ${state.customerManagement.saving === "basic" ? "disabled" : ""}>${escapeHtml(state.customerManagement.saving === "basic" ? t("Customer save in progress...") : t(isCreate ? "Add Customer" : "Save basic information"))}</button>
-      </div>
+      </div>`}
     </form>
   `;
 }
 
 function customerPricingDrawerHtml(customer = selectedCustomer()) {
   if (!customer?.id) return `<div class="empty-state">${escapeHtml(t("No customer selected."))}</div>`;
-  const tariff = state.tariffs.find((rule) => rule.customerId === customer.id) || { ruleType: "percentage", fixedAmount: 50, markupPercentage: 15 };
-  const ruleType = tariff.ruleType === "fixed" ? "fixed" : "percentage";
+  const isView = state.customerManagement.drawerMode === "view";
+  const draft = state.customerManagement.draft.pricing || {};
+  const ruleType = draft.ruleType === "fixed" ? "fixed" : "percentage";
+  const disabledAttr = isView ? "disabled" : "";
   return `
     <form id="customerPricingForm" class="customer-drawer-form">
       <div class="form-grid compact">
         <label>
           <span>${escapeHtml(t("Rule type"))}</span>
-          <select data-customer-drawer-field name="ruleType">
+          <select data-customer-drawer-field name="ruleType" ${disabledAttr}>
             <option value="fixed" ${ruleType === "fixed" ? "selected" : ""}>${escapeHtml(t("Fixed markup"))}</option>
             <option value="percentage" ${ruleType === "percentage" ? "selected" : ""}>${escapeHtml(t("Percentage markup"))}</option>
           </select>
@@ -2668,16 +2707,16 @@ function customerPricingDrawerHtml(customer = selectedCustomer()) {
         ${ruleType === "fixed" ? `
           <label>
             <span>${escapeHtml(t("Fixed amount"))}</span>
-            <input data-customer-drawer-field name="fixedAmount" type="number" min="0" step="0.01" value="${escapeHtml(String(tariff.fixedAmount ?? 50))}">
+            <input data-customer-drawer-field name="fixedAmount" type="number" min="0" step="0.01" ${isView ? "readonly" : ""} value="${escapeHtml(String(draft.fixedAmount ?? 50))}">
           </label>
         ` : `
           <label>
             <span>${escapeHtml(t("Markup percentage"))}</span>
-            <input data-customer-drawer-field name="markupPercentage" type="number" min="0" step="0.1" value="${escapeHtml(String(tariff.markupPercentage ?? 15))}">
+            <input data-customer-drawer-field name="markupPercentage" type="number" min="0" step="0.1" ${isView ? "readonly" : ""} value="${escapeHtml(String(draft.markupPercentage ?? 15))}">
           </label>
         `}
       </div>
-      <div class="pricing-preview" id="customerPricingPreview">${pricingPreviewHtml(ruleType, tariff)}</div>
+      <div class="pricing-preview" id="customerPricingPreview">${pricingPreviewHtml(ruleType, draft)}</div>
       <p class="helper-text">${escapeHtml(t("This rule changes the customer quote price and does not change carrier cost."))}</p>
       <div class="carrier-mode-matrix">
         <div class="carrier-mode-matrix-head">
@@ -2689,15 +2728,22 @@ function customerPricingDrawerHtml(customer = selectedCustomer()) {
       </div>
       <p class="helper-text">${escapeHtml(t("Online booking can only be enabled for channels that are enabled for quoting."))}</p>
       <div id="customerPricingFormError" class="form-error"></div>
-      <div class="modal-actions">
+      ${isView ? "" : `<div class="modal-actions">
         <button class="primary-action" type="submit" ${state.customerManagement.saving === "pricing" ? "disabled" : ""}>${escapeHtml(state.customerManagement.saving === "pricing" ? t("Tariff save in progress...") : t("Save pricing for {name}", { name: customer.companyName }))}</button>
-      </div>
+      </div>`}
     </form>
   `;
 }
 
 function carrierModeMatrixHtml(customer) {
-  return carrierModeMatrixRows(customer, { showDemo: true })
+  const isView = state.customerManagement.drawerMode === "view";
+  const draft = state.customerManagement.draft.carrierModes || {};
+  return carrierModeMatrixRows({
+    ...customer,
+    allowedCarrierModes: draft.allowedCarrierModes || [],
+    allowedBookingCarrierModes: draft.allowedBookingCarrierModes || [],
+    allowedBooking: (draft.allowedBookingCarrierModes || []).length > 0
+  }, { showDemo: true })
     .map((row) => `
       <div class="carrier-mode-row ${row.isDemo ? "is-demo" : ""}">
         <div>
@@ -2705,11 +2751,11 @@ function carrierModeMatrixHtml(customer) {
           ${row.isDemo ? `<small>${escapeHtml(t("Demo Rates is for internal testing only."))}</small>` : ""}
         </div>
         <label class="checkbox-wrap">
-          <input data-customer-drawer-field data-customer-mode-quote type="checkbox" value="${escapeHtml(row.key)}" ${row.quotingEnabled ? "checked" : ""}>
+          <input data-customer-drawer-field data-customer-mode-quote type="checkbox" value="${escapeHtml(row.key)}" ${row.quotingEnabled ? "checked" : ""} ${isView ? "disabled" : ""}>
           <span>${escapeHtml(t("Get Rates"))}</span>
         </label>
         <label class="checkbox-wrap">
-          <input data-customer-drawer-field data-customer-mode-booking type="checkbox" value="${escapeHtml(row.key)}" ${row.bookingEnabled ? "checked" : ""} ${row.bookingAllowed ? "" : "disabled"}>
+          <input data-customer-drawer-field data-customer-mode-booking type="checkbox" value="${escapeHtml(row.key)}" ${row.bookingEnabled ? "checked" : ""} ${row.bookingAllowed && !isView ? "" : "disabled"}>
           <span>${escapeHtml(t("customerManagement.onlineBooking"))}</span>
         </label>
       </div>
@@ -2718,43 +2764,50 @@ function carrierModeMatrixHtml(customer) {
 
 function customerBlockedCarriersDrawerHtml(customer = selectedCustomer()) {
   if (!customer?.id) return `<div class="empty-state">${escapeHtml(t("No customer selected."))}</div>`;
+  const isView = state.customerManagement.drawerMode === "view";
+  const draft = state.customerManagement.draft.blocked || {};
+  const saving = state.customerManagement.saving === "blocked";
   return `
+    ${isView ? "" : `
     <form id="customerBlockedCarrierForm" class="form-grid compact customer-drawer-form">
       <label>
         <span>${escapeHtml(t("Carrier code or name"))}</span>
-        <input data-customer-drawer-field name="carrierKey" required placeholder="XPOL or XPO Logistics">
+        <input data-customer-drawer-field name="carrierKey" required placeholder="XPOL or XPO Logistics" value="${escapeHtml(draft.carrierKey || "")}">
       </label>
       <label>
         <span>${escapeHtml(t("Display name"))}</span>
-        <input data-customer-drawer-field name="carrierName" placeholder="XPO Logistics">
+        <input data-customer-drawer-field name="carrierName" placeholder="XPO Logistics" value="${escapeHtml(draft.carrierName || "")}">
       </label>
       <label class="span-2">
         <span>${escapeHtml(t("Reason"))}</span>
-        <input data-customer-drawer-field name="reason" placeholder="${escapeHtml(t("Optional internal reason"))}">
+        <input data-customer-drawer-field name="reason" placeholder="${escapeHtml(t("Optional internal reason"))}" value="${escapeHtml(draft.reason || "")}">
       </label>
       <div class="modal-actions span-2">
-        <button class="primary-action" type="submit">${escapeHtml(t("Block Carrier"))}</button>
+        <button class="primary-action" type="submit" ${saving ? "disabled" : ""}>${escapeHtml(saving ? t("Blocking carrier...") : t("Block Carrier"))}</button>
       </div>
-    </form>
+    </form>`}
     <div id="carrierPreferenceList" class="blocked-carrier-list"></div>
   `;
 }
 
 function customerPortalDrawerHtml(customer = selectedCustomer()) {
   if (!customer?.id) return `<div class="empty-state">${escapeHtml(t("No customer selected."))}</div>`;
+  const isView = state.customerManagement.drawerMode === "view";
   return `
     <form id="customerPortalForm" class="customer-drawer-form form-grid compact">
       ${customerPortalFieldsHtml(customer)}
       <p class="helper-text span-2">${escapeHtml(t("Leave blank to keep the existing password."))}</p>
-      <div class="modal-actions span-2">
+      ${isView ? "" : `<div class="modal-actions span-2">
         <button class="primary-action" type="submit" ${state.customerManagement.saving === "portal" ? "disabled" : ""}>${escapeHtml(t("Save portal access"))}</button>
-      </div>
+      </div>`}
     </form>
   `;
 }
 
 function customerPortalFieldsHtml(customer = {}) {
-  const password = state.customerManagement.temporaryPassword || "";
+  const isView = state.customerManagement.drawerMode === "view";
+  const draft = state.customerManagement.draft.portal || {};
+  const password = draft.portalPassword || "";
   return `
     <label>
       <span>${escapeHtml(t("Portal status"))}</span>
@@ -2762,29 +2815,29 @@ function customerPortalFieldsHtml(customer = {}) {
     </label>
     <label>
       <span>${escapeHtml(t("Portal username"))}</span>
-      <input data-customer-drawer-field name="portalEmail" value="${escapeHtml(customer?.portalEmail || "")}">
+      <input data-customer-drawer-field name="portalEmail" ${isView ? "readonly" : ""} value="${escapeHtml(draft.portalEmail || "")}">
     </label>
     <label class="span-2">
       <span>${escapeHtml(t("New temporary password"))}</span>
-      <input data-customer-drawer-field name="portalPassword" type="password" value="${escapeHtml(password)}" autocomplete="new-password">
+      <input data-customer-drawer-field name="portalPassword" type="password" ${isView ? "readonly" : ""} value="${escapeHtml(password)}" autocomplete="new-password">
     </label>
-    <div class="modal-actions span-2">
+    ${isView ? "" : `<div class="modal-actions span-2">
       <button class="secondary-action" type="button" data-toggle-temp-password>${escapeHtml(t("Show password"))}</button>
       <button class="secondary-action" type="button" data-generate-temp-password>${escapeHtml(t("Generate temporary password"))}</button>
       <button class="secondary-action" type="button" data-copy-temp-password ${password ? "" : "disabled"}>${escapeHtml(t("Copy temporary password"))}</button>
-    </div>
+    </div>`}
   `;
 }
 
 function afterRenderCustomerManagementDrawer() {
   populateTimeSelects();
-  const customer = selectedCustomer();
+  const draft = state.customerManagement.draft.basic || {};
   const form = document.getElementById("customerBasicForm");
   if (form) {
     const openTimeField = form.elements.companyOpenTime;
     const closeTimeField = form.elements.companyCloseTime;
-    if (openTimeField) openTimeField.value = customer?.companyOpenTime || "";
-    if (closeTimeField) closeTimeField.value = customer?.companyCloseTime || "";
+    if (openTimeField) openTimeField.value = draft.companyOpenTime || "";
+    if (closeTimeField) closeTimeField.value = draft.companyCloseTime || "";
     wireZipAutofill();
   }
   renderCarrierPreferences();
@@ -2801,10 +2854,116 @@ function selectedCustomer() {
   return state.customers.find((customer) => customer.id === state.customerManagement.selectedCustomerId) || null;
 }
 
+function resetCustomerManagementDraft() {
+  state.customerManagement.temporaryPassword = "";
+  state.customerManagement.draft = {
+    basic: {},
+    pricing: {},
+    portal: {},
+    blocked: {},
+    carrierModes: {
+      allowedCarrierModes: [],
+      allowedBookingCarrierModes: []
+    }
+  };
+}
+
+function initializeCustomerManagementDraft(customer = null) {
+  const tariff = customer?.id ? state.tariffs.find((rule) => rule.customerId === customer.id) : null;
+  const allowedCarrierModes = normalizeAllowedCarrierModes(customer?.allowedCarrierModes || [], []);
+  const allowedBookingCarrierModes = customerExplicitBookingModes(customer || {});
+  state.customerManagement.draft = {
+    basic: {
+      companyName: customer?.companyName || "",
+      billingEmail: customer?.billingEmail || "",
+      paymentTerms: customer?.paymentTerms || "Net 15",
+      companyPhone: customer?.companyPhone || "",
+      companyStreet: customer?.companyStreet || "",
+      companyCity: customer?.companyCity || "",
+      companyState: customer?.companyState || "",
+      companyZip: customer?.companyZip || "",
+      companyOpenTime: customer?.companyOpenTime || "",
+      companyCloseTime: customer?.companyCloseTime || "",
+      status: normalizeCustomerAccountStatus(customer?.status)
+    },
+    pricing: {
+      ruleType: tariff?.ruleType === "fixed" ? "fixed" : "percentage",
+      fixedAmount: tariff?.fixedAmount ?? 50,
+      markupPercentage: tariff?.markupPercentage ?? 15
+    },
+    portal: {
+      portalEmail: customer?.portalEmail || "",
+      portalPassword: ""
+    },
+    blocked: {
+      carrierKey: "",
+      carrierName: "",
+      reason: ""
+    },
+    carrierModes: {
+      allowedCarrierModes,
+      allowedBookingCarrierModes
+    }
+  };
+  state.customerManagement.temporaryPassword = "";
+}
+
+function captureCustomerManagementDraft() {
+  const basicForm = document.getElementById("customerBasicForm");
+  if (basicForm) {
+    state.customerManagement.draft.basic = {
+      ...state.customerManagement.draft.basic,
+      ...customerPayloadFromForm(new FormData(basicForm))
+    };
+    if (basicForm.elements.portalEmail || basicForm.elements.portalPassword) {
+      state.customerManagement.draft.portal = {
+        ...state.customerManagement.draft.portal,
+        portalEmail: basicForm.elements.portalEmail?.value || "",
+        portalPassword: basicForm.elements.portalPassword?.value || ""
+      };
+      state.customerManagement.temporaryPassword = state.customerManagement.draft.portal.portalPassword || "";
+    }
+  }
+  const pricingForm = document.getElementById("customerPricingForm");
+  if (pricingForm) {
+    state.customerManagement.draft.pricing = {
+      ...state.customerManagement.draft.pricing,
+      ruleType: pricingForm.elements.ruleType?.value === "fixed" ? "fixed" : "percentage",
+      fixedAmount: pricingForm.elements.fixedAmount?.value ?? state.customerManagement.draft.pricing.fixedAmount ?? 50,
+      markupPercentage: pricingForm.elements.markupPercentage?.value ?? state.customerManagement.draft.pricing.markupPercentage ?? 15
+    };
+    const allowedCarrierModes = Array.from(pricingForm.querySelectorAll("[data-customer-mode-quote]:checked")).map((item) => item.value);
+    const allowedBookingCarrierModes = Array.from(pricingForm.querySelectorAll("[data-customer-mode-booking]:checked"))
+      .map((item) => item.value)
+      .filter((mode) => allowedCarrierModes.includes(mode));
+    state.customerManagement.draft.carrierModes = {
+      allowedCarrierModes,
+      allowedBookingCarrierModes
+    };
+  }
+  const portalForm = document.getElementById("customerPortalForm");
+  if (portalForm) {
+    state.customerManagement.draft.portal = {
+      portalEmail: portalForm.elements.portalEmail?.value || "",
+      portalPassword: portalForm.elements.portalPassword?.value || ""
+    };
+    state.customerManagement.temporaryPassword = state.customerManagement.draft.portal.portalPassword || "";
+  }
+  const blockedForm = document.getElementById("customerBlockedCarrierForm");
+  if (blockedForm) {
+    state.customerManagement.draft.blocked = {
+      carrierKey: blockedForm.elements.carrierKey?.value || "",
+      carrierName: blockedForm.elements.carrierName?.value || "",
+      reason: blockedForm.elements.reason?.value || ""
+    };
+  }
+}
+
 function setCustomerDrawerTab(tab) {
   if (state.customerManagement.dirty && !window.confirm(t("Unsaved changes will be lost. Continue?"))) {
     return;
   }
+  captureCustomerManagementDraft();
   state.customerManagement.drawerTab = tab || "basic";
   state.customerManagement.dirty = false;
   renderCustomerManagementDrawer();
@@ -2843,6 +3002,7 @@ function updateCustomerPricingPreview() {
 async function saveCustomerBasicForm(formElement) {
   if (!isStaffUser()) return;
   if (state.customerManagement.saving) return;
+  captureCustomerManagementDraft();
   const form = new FormData(formElement);
   const payload = customerPayloadFromForm(form);
   const validation = validateCustomerBasicPayload(payload);
@@ -2866,7 +3026,7 @@ async function saveCustomerBasicForm(formElement) {
       state.customerManagement.drawerTab = "pricing";
       state.customerManagement.dirty = false;
       state.customerManagement.error = "";
-      clearCustomerTemporaryPassword();
+      initializeCustomerManagementDraft(state.customers.find((customer) => customer.id === createdId) || createdCustomer);
       showToast(t("Customer created. Configure pricing and carrier channels."));
       renderCustomerManagementDrawer();
       return;
@@ -2877,6 +3037,7 @@ async function saveCustomerBasicForm(formElement) {
     state.customerManagement.error = "";
     showToast(t("Customer updated."));
     await refreshAll();
+    initializeCustomerManagementDraft(selectedCustomer());
   } catch (error) {
     state.customerManagement.error = error.message || t("Request failed.");
     showToast(state.customerManagement.error, true);
@@ -2890,6 +3051,7 @@ async function saveCustomerBasicForm(formElement) {
 async function saveCustomerPricingForm(formElement) {
   if (!isStaffUser()) return;
   if (state.customerManagement.saving) return;
+  captureCustomerManagementDraft();
   const customer = selectedCustomer();
   if (!customer) return;
   const form = new FormData(formElement);
@@ -2921,6 +3083,7 @@ async function saveCustomerPricingForm(formElement) {
     state.customerManagement.dirty = false;
     showToast(t("Tariff saved."));
     await refreshAll();
+    initializeCustomerManagementDraft(selectedCustomer());
   } catch (error) {
     showToast(error.message || t("Request failed."), true);
   } finally {
@@ -2932,6 +3095,7 @@ async function saveCustomerPricingForm(formElement) {
 async function saveCustomerPortalForm(formElement) {
   if (!isStaffUser()) return;
   if (state.customerManagement.saving) return;
+  captureCustomerManagementDraft();
   const customer = selectedCustomer();
   if (!customer) return;
   const form = new FormData(formElement);
@@ -2946,9 +3110,9 @@ async function saveCustomerPortalForm(formElement) {
     renderCustomerManagementDrawer();
     await api(`/api/customers/${encodeURIComponent(customer.id)}`, { method: "PATCH", body });
     state.customerManagement.dirty = false;
-    clearCustomerTemporaryPassword();
     showToast(t("Customer updated."));
     await refreshAll();
+    initializeCustomerManagementDraft(selectedCustomer());
   } catch (error) {
     showToast(error.message || t("Request failed."), true);
   } finally {
@@ -2960,11 +3124,13 @@ async function saveCustomerPortalForm(formElement) {
 async function saveCustomerBlockedCarrierForm(formElement) {
   if (!isStaffUser()) return;
   if (state.customerManagement.saving) return;
+  captureCustomerManagementDraft();
   const customer = selectedCustomer();
   if (!customer) return;
   const form = new FormData(formElement);
   try {
     state.customerManagement.saving = "blocked";
+    renderCustomerManagementDrawer();
     await api("/api/carrier-preferences", {
       method: "POST",
       body: {
@@ -2975,15 +3141,17 @@ async function saveCustomerBlockedCarrierForm(formElement) {
         reason: form.get("reason")
       }
     });
-    formElement.reset();
+    state.customerManagement.draft.blocked = { carrierKey: "", carrierName: "", reason: "" };
     state.customerManagement.dirty = false;
     showToast(t("Blocked carrier added."));
     await refreshCarrierPreferences();
     renderCustomerManagementDrawer();
   } catch (error) {
     showToast(error.message || t("Request failed."), true);
+    renderCustomerManagementDrawer();
   } finally {
     state.customerManagement.saving = "";
+    renderCustomerManagementDrawer();
   }
 }
 
@@ -3017,7 +3185,7 @@ function validateCustomerBasicPayload(payload) {
   if (payload.companyOpenTime && payload.companyCloseTime) {
     const open = normalizeTimeForCustomerManagement(payload.companyOpenTime);
     const close = normalizeTimeForCustomerManagement(payload.companyCloseTime);
-    if (open !== null && close !== null && open >= close) return t("Pickup open time must be earlier than pickup close time.");
+    if (open !== null && close !== null && open >= close) return t("Opening time must be earlier than closing time.");
   }
   return "";
 }
@@ -3050,6 +3218,7 @@ function handleCustomerModeQuoteChange(checkbox) {
     if (!checkbox.checked) booking.checked = false;
   }
   state.customerManagement.dirty = true;
+  captureCustomerManagementDraft();
 }
 
 function handleCustomerModeBookingChange(checkbox) {
@@ -3058,22 +3227,62 @@ function handleCustomerModeBookingChange(checkbox) {
   const allowedModes = Array.from(form.querySelectorAll("[data-customer-mode-quote]:checked")).map((item) => item.value);
   checkbox.checked = checkbox.checked && canEnableBookingMode(checkbox.value, allowedModes);
   state.customerManagement.dirty = true;
+  captureCustomerManagementDraft();
 }
 
 function generateCustomerTemporaryPassword() {
-  state.customerManagement.temporaryPassword = `Tmp-${Math.random().toString(36).slice(2, 8)}-${Math.random().toString(36).slice(2, 8)}`;
+  captureCustomerManagementDraft();
+  const password = createSecureTemporaryPassword();
+  if (!password) {
+    showToast(t("Password could not be generated securely."), true);
+    return;
+  }
+  state.customerManagement.draft.portal.portalPassword = password;
+  state.customerManagement.temporaryPassword = password;
   state.customerManagement.dirty = true;
-  renderCustomerManagementDrawer();
+  const input = document.querySelector("#customerPortalForm [name='portalPassword'], #customerBasicForm [name='portalPassword']");
+  if (input) {
+    input.value = password;
+  }
+  document.querySelectorAll("[data-copy-temp-password]").forEach((button) => {
+    button.disabled = false;
+  });
+}
+
+function createSecureTemporaryPassword() {
+  const cryptoApi = window.crypto || window.msCrypto;
+  if (!cryptoApi?.getRandomValues) {
+    return "";
+  }
+  const groups = [
+    "ABCDEFGHJKLMNPQRSTUVWXYZ",
+    "abcdefghijkmnopqrstuvwxyz",
+    "23456789",
+    "!@#$%?"
+  ];
+  const alphabet = groups.join("");
+  const values = new Uint32Array(20);
+  cryptoApi.getRandomValues(values);
+  const required = groups.map((group, index) => group[values[index] % group.length]);
+  const remaining = Array.from(values.slice(groups.length), (value) => alphabet[value % alphabet.length]);
+  const password = [...required, ...remaining];
+  for (let index = password.length - 1; index > 0; index -= 1) {
+    const swapIndex = values[index] % (index + 1);
+    [password[index], password[swapIndex]] = [password[swapIndex], password[index]];
+  }
+  return password.join("");
 }
 
 async function copyCustomerTemporaryPassword() {
-  const password = state.customerManagement.temporaryPassword || document.querySelector("#customerPortalForm [name='portalPassword'], #customerBasicForm [name='portalPassword']")?.value || "";
+  captureCustomerManagementDraft();
+  const password = state.customerManagement.temporaryPassword || state.customerManagement.draft.portal?.portalPassword || "";
   if (!password) return;
   try {
-    await navigator.clipboard?.writeText(password);
+    if (!navigator.clipboard?.writeText) throw new Error("Clipboard unavailable");
+    await navigator.clipboard.writeText(password);
     showToast(t("Copy temporary password"));
   } catch {
-    showToast(password);
+    showToast(t("Copy failed. Select and copy the temporary password manually."), true);
   }
 }
 
@@ -3090,7 +3299,9 @@ function toggleCustomerTemporaryPasswordVisibility() {
 
 function clearCustomerTemporaryPassword() {
   state.customerManagement.temporaryPassword = "";
-  state.customerManagement.dirty = false;
+  if (state.customerManagement.draft?.portal) {
+    state.customerManagement.draft.portal.portalPassword = "";
+  }
 }
 
 async function toggleCustomerStatus(customerId) {
@@ -5733,6 +5944,7 @@ function renderCarrierPreferences() {
     list.innerHTML = "";
     return;
   }
+  const isView = state.customerManagement.drawerMode === "view";
   if (state.customerManagement.blockedCarrierLoading) {
     list.innerHTML = `<div class="empty-state">${escapeHtml(t("Blocked carriers are loading..."))}</div>`;
     return;
@@ -5749,7 +5961,7 @@ function renderCarrierPreferences() {
           <small>${escapeHtml(preference.carrierKey)}</small>
           ${preference.reason ? `<p>${escapeHtml(preference.reason)}</p>` : ""}
         </div>
-        <button class="danger-action" type="button" data-delete-carrier-preference="${escapeHtml(preference.id)}">${t("Remove")}</button>
+        ${isView ? "" : `<button class="danger-action" type="button" data-delete-carrier-preference="${escapeHtml(preference.id)}">${t("Remove")}</button>`}
       </article>
     `)
     .join("");
@@ -5768,7 +5980,7 @@ async function deleteCarrierPreference(id) {
   renderCustomerManagementDrawer();
 }
 
-function renderCustomers() {
+function renderCustomers(options = {}) {
   const list = document.getElementById("customerList");
   const filters = document.getElementById("customerManagementFilters");
   const metrics = document.getElementById("customerManagementMetrics");
@@ -5781,9 +5993,14 @@ function renderCustomers() {
     metrics.innerHTML = "";
     return;
   }
+  renderCustomerManagementControls(options);
+  renderCustomerManagementMetrics();
+  renderCustomerManagementList();
+}
 
+function customerManagementCurrentViewModel() {
   const cm = state.customerManagement;
-  const viewModel = customerManagementViewModel({
+  return customerManagementViewModel({
     customers: state.customers,
     tariffs: state.tariffs,
     quotes: state.quotes,
@@ -5793,9 +6010,49 @@ function renderCustomers() {
     configurationFilter: cm.configurationFilter,
     sort: cm.sort
   });
+}
 
-  filters.innerHTML = customerManagementFilterHtml();
-  metrics.innerHTML = customerManagementMetricHtml(viewModel.metrics);
+function renderCustomerManagementControls(options = {}) {
+  const filters = document.getElementById("customerManagementFilters");
+  if (!filters) return;
+  if (!isStaffUser()) {
+    filters.innerHTML = "";
+    return;
+  }
+  if (options.forceControls || !filters.hasChildNodes()) {
+    filters.innerHTML = customerManagementFilterHtml();
+    return;
+  }
+  const queryInput = filters.querySelector("[data-customer-management-query]");
+  if (queryInput && queryInput.value !== state.customerManagement.query) {
+    queryInput.value = state.customerManagement.query;
+  }
+  filters.querySelectorAll("[data-customer-management-filter]").forEach((select) => {
+    const key = select.dataset.customerManagementFilter;
+    if (key && select.value !== state.customerManagement[key]) {
+      select.value = state.customerManagement[key];
+    }
+  });
+}
+
+function renderCustomerManagementMetrics() {
+  const metrics = document.getElementById("customerManagementMetrics");
+  if (!metrics) return;
+  if (!isStaffUser()) {
+    metrics.innerHTML = "";
+    return;
+  }
+  metrics.innerHTML = customerManagementMetricHtml(customerManagementCurrentViewModel().metrics);
+}
+
+function renderCustomerManagementList() {
+  const list = document.getElementById("customerList");
+  if (!list) return;
+  if (!isStaffUser()) {
+    list.innerHTML = "";
+    return;
+  }
+  const viewModel = customerManagementCurrentViewModel();
 
   if (state.customers.length === 0) {
     list.innerHTML = `<div class="empty-state">${escapeHtml(t("No customers yet."))}</div>`;
@@ -5872,7 +6129,7 @@ function customerManagementCardHtml(row) {
   const statusLabel = t(customerStatusLabelKey(customer));
   const address = [customer.companyStreet, customer.companyCity, customer.companyState, customer.companyZip].filter(Boolean).join(", ");
   const quoteModes = normalizeAllowedCarrierModes(customer.allowedCarrierModes || [], []);
-  const bookingModes = customerAllowedBookingModes(customer);
+  const bookingModes = customerExplicitBookingModes(customer);
   const pricing = customerPricingLine(row.pricing);
   const statusAction = normalizeCustomerAccountStatus(customer.status) === "disabled" ? "Enable" : "Disable";
   return `
@@ -5886,7 +6143,7 @@ function customerManagementCardHtml(row) {
         ${address ? `<p>${escapeHtml(address)}</p>` : ""}
         <div class="customer-management-details">
           ${customerManagementDetail("Quote channels", quoteModes.length ? customerManagementCarrierModeListLabel(quoteModes) : t("No Carrier Modes"))}
-          ${customerManagementDetail("customerManagement.onlineBooking", bookingModes.length ? customerManagementCarrierModeListLabel(bookingModes) : t("Booking disabled"))}
+          ${customerManagementDetail("customerManagement.onlineBooking", bookingModes.length ? customerManagementCarrierModeListLabel(bookingModes) : t("Not enabled"))}
           ${customerManagementDetail("Pricing rule", pricing)}
           ${customerManagementDetail("Last 30 days", `${t("{count} quotes", { count: row.activity.quotesLast30 })} · ${t("{count} shipments", { count: row.activity.shipmentsLast30 })}`)}
         </div>

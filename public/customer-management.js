@@ -1,5 +1,3 @@
-import { isCustomerOnlineBookingEnabled } from "./admin-dashboard.js";
-
 export const customerManagementCarrierModes = [
   { key: "mothershipSandbox", label: "Mothership Sandbox", isDemo: false },
   { key: "speedshipLtl", label: "SpeedShip LTL", isDemo: false },
@@ -42,11 +40,12 @@ export function customerPricingSummary(customer, tariffs = []) {
 export function customerConfigurationFlags(customer, tariffs = []) {
   const active = normalizeCustomerAccountStatus(customer?.status) !== "disabled";
   const allowedModes = normalizeModeList(customer?.allowedCarrierModes);
-  const bookingModes = normalizeModeList(customer?.allowedBookingCarrierModes);
+  const bookingModes = customerExplicitBookingModes(customer);
   const hasTariff = Boolean(findCustomerTariff(customer?.id, tariffs));
-  const onlineBookingEnabled = active && isCustomerOnlineBookingEnabled(customer);
-  const inconsistentBooking = active && customer?.allowedBooking !== false && bookingModes.some((mode) => !allowedModes.includes(mode));
-  const portalExpected = customer?.portalAccessExpected !== false;
+  const rawBookingModes = normalizeModeList(customer?.allowedBookingCarrierModes);
+  const onlineBookingEnabled = active && bookingModes.length > 0;
+  const inconsistentBooking = active && customer?.allowedBooking !== false && rawBookingModes.some((mode) => !allowedModes.includes(mode));
+  const portalExpected = customer?.portalAccessExpected === true;
   const portalConfigured = Boolean(String(customer?.portalEmail || "").trim());
   return {
     disabled: !active,
@@ -55,7 +54,7 @@ export function customerConfigurationFlags(customer, tariffs = []) {
     onlineBookingDisabled: active && !onlineBookingEnabled,
     portalNotConfigured: active && portalExpected && !portalConfigured,
     inconsistentBooking,
-    configurationComplete: active && hasTariff && allowedModes.length > 0 && onlineBookingEnabled && portalConfigured && !inconsistentBooking,
+    configurationComplete: active && hasTariff && allowedModes.length > 0 && !inconsistentBooking,
     onlineBookingEnabled
   };
 }
@@ -164,7 +163,7 @@ export function customerManagementViewModel({
 
 export function carrierModeMatrixRows(customer = {}, options = {}) {
   const quoteModes = normalizeModeList(customer.allowedCarrierModes);
-  const bookingModes = normalizeModeList(customer.allowedBookingCarrierModes);
+  const bookingModes = customerExplicitBookingModes(customer);
   const showDemo = Boolean(options.showDemo || quoteModes.includes("demo") || bookingModes.includes("demo"));
   return customerManagementCarrierModes
     .filter((mode) => !mode.isDemo || showDemo)
@@ -181,6 +180,15 @@ export function carrierModeMatrixRows(customer = {}, options = {}) {
 
 export function canEnableBookingMode(mode, allowedCarrierModes = []) {
   return normalizeModeList(allowedCarrierModes).includes(normalizeCarrierMode(mode));
+}
+
+export function customerExplicitBookingModes(customer = {}) {
+  const active = normalizeCustomerAccountStatus(customer?.status) !== "disabled";
+  if (!active || customer?.allowedBooking === false || !Array.isArray(customer?.allowedBookingCarrierModes)) {
+    return [];
+  }
+  const allowedModes = normalizeModeList(customer.allowedCarrierModes);
+  return normalizeModeList(customer.allowedBookingCarrierModes).filter((mode) => allowedModes.includes(mode));
 }
 
 export function updateCarrierModeSelection({ allowedCarrierModes = [], allowedBookingCarrierModes = [] }, mode, quoteEnabled) {
