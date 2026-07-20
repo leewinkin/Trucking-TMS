@@ -52,9 +52,15 @@ import {
   carrierModeMatrixRows,
   customerExplicitBookingModes,
   customerManagementDirtyAfterTabSwitch,
+  customerManagementDraftFromPersisted,
+  customerManagementHasUnsavedChanges,
+  customerManagementSectionDirtyState,
+  customerManagementSectionIsDirty,
   customerManagementViewModel,
   customerPortalStatusLabelKey,
+  defaultCustomerManagementDirtySections,
   isCustomerManagementTabDisabled,
+  mergeCustomerManagementDraftFromPersisted,
   shouldCaptureCustomerManagementDraft,
   customerStatusLabelKey,
   normalizeCustomerAccountStatus
@@ -383,6 +389,7 @@ const translations = {
     "Blocked carriers are loading...": "正在加载屏蔽承运商...",
     "No customers match your search or filters.": "没有匹配搜索或筛选条件的客户。",
     "Unsaved changes will be lost. Continue?": "未保存的更改将会丢失。是否继续？",
+    "Unsaved": "未保存",
     "Type {name} to confirm deletion.": "请输入 {name} 以确认删除。",
     "Deleting this customer may affect related quotes, shipments, and invoices.": "删除此客户可能影响相关报价、货件和账单。",
     "Delete confirmation did not match the company name.": "删除确认与公司名称不一致。",
@@ -1065,6 +1072,12 @@ const state = {
     drawerMode: "",
     drawerTab: "basic",
     dirty: false,
+    dirtySections: {
+      basic: false,
+      pricing: false,
+      portal: false,
+      blocked: false
+    },
     temporaryPassword: "",
     saving: "",
     blockedCarrierLoading: false,
@@ -1501,9 +1514,13 @@ function wireForms() {
       renderCustomerManagementList();
       return;
     }
-    if (event.target.closest("[data-customer-drawer-field]")) {
-      state.customerManagement.dirty = true;
+    const drawerInput = event.target.closest("[data-customer-drawer-field]");
+    if (drawerInput) {
+      markCustomerManagementSectionDirty(customerManagementSectionForField(drawerInput));
       captureCustomerManagementDraft();
+      if (drawerInput.name === "portalEmail") {
+        syncCustomerPortalStatus();
+      }
     }
     if (event.target.closest("#customerPricingForm")) {
       updateCustomerPricingPreview();
@@ -1535,8 +1552,11 @@ function wireForms() {
     }
     const drawerField = event.target.closest("[data-customer-drawer-field]");
     if (drawerField) {
-      state.customerManagement.dirty = true;
+      markCustomerManagementSectionDirty(customerManagementSectionForField(drawerField));
       captureCustomerManagementDraft();
+      if (drawerField.name === "portalEmail") {
+        syncCustomerPortalStatus();
+      }
     }
     const pricingRuleType = event.target.closest("#customerPricingForm [name='ruleType']");
     if (pricingRuleType) {
@@ -1812,7 +1832,7 @@ async function refreshAll(options = {}) {
       state.customerManagement.selectedCustomerId = "";
       state.customerManagement.drawerMode = "";
       state.customerManagement.drawerTab = "basic";
-      state.customerManagement.dirty = false;
+      resetCustomerManagementDraft();
     }
     state.tariffs = tariffs.tariffRules;
     state.addressBookEntries = addressBook.entries || [];
@@ -1820,8 +1840,12 @@ async function refreshAll(options = {}) {
     state.shipments = shipments.shipments;
     state.invoices = invoices.invoices;
     state.lastSuccessfulRefreshAt = new Date().toISOString();
-    if (state.modal?.type === "customerManagement" && !state.customerManagement.dirty) {
-      initializeCustomerManagementDraft(selectedCustomer());
+    if (state.modal?.type === "customerManagement") {
+      if (state.customerManagement.drawerMode === "view") {
+        initializeCustomerManagementDraft(selectedCustomer());
+      } else {
+        mergeCustomerManagementDraftFromCurrentPersisted(selectedCustomer());
+      }
     }
 
     renderHealth();
@@ -1834,7 +1858,7 @@ async function refreshAll(options = {}) {
     renderDashboard();
     renderShipments();
     renderInvoices();
-    if (!(state.modal?.type === "customerManagement" && state.customerManagement.dirty)) {
+    if (!(state.modal?.type === "customerManagement" && hasCustomerManagementUnsavedChanges())) {
       renderModal();
     }
     syncCarrierControls();
@@ -1894,11 +1918,11 @@ async function api(path, options = {}) {
 
 function setView(name, options = {}) {
   const activeView = document.querySelector(".nav-button.active")?.dataset.view || "";
-  if (activeView === "customers" && name !== "customers" && state.customerManagement.dirty) {
+  if (activeView === "customers" && name !== "customers" && hasCustomerManagementUnsavedChanges()) {
     if (!window.confirm(t("Unsaved changes will be lost. Continue?"))) {
       return;
     }
-    state.customerManagement.dirty = false;
+    resetCustomerManagementDraft();
   }
   if (options.resetCustomerFilter) {
     resetCustomerFilterForView(name);
@@ -2159,7 +2183,6 @@ async function logout() {
   state.user = null;
   state.currentQuote = null;
   resetCustomerManagementDraft();
-  state.customerManagement.dirty = false;
   closeModal();
   showLogin();
   renderUserChip();
@@ -2206,7 +2229,7 @@ function paintModal(title, bodyHtml) {
 }
 
 function closeModal(options = {}) {
-  if (!options.force && state.modal?.modalClass === "customer-management-drawer-modal" && state.customerManagement.dirty) {
+  if (!options.force && state.modal?.modalClass === "customer-management-drawer-modal" && hasCustomerManagementUnsavedChanges()) {
     if (!window.confirm(t("Unsaved changes will be lost. Continue?"))) {
       return false;
     }
@@ -2222,7 +2245,6 @@ function closeModal(options = {}) {
   state.pendingBooking = null;
   if (wasCustomerManagementDrawer) {
     resetCustomerManagementDraft();
-    state.customerManagement.dirty = false;
   } else {
     clearCustomerTemporaryPassword();
   }
@@ -2556,14 +2578,13 @@ function openCustomerManagementDrawer(customerId = "", mode = "edit", tab = "bas
   if (!isStaffUser()) {
     return;
   }
-  if (state.customerManagement.dirty && state.modal?.modalClass === "customer-management-drawer-modal" && !window.confirm(t("Unsaved changes will be lost. Continue?"))) {
+  if (hasCustomerManagementUnsavedChanges() && state.modal?.modalClass === "customer-management-drawer-modal" && !window.confirm(t("Unsaved changes will be lost. Continue?"))) {
     return;
   }
   resetCustomerManagementDraft();
   state.customerManagement.selectedCustomerId = customerId;
   state.customerManagement.drawerMode = mode;
   state.customerManagement.drawerTab = tab;
-  state.customerManagement.dirty = false;
   state.customerManagement.error = "";
   initializeCustomerManagementDraft(customerId ? state.customers.find((customer) => customer.id === customerId) : null);
   state.modal = {
@@ -2615,7 +2636,9 @@ function customerManagementDrawerHtml() {
       <nav class="customer-drawer-tabs" aria-label="${escapeHtml(t("Customer Management"))}">
         ${tabs.map(([key, label]) => {
           const disabled = isCustomerManagementTabDisabled({ drawerMode: state.customerManagement.drawerMode, tab: key });
-          return `<button type="button" class="${state.customerManagement.drawerTab === key ? "active" : ""}" data-customer-drawer-tab="${escapeHtml(key)}" ${disabled ? `disabled aria-label="${escapeHtml(`${t(label)}. ${unavailableTabMessage}`)}" title="${escapeHtml(unavailableTabMessage)}"` : ""}>${escapeHtml(t(label))}</button>`;
+          const unsaved = !isView && isCustomerManagementSectionDirty(key);
+          const tabLabel = unsaved ? `${t(label)} · ${t("Unsaved")}` : t(label);
+          return `<button type="button" class="${state.customerManagement.drawerTab === key ? "active" : ""}" data-customer-drawer-tab="${escapeHtml(key)}" ${disabled ? `disabled aria-label="${escapeHtml(`${tabLabel}. ${unavailableTabMessage}`)}" title="${escapeHtml(unavailableTabMessage)}"` : `aria-label="${escapeHtml(tabLabel)}"`}>${escapeHtml(tabLabel)}</button>`;
         }).join("")}
       </nav>
       ${state.customerManagement.error ? `<div class="form-error">${escapeHtml(state.customerManagement.error)}</div>` : ""}
@@ -2825,7 +2848,7 @@ function customerPortalFieldsHtml(customer = {}) {
   return `
     <label>
       <span>${escapeHtml(t("Portal status"))}</span>
-      <input readonly value="${escapeHtml(t(portalStatusLabel))}">
+      <input data-customer-portal-status readonly value="${escapeHtml(t(portalStatusLabel))}">
     </label>
     <label>
       <span>${escapeHtml(t("Portal username"))}</span>
@@ -2868,8 +2891,67 @@ function selectedCustomer() {
   return state.customers.find((customer) => customer.id === state.customerManagement.selectedCustomerId) || null;
 }
 
+function markCustomerManagementSectionDirty(section) {
+  if (state.customerManagement.drawerMode === "view") {
+    return;
+  }
+  state.customerManagement.dirtySections = customerManagementSectionDirtyState(state.customerManagement.dirtySections, section, true);
+  syncCustomerManagementDirtyState();
+}
+
+function clearCustomerManagementSectionDirty(section) {
+  state.customerManagement.dirtySections = customerManagementSectionDirtyState(state.customerManagement.dirtySections, section, false);
+  syncCustomerManagementDirtyState();
+}
+
+function isCustomerManagementSectionDirty(section) {
+  return customerManagementSectionIsDirty(state.customerManagement.dirtySections, section);
+}
+
+function hasCustomerManagementUnsavedChanges() {
+  return customerManagementHasUnsavedChanges(state.customerManagement.dirtySections);
+}
+
+function syncCustomerManagementDirtyState() {
+  state.customerManagement.dirty = hasCustomerManagementUnsavedChanges();
+}
+
+function customerManagementSectionForField(field) {
+  if (field.closest("#customerPricingForm") || field.matches("[data-customer-mode-quote], [data-customer-mode-booking]")) {
+    return "pricing";
+  }
+  if (field.closest("#customerPortalForm")) {
+    return "portal";
+  }
+  if (field.closest("#customerBlockedCarrierForm")) {
+    return "blocked";
+  }
+  if (field.closest("#customerBasicForm") && (field.name === "portalEmail" || field.name === "portalPassword")) {
+    return "portal";
+  }
+  return "basic";
+}
+
+function syncCustomerPortalStatus() {
+  if (state.customerManagement.drawerMode === "view") {
+    return;
+  }
+  const statusInput = document.querySelector("[data-customer-portal-status]");
+  if (!statusInput) {
+    return;
+  }
+  const portalEmail = document.querySelector("#customerPortalForm [name='portalEmail'], #customerBasicForm [name='portalEmail']")?.value || state.customerManagement.draft.portal?.portalEmail || "";
+  statusInput.value = t(customerPortalStatusLabelKey({
+    drawerMode: state.customerManagement.drawerMode,
+    draftPortalEmail: portalEmail,
+    persistedPortalEmail: selectedCustomer()?.portalEmail
+  }));
+}
+
 function resetCustomerManagementDraft() {
   state.customerManagement.temporaryPassword = "";
+  state.customerManagement.dirtySections = defaultCustomerManagementDirtySections();
+  syncCustomerManagementDirtyState();
   state.customerManagement.draft = {
     basic: {},
     pricing: {},
@@ -2884,42 +2966,19 @@ function resetCustomerManagementDraft() {
 
 function initializeCustomerManagementDraft(customer = null) {
   const tariff = customer?.id ? state.tariffs.find((rule) => rule.customerId === customer.id) : null;
-  const allowedCarrierModes = normalizeAllowedCarrierModes(customer?.allowedCarrierModes || [], []);
-  const allowedBookingCarrierModes = customerExplicitBookingModes(customer || {});
-  state.customerManagement.draft = {
-    basic: {
-      companyName: customer?.companyName || "",
-      billingEmail: customer?.billingEmail || "",
-      paymentTerms: customer?.paymentTerms || "Net 15",
-      companyPhone: customer?.companyPhone || "",
-      companyStreet: customer?.companyStreet || "",
-      companyCity: customer?.companyCity || "",
-      companyState: customer?.companyState || "",
-      companyZip: customer?.companyZip || "",
-      companyOpenTime: customer?.companyOpenTime || "",
-      companyCloseTime: customer?.companyCloseTime || "",
-      status: normalizeCustomerAccountStatus(customer?.status)
-    },
-    pricing: {
-      ruleType: tariff?.ruleType === "fixed" ? "fixed" : "percentage",
-      fixedAmount: tariff?.fixedAmount ?? 50,
-      markupPercentage: tariff?.markupPercentage ?? 15
-    },
-    portal: {
-      portalEmail: customer?.portalEmail || "",
-      portalPassword: ""
-    },
-    blocked: {
-      carrierKey: "",
-      carrierName: "",
-      reason: ""
-    },
-    carrierModes: {
-      allowedCarrierModes,
-      allowedBookingCarrierModes
-    }
-  };
+  state.customerManagement.draft = customerManagementDraftFromPersisted(customer || {}, tariff);
   state.customerManagement.temporaryPassword = "";
+}
+
+function mergeCustomerManagementDraftFromCurrentPersisted(customer = selectedCustomer()) {
+  const tariff = customer?.id ? state.tariffs.find((rule) => rule.customerId === customer.id) : null;
+  state.customerManagement.draft = mergeCustomerManagementDraftFromPersisted({
+    draft: state.customerManagement.draft,
+    dirtySections: state.customerManagement.dirtySections,
+    customer: customer || {},
+    tariff
+  });
+  state.customerManagement.temporaryPassword = state.customerManagement.draft.portal?.portalPassword || state.customerManagement.temporaryPassword || "";
 }
 
 function captureCustomerManagementDraft() {
@@ -2981,7 +3040,7 @@ function setCustomerDrawerTab(tab) {
   if (isCustomerManagementTabDisabled({ drawerMode: state.customerManagement.drawerMode, tab: nextTab })) {
     return;
   }
-  const wasDirty = state.customerManagement.dirty;
+  const wasDirty = hasCustomerManagementUnsavedChanges();
   if (shouldCaptureCustomerManagementDraft(state.customerManagement.drawerMode)) {
     captureCustomerManagementDraft();
   }
@@ -3043,9 +3102,10 @@ async function saveCustomerBasicForm(formElement) {
         state.customerManagement.selectedCustomerId = createdId;
         state.customerManagement.drawerMode = "edit";
         state.customerManagement.drawerTab = "pricing";
+        clearCustomerManagementSectionDirty("basic");
+        clearCustomerManagementSectionDirty("portal");
         initializeCustomerManagementDraft(state.customers.find((customer) => customer.id === createdId) || createdCustomer);
       }
-      state.customerManagement.dirty = false;
       state.customerManagement.error = "";
       showToast(t("Customer created. Configure pricing and carrier channels."));
       renderCustomerManagementDrawer();
@@ -3053,11 +3113,11 @@ async function saveCustomerBasicForm(formElement) {
     }
     const customerId = state.customerManagement.selectedCustomerId;
     await api(`/api/customers/${encodeURIComponent(customerId)}`, { method: "PATCH", body: payload });
-    state.customerManagement.dirty = false;
+    clearCustomerManagementSectionDirty("basic");
     state.customerManagement.error = "";
     showToast(t("Customer updated."));
     await refreshAll();
-    initializeCustomerManagementDraft(selectedCustomer());
+    mergeCustomerManagementDraftFromCurrentPersisted(selectedCustomer());
   } catch (error) {
     state.customerManagement.error = error.message || t("Request failed.");
     showToast(state.customerManagement.error, true);
@@ -3100,10 +3160,10 @@ async function saveCustomerPricingForm(formElement) {
         allowedBookingCarrierModes
       }
     });
-    state.customerManagement.dirty = false;
+    clearCustomerManagementSectionDirty("pricing");
     showToast(t("Tariff saved."));
     await refreshAll();
-    initializeCustomerManagementDraft(selectedCustomer());
+    mergeCustomerManagementDraftFromCurrentPersisted(selectedCustomer());
   } catch (error) {
     showToast(error.message || t("Request failed."), true);
   } finally {
@@ -3129,10 +3189,11 @@ async function saveCustomerPortalForm(formElement) {
     state.customerManagement.saving = "portal";
     renderCustomerManagementDrawer();
     await api(`/api/customers/${encodeURIComponent(customer.id)}`, { method: "PATCH", body });
-    state.customerManagement.dirty = false;
+    clearCustomerManagementSectionDirty("portal");
+    clearCustomerTemporaryPassword();
     showToast(t("Customer updated."));
     await refreshAll();
-    initializeCustomerManagementDraft(selectedCustomer());
+    mergeCustomerManagementDraftFromCurrentPersisted(selectedCustomer());
   } catch (error) {
     showToast(error.message || t("Request failed."), true);
   } finally {
@@ -3162,7 +3223,7 @@ async function saveCustomerBlockedCarrierForm(formElement) {
       }
     });
     state.customerManagement.draft.blocked = { carrierKey: "", carrierName: "", reason: "" };
-    state.customerManagement.dirty = false;
+    clearCustomerManagementSectionDirty("blocked");
     showToast(t("Blocked carrier added."));
     await refreshCarrierPreferences();
     renderCustomerManagementDrawer();
@@ -3216,9 +3277,9 @@ function customerPayloadFromDraft() {
   };
   if (state.customerManagement.drawerMode === "create") {
     payload.portalEmail = portal.portalEmail || "";
-  }
-  if (String(portal.portalPassword || "").trim()) {
-    payload.portalPassword = portal.portalPassword;
+    if (String(portal.portalPassword || "").trim()) {
+      payload.portalPassword = portal.portalPassword;
+    }
   }
   return payload;
 }
@@ -3283,7 +3344,7 @@ function handleCustomerModeQuoteChange(checkbox) {
     booking.disabled = !checkbox.checked;
     if (!checkbox.checked) booking.checked = false;
   }
-  state.customerManagement.dirty = true;
+  markCustomerManagementSectionDirty("pricing");
   captureCustomerManagementDraft();
 }
 
@@ -3292,7 +3353,7 @@ function handleCustomerModeBookingChange(checkbox) {
   if (!form) return;
   const allowedModes = Array.from(form.querySelectorAll("[data-customer-mode-quote]:checked")).map((item) => item.value);
   checkbox.checked = checkbox.checked && canEnableBookingMode(checkbox.value, allowedModes);
-  state.customerManagement.dirty = true;
+  markCustomerManagementSectionDirty("pricing");
   captureCustomerManagementDraft();
 }
 
@@ -3305,7 +3366,7 @@ function generateCustomerTemporaryPassword() {
   }
   state.customerManagement.draft.portal.portalPassword = password;
   state.customerManagement.temporaryPassword = password;
-  state.customerManagement.dirty = true;
+  markCustomerManagementSectionDirty("portal");
   const input = document.querySelector("#customerPortalForm [name='portalPassword'], #customerBasicForm [name='portalPassword']");
   if (input) {
     input.value = password;

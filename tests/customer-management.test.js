@@ -6,15 +6,21 @@ import {
   customerActivityCounts,
   customerConfigurationFlags,
   customerExplicitBookingModes,
+  customerManagementDraftFromPersisted,
   customerManagementDirtyAfterTabSwitch,
   customerManagementViewModel,
+  customerManagementHasUnsavedChanges,
+  customerManagementSectionDirtyState,
+  customerManagementSectionIsDirty,
   customerMatchesConfigurationFilter,
   customerMatchesSearch,
   customerMatchesStatusFilter,
   customerPortalStatusLabelKey,
   customerPricingSummary,
   customerStatusLabelKey,
+  defaultCustomerManagementDirtySections,
   isCustomerManagementTabDisabled,
+  mergeCustomerManagementDraftFromPersisted,
   normalizeCustomerAccountStatus,
   shouldCaptureCustomerManagementDraft,
   sortCustomerManagementRows,
@@ -149,6 +155,52 @@ assert.equal(customerPortalStatusLabelKey({ drawerMode: "edit", draftPortalEmail
 assert.equal(customerPortalStatusLabelKey({ drawerMode: "edit", draftPortalEmail: "", persistedPortalEmail: "saved-user" }), "Not Configured", "empty draft portal username should show Not Configured while editing");
 assert.equal(customerPortalStatusLabelKey({ drawerMode: "view", draftPortalEmail: "", persistedPortalEmail: "saved-user" }), "Configured", "View Details portal status should use persisted portal username");
 
+let dirtySections = defaultCustomerManagementDirtySections();
+assert.equal(customerManagementHasUnsavedChanges(dirtySections), false, "global dirty should be false when every section is clean");
+dirtySections = customerManagementSectionDirtyState(dirtySections, "basic", true);
+assert.equal(customerManagementSectionIsDirty(dirtySections, "basic"), true, "Basic section should be marked dirty independently");
+assert.equal(customerManagementHasUnsavedChanges(dirtySections), true, "global dirty should derive from section dirty state");
+dirtySections = customerManagementSectionDirtyState(dirtySections, "pricing", true);
+dirtySections = customerManagementSectionDirtyState(dirtySections, "basic", false);
+assert.equal(customerManagementSectionIsDirty(dirtySections, "basic"), false, "saving Basic should clear only Basic");
+assert.equal(customerManagementSectionIsDirty(dirtySections, "pricing"), true, "saving Basic should preserve dirty Pricing");
+dirtySections = customerManagementSectionDirtyState(dirtySections, "pricing", false);
+assert.equal(customerManagementHasUnsavedChanges(dirtySections), false, "global dirty should become false after every section is clean");
+
+const persistedDraft = customerManagementDraftFromPersisted(customers[0], tariffs[0]);
+const dirtyDraft = {
+  ...persistedDraft,
+  basic: { ...persistedDraft.basic, companyStreet: "999 Draft Rd" },
+  pricing: { ...persistedDraft.pricing, markupPercentage: "33" },
+  portal: { ...persistedDraft.portal, portalEmail: "draft-portal", portalPassword: "TempSecure123!" },
+  blocked: { carrierKey: "XPO", carrierName: "XPO Logistics", reason: "Draft reason" },
+  carrierModes: { allowedCarrierModes: ["priority1Ltl"], allowedBookingCarrierModes: ["priority1Ltl"] }
+};
+const refreshedCustomer = { ...customers[0], companyStreet: "111 Persisted Ave", portalEmail: "saved-portal", allowedCarrierModes: ["speedshipLtl"], allowedBookingCarrierModes: ["speedshipLtl"] };
+const refreshedTariff = { customerId: "cust_a", ruleType: "fixed", fixedAmount: 99, markupPercentage: 0 };
+let mergedDraft = mergeCustomerManagementDraftFromPersisted({
+  draft: dirtyDraft,
+  dirtySections: defaultCustomerManagementDirtySections({ basic: true, pricing: false, portal: true, blocked: true }),
+  customer: refreshedCustomer,
+  tariff: refreshedTariff
+});
+assert.equal(mergedDraft.basic.companyStreet, "999 Draft Rd", "refresh should preserve dirty Basic draft");
+assert.equal(mergedDraft.pricing.ruleType, "fixed", "refresh should update clean Pricing from persisted data");
+assert.equal(mergedDraft.portal.portalEmail, "draft-portal", "refresh should preserve dirty Portal draft");
+assert.equal(mergedDraft.portal.portalPassword, "TempSecure123!", "temporary password should survive unrelated refreshes");
+assert.equal(mergedDraft.blocked.carrierKey, "XPO", "refresh should preserve dirty blocked-carrier input");
+mergedDraft = mergeCustomerManagementDraftFromPersisted({
+  draft: dirtyDraft,
+  dirtySections: defaultCustomerManagementDirtySections({ basic: false, pricing: true, portal: false, blocked: false }),
+  customer: refreshedCustomer,
+  tariff: refreshedTariff
+});
+assert.equal(mergedDraft.basic.companyStreet, "111 Persisted Ave", "refresh should update clean Basic from persisted data");
+assert.equal(mergedDraft.pricing.markupPercentage, "33", "refresh should preserve dirty Pricing draft");
+assert.deepEqual(mergedDraft.carrierModes.allowedCarrierModes, ["priority1Ltl"], "refresh should preserve dirty carrier matrix selections");
+assert.equal(mergedDraft.portal.portalEmail, "saved-portal", "refresh should update clean Portal username");
+assert.equal(mergedDraft.portal.portalPassword, "TempSecure123!", "temporary password should not be replaced during clean Portal refresh");
+
 const app = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
 assert.match(app, /customerManagementViewModel/, "Customer Management rendering should use the pure view model");
 assert.match(app, /function renderCustomerManagementControls/, "Customer Management controls should be rendered independently");
@@ -168,10 +220,12 @@ assert.match(app, /allowedCarrierModes,\n\s+allowedBooking:\s+allowedBookingCarr
 assert.match(app, /draft:\s*\{\n\s+basic:\s*\{\}/, "customer management should keep explicit drawer draft state");
 assert.match(app, /function customerBasicDraftFromForm\(formElement\)[\s\S]*formElement\.elements\[name\]/, "editable Basic draft capture should read current controls directly");
 assert.match(app, /companyOpenTime: value\("companyOpenTime"\)[\s\S]*companyCloseTime: value\("companyCloseTime"\)[\s\S]*status: value\("status"\)/, "Basic draft capture should preserve time and status controls reliably");
-assert.match(app, /const wasDirty = state\.customerManagement\.dirty;[\s\S]*state\.customerManagement\.dirty = customerManagementDirtyAfterTabSwitch\(wasDirty\);/, "tab switching should preserve dirty state");
+assert.match(app, /const wasDirty = hasCustomerManagementUnsavedChanges\(\);[\s\S]*state\.customerManagement\.dirty = customerManagementDirtyAfterTabSwitch\(wasDirty\);/, "tab switching should preserve dirty state");
 assert.doesNotMatch(app.match(/function setCustomerDrawerTab[\s\S]*?function customerAddressLine/)?.[0] || "", /window\.confirm/, "internal drawer tab switching should not show a loss warning");
-assert.match(app, /if \(!options\.force && state\.modal\?\.modalClass === "customer-management-drawer-modal" && state\.customerManagement\.dirty\)/, "closing a dirty drawer should still warn");
-assert.match(app, /activeView === "customers" && name !== "customers" && state\.customerManagement\.dirty/, "navigating away from a dirty customer drawer should still warn");
+assert.match(app, /if \(!options\.force && state\.modal\?\.modalClass === "customer-management-drawer-modal" && hasCustomerManagementUnsavedChanges\(\)\)/, "closing a dirty drawer should still warn");
+assert.match(app, /activeView === "customers" && name !== "customers" && hasCustomerManagementUnsavedChanges\(\)/, "navigating away from a dirty customer drawer should still warn");
+assert.match(app, /hasCustomerManagementUnsavedChanges\(\) && state\.modal\?\.modalClass === "customer-management-drawer-modal"/, "switching customers should warn while any section is dirty");
+assert.match(app, /resetCustomerManagementDraft\(\);[\s\S]*state\.customerManagement\.draft = \{/, "confirmed discard should clear every dirty section and drawer draft");
 assert.match(app, /shouldCaptureCustomerManagementDraft\(state\.customerManagement\.drawerMode\)/, "View Details should skip editable draft capture");
 assert.match(app, /captureCustomerManagementDraft\(\);\n\s+renderCustomerManagementDrawer\(\);/, "pricing rule type switches should capture draft before re-rendering");
 assert.match(app, /fixedAmount: form\.get\("ruleType"\) === "fixed" \? form\.get\("fixedAmount"\) : "0"/, "inactive fixed pricing field should submit as zero");
@@ -187,6 +241,14 @@ assert.match(app, /isView \? "" : `\n    <form id="customerBlockedCarrierForm"/,
 assert.match(app, /isView \? "" : `<div class="modal-actions span-2">[\s\S]*Generate temporary password/, "View Details should not render generated password controls");
 assert.match(app, /data-customer-management-edit/, "View Details should provide an Edit action");
 assert.match(app, /customerPortalStatusLabelKey\(\{[\s\S]*draftPortalEmail: draft\.portalEmail,[\s\S]*persistedPortalEmail: customer\?\.portalEmail/, "Portal status should use draft while editing and persisted value in view mode");
+assert.match(app, /function syncCustomerPortalStatus\(\)[\s\S]*data-customer-portal-status[\s\S]*customerPortalStatusLabelKey/, "Portal status should update live without rerendering the drawer");
+assert.match(app, /clearCustomerManagementSectionDirty\("basic"\)/, "Basic save should clear only the Basic section");
+assert.match(app, /clearCustomerManagementSectionDirty\("pricing"\)/, "Pricing save should clear only the Pricing section");
+assert.match(app, /clearCustomerManagementSectionDirty\("portal"\)/, "Portal save should clear only the Portal section");
+assert.match(app, /clearCustomerManagementSectionDirty\("blocked"\)/, "Blocked Carrier save should clear only the Blocked section");
+assert.match(app, /mergeCustomerManagementDraftFromCurrentPersisted\(selectedCustomer\(\)\)/, "successful section saves should merge persisted values without wiping dirty drafts");
+assert.match(app, /isCustomerManagementSectionDirty\(key\)/, "drawer tabs should show unsaved indicators for dirty sections");
+assert.match(app, /· \$\{t\("Unsaved"\)\}/, "unsaved tab indicator should use localized copy");
 assert.match(app, /state\.customerManagement\.saving = "blocked";\n\s+renderCustomerManagementDrawer\(\);/, "blocked-carrier save should disable the button before the API request");
 assert.match(app, /state\.customerManagement\.draft\.blocked = \{ carrierKey: "", carrierName: "", reason: "" \};/, "blocked-carrier form should clear only after success");
 assert.match(app, /Opening time must be earlier than closing time\./, "company-hours validation should use company-specific wording");

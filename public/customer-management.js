@@ -208,6 +208,83 @@ export function customerPortalStatusLabelKey({ drawerMode = "", draftPortalEmail
   return String(value || "").trim() ? "Configured" : "Not Configured";
 }
 
+export function defaultCustomerManagementDirtySections(overrides = {}) {
+  return {
+    basic: Boolean(overrides.basic),
+    pricing: Boolean(overrides.pricing),
+    portal: Boolean(overrides.portal),
+    blocked: Boolean(overrides.blocked)
+  };
+}
+
+export function customerManagementHasUnsavedChanges(dirtySections = {}) {
+  return Object.values(defaultCustomerManagementDirtySections(dirtySections)).some(Boolean);
+}
+
+export function customerManagementSectionDirtyState(dirtySections = {}, section, dirty = true) {
+  if (!Object.prototype.hasOwnProperty.call(defaultCustomerManagementDirtySections(), section)) {
+    return defaultCustomerManagementDirtySections(dirtySections);
+  }
+  return {
+    ...defaultCustomerManagementDirtySections(dirtySections),
+    [section]: Boolean(dirty)
+  };
+}
+
+export function customerManagementSectionIsDirty(dirtySections = {}, section) {
+  return Boolean(defaultCustomerManagementDirtySections(dirtySections)[section]);
+}
+
+export function customerManagementDraftFromPersisted(customer = {}, tariff = null) {
+  return {
+    basic: {
+      companyName: customer?.companyName || "",
+      billingEmail: customer?.billingEmail || "",
+      paymentTerms: customer?.paymentTerms || "Net 15",
+      companyPhone: customer?.companyPhone || "",
+      companyStreet: customer?.companyStreet || "",
+      companyCity: customer?.companyCity || "",
+      companyState: customer?.companyState || "",
+      companyZip: customer?.companyZip || "",
+      companyOpenTime: customer?.companyOpenTime || "",
+      companyCloseTime: customer?.companyCloseTime || "",
+      status: normalizeCustomerAccountStatus(customer?.status)
+    },
+    pricing: {
+      ruleType: tariff?.ruleType === "fixed" ? "fixed" : "percentage",
+      fixedAmount: tariff?.fixedAmount ?? 50,
+      markupPercentage: tariff?.markupPercentage ?? 15
+    },
+    portal: {
+      portalEmail: customer?.portalEmail || "",
+      portalPassword: ""
+    },
+    blocked: {
+      carrierKey: "",
+      carrierName: "",
+      reason: ""
+    },
+    carrierModes: {
+      allowedCarrierModes: normalizeModeList(customer?.allowedCarrierModes),
+      allowedBookingCarrierModes: customerExplicitBookingModes(customer || {})
+    }
+  };
+}
+
+export function mergeCustomerManagementDraftFromPersisted({ draft = {}, dirtySections = {}, customer = {}, tariff = null } = {}) {
+  const persisted = customerManagementDraftFromPersisted(customer, tariff);
+  const dirty = defaultCustomerManagementDirtySections(dirtySections);
+  return {
+    basic: dirty.basic ? { ...persisted.basic, ...(draft.basic || {}) } : persisted.basic,
+    pricing: dirty.pricing ? { ...persisted.pricing, ...(draft.pricing || {}) } : persisted.pricing,
+    portal: dirty.portal
+      ? { ...persisted.portal, ...(draft.portal || {}) }
+      : { ...persisted.portal, portalPassword: draft.portal?.portalPassword || "" },
+    blocked: dirty.blocked ? { ...persisted.blocked, ...(draft.blocked || {}) } : persisted.blocked,
+    carrierModes: dirty.pricing ? { ...persisted.carrierModes, ...(draft.carrierModes || {}) } : persisted.carrierModes
+  };
+}
+
 export function updateCarrierModeSelection({ allowedCarrierModes = [], allowedBookingCarrierModes = [] }, mode, quoteEnabled) {
   const key = normalizeCarrierMode(mode);
   const allowed = new Set(normalizeModeList(allowedCarrierModes));
