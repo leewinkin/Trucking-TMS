@@ -145,170 +145,18 @@
         </section>
 
         <section class="view" id="customersView">
-          <div class="two-column">
-            <section class="panel">
-              <div class="panel-heading">
-                <h2 data-i18n="Customer Accounts">Customer Accounts</h2>
+          <section class="customer-management-workspace admin-only">
+            <div class="customer-management-header">
+              <div>
+                <h2 data-i18n="Customer Management">Customer Management</h2>
+                <p data-i18n="Manage customer accounts, pricing, carrier channels, portal access, and blocked carriers.">Manage customer accounts, pricing, carrier channels, portal access, and blocked carriers.</p>
               </div>
-              <form id="customerForm" class="form-grid compact admin-only">
-                <label>
-                  <span data-i18n="Company name">Company name</span>
-                  <input name="companyName" required placeholder="ABC Warehouse" data-i18n-placeholder="ABC Warehouse">
-                </label>
-                <label>
-                  <span data-i18n="Billing email">Billing email</span>
-                  <input name="billingEmail" type="email" placeholder="billing@example.com" data-i18n-placeholder="billing@example.com">
-                </label>
-                <label>
-                  <span data-i18n="Payment terms">Payment terms</span>
-                  <input name="paymentTerms" value="Net 15">
-                </label>
-                <label>
-                  <span data-i18n="Company phone">Company phone</span>
-                  <input name="companyPhone" type="tel" inputmode="numeric" autocomplete="tel" placeholder="(555) 123-4567" data-i18n-placeholder="(555) 123-4567">
-                </label>
-                <label class="span-2">
-                  <span data-i18n="Company street">Company street</span>
-                  <input name="companyStreet" placeholder="123 Main St" data-i18n-placeholder="123 Main St">
-                </label>
-                <label>
-                  <span data-i18n="Company city">Company city</span>
-                  <input name="companyCity" placeholder="City" data-i18n-placeholder="City">
-                </label>
-                <label>
-                  <span data-i18n="Company state">Company state</span>
-                  <input name="companyState" placeholder="CA" maxlength="2" data-i18n-placeholder="CA">
-                </label>
-                <label>
-                  <span data-i18n="Company ZIP">Company ZIP</span>
-                  <input name="companyZip" data-zip-autofill="company" placeholder="ZIP" data-i18n-placeholder="ZIP">
-                </label>
-                <label>
-                  <span data-i18n="business.openingTime">Opening time</span>
-                  <select name="companyOpenTime" data-time-select></select>
-                </label>
-                <label>
-                  <span data-i18n="business.closingTime">Closing time</span>
-                  <select name="companyCloseTime" data-time-select></select>
-                </label>
-                <label class="span-2">
-                  <span data-i18n="Portal username">Portal username</span>
-                  <input name="portalEmail" type="text" placeholder="customer123" data-i18n-placeholder="customer123">
-                </label>
-                <label class="span-2">
-                  <span data-i18n="Portal password">Portal password</span>
-                  <input name="portalPassword" type="password" placeholder="Leave blank if you do not need a login" data-i18n-placeholder="Leave blank if you do not need a login">
-                </label>
-                <button class="primary-action span-2" type="submit" data-i18n="Add Customer">Add Customer</button>
-              </form>
-              <div id="customerList" class="table-list"></div>
-            </section>
-
-            <section class="panel">
-              <div class="panel-heading">
-                <h2 data-i18n="Tariff Rule">Tariff Rule</h2>
-              </div>
-              <form id="tariffForm" class="form-grid compact admin-only">
-                <label>
-                  <span data-i18n="Customer">Customer</span>
-                  <select name="customerId" id="tariffCustomerSelect"></select>
-                </label>
-                <label>
-                  <span data-i18n="Rule type">Rule type</span>
-                  <select name="ruleType">
-                    <option value="fixed" data-i18n="Fixed markup">Fixed markup</option>
-                    <option value="percentage" data-i18n="Percentage markup">Percentage markup</option>
-                  </select>
-                </label>
-                <label>
-                  <span data-i18n="Fixed amount">Fixed amount</span>
-                  <input name="fixedAmount" type="number" min="0" step="0.01" value="50">
-                </label>
-                <label>
-                  <span data-i18n="Markup percent">Markup percent</span>
-                  <input name="markupPercentage" type="number" min="0" step="0.1" value="15">
-                </label>
-                <div class="span-2">
-                  <div class="field-label" data-i18n="Allowed carrier modes">Allowed carrier modes</div>
-                  <div class="mode-checkbox-grid">
-                    <label class="checkbox-wrap">
-                      <input type="checkbox" name="allowedCarrierModes" value="mothershipSandbox" checked>
-                      <span data-i18n="Mothership sandbox">Mothership sandbox</span>
-                    </label>
-                    <label class="checkbox-wrap">
-                      <input type="checkbox" name="allowedCarrierModes" value="speedshipLtl">
-                      <span data-i18n="SpeedShip LTL">SpeedShip LTL</span>
-                    </label>
-                    <label class="checkbox-wrap">
-                      <input type="checkbox" name="allowedCarrierModes" value="priority1Ltl">
-                      <span data-i18n="Priority1 LTL">Priority1 LTL</span>
-                    </label>
-                    <label class="checkbox-wrap">
-                      <input type="checkbox" name="allowedCarrierModes" value="fedexFreight">
-                      <span data-i18n="FedEx Freight">FedEx Freight</span>
-                    </label>
-                    <label class="checkbox-wrap">
-                      <input type="checkbox" name="allowedCarrierModes" value="demo">
-                      <span data-i18n="Demo rates">Demo rates</span>
-                    </label>
-                  </div>
-                  <div class="field-label" data-i18n="Allowed booking modes">Allowed booking modes</div>
-                  <div class="mode-checkbox-grid" id="bookingModeCheckboxGrid">
-                    <label class="checkbox-wrap">
-                      <input type="checkbox" name="allowedBookingCarrierModes" value="mothershipSandbox" checked>
-                      <span data-i18n="Mothership sandbox">Mothership sandbox</span>
-                    </label>
-                    <label class="checkbox-wrap">
-                      <input type="checkbox" name="allowedBookingCarrierModes" value="speedshipLtl">
-                      <span data-i18n="SpeedShip LTL">SpeedShip LTL</span>
-                    </label>
-                    <label class="checkbox-wrap">
-                      <input type="checkbox" name="allowedBookingCarrierModes" value="priority1Ltl">
-                      <span data-i18n="Priority1 LTL">Priority1 LTL</span>
-                    </label>
-                    <label class="checkbox-wrap">
-                      <input type="checkbox" name="allowedBookingCarrierModes" value="fedexFreight">
-                      <span data-i18n="FedEx Freight">FedEx Freight</span>
-                    </label>
-                    <label class="checkbox-wrap">
-                      <input type="checkbox" name="allowedBookingCarrierModes" value="demo">
-                      <span data-i18n="Demo rates">Demo rates</span>
-                    </label>
-                  </div>
-                  <div class="helper-text" data-i18n="Customers can book only the selected carrier modes. Uncheck all to disable booking.">Customers can book only the selected carrier modes. Uncheck all to disable booking.</div>
-                  <div id="tariffFormError" class="form-error"></div>
-                  <div class="helper-text" data-i18n="Quotes for this customer will pull rates from every selected carrier mode.">Quotes for this customer will pull rates from every selected carrier mode.</div>
-                </div>
-                <button class="primary-action" type="submit" data-i18n="Save Tariff">Save Tariff</button>
-              </form>
-            </section>
-
-            <section class="panel admin-only" id="carrierBlacklistPanel">
-              <div class="panel-heading">
-                <h2 data-i18n="Blocked Carriers">Blocked Carriers</h2>
-              </div>
-              <form id="carrierPreferenceForm" class="form-grid compact">
-                <label>
-                  <span data-i18n="Customer">Customer</span>
-                  <select name="customerId" id="carrierPreferenceCustomerSelect"></select>
-                </label>
-                <label>
-                  <span data-i18n="Carrier code or name">Carrier code or name</span>
-                  <input name="carrierKey" placeholder="XPOL or XPO Logistics" data-i18n-placeholder="XPOL or XPO Logistics" required>
-                </label>
-                <label>
-                  <span data-i18n="Display name">Display name</span>
-                  <input name="carrierName" placeholder="XPO Logistics" data-i18n-placeholder="XPO Logistics">
-                </label>
-                <label>
-                  <span data-i18n="Reason">Reason</span>
-                  <input name="reason" placeholder="Optional internal reason" data-i18n-placeholder="Optional internal reason">
-                </label>
-                <button class="primary-action" type="submit" data-i18n="Block Carrier">Block Carrier</button>
-              </form>
-              <div id="carrierPreferenceList" class="table-list"></div>
-            </section>
-          </div>
+              <button class="primary-action" type="button" data-customer-management-add data-i18n="+ Add Customer">+ Add Customer</button>
+            </div>
+            <div class="customer-management-filters" id="customerManagementFilters"></div>
+            <div class="customer-management-metrics" id="customerManagementMetrics"></div>
+            <div id="customerList" class="customer-management-list"></div>
+          </section>
         </section>
 
         <section class="view" id="quoteView">

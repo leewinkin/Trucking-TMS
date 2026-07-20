@@ -47,6 +47,13 @@ import {
   shipmentStatusVariant,
   validCustomerSellPrice
 } from "./customer-dashboard.js";
+import {
+  canEnableBookingMode,
+  carrierModeMatrixRows,
+  customerManagementViewModel,
+  customerStatusLabelKey,
+  normalizeCustomerAccountStatus
+} from "./customer-management.js";
 
 const money = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -336,6 +343,71 @@ const translations = {
     "Add your Mothership sandbox token to backend env.": "将 Mothership 沙箱令牌添加到后端环境变量。",
     "Run one LTL sandbox quote before expanding carrier options.": "在扩展承运商选项前先跑一次 LTL 沙箱报价。",
     "Run one sandbox quote before enabling carrier booking.": "在启用承运商在线预约前先跑一次沙箱报价。",
+    "Manage customer accounts, pricing, carrier channels, portal access, and blocked carriers.": "管理客户账户、加价规则、承运商渠道、门户访问和屏蔽承运商。",
+    "+ Add Customer": "+ 添加客户",
+    "Search customers...": "搜索客户...",
+    "Status": "状态",
+    "Configuration": "配置",
+    "Total Customers": "客户总数",
+    "Configuration Incomplete": "配置不完整",
+    "Configuration complete": "配置完整",
+    "Missing Tariff": "缺少加价规则",
+    "No Carrier Modes": "未启用承运商渠道",
+    "Online Booking Disabled": "未启用在线预约",
+    "Portal Not Configured": "未配置客户门户",
+    "Recently Updated": "最近更新",
+    "Company Name": "公司名称",
+    "Most Quotes": "报价数量",
+    "Most Shipments": "货件数量",
+    "Quote channels": "报价渠道",
+    "customerManagement.onlineBooking": "在线预约",
+    "Pricing rule": "加价规则",
+    "Last 30 days": "最近 30 天",
+    "{count} quotes": "{count} 条报价",
+    "{count} shipments": "{count} 个货件",
+    "More": "更多",
+    "Enable": "启用",
+    "Disable": "停用",
+    "Delete": "删除",
+    "Delete Customer": "删除客户",
+    "Basic Information": "基本资料",
+    "Pricing & Channels": "加价与渠道",
+    "Customer created. Configure pricing and carrier channels.": "客户已创建，请继续配置加价规则和承运商渠道。",
+    "Customer save in progress...": "正在保存客户...",
+    "Tariff save in progress...": "正在保存加价规则...",
+    "Blocked carriers are loading...": "正在加载屏蔽承运商...",
+    "No customers match your search or filters.": "没有匹配搜索或筛选条件的客户。",
+    "Unsaved changes will be lost. Continue?": "未保存的更改将会丢失。是否继续？",
+    "Type {name} to confirm deletion.": "请输入 {name} 以确认删除。",
+    "Deleting this customer may affect related quotes, shipments, and invoices.": "删除此客户可能影响相关报价、货件和账单。",
+    "Delete confirmation did not match the company name.": "删除确认与公司名称不一致。",
+    "Markup percentage": "加价比例",
+    "Pricing & carrier channels": "加价与承运商渠道",
+    "Carrier Channel": "承运商渠道",
+    "Get Rates": "获取运价",
+    "Mothership Sandbox": "Mothership 测试环境",
+    "Demo Rates": "测试费率（仅限内部测试）",
+    "Online booking can only be enabled for channels that are enabled for quoting.": "只有已启用报价的承运商渠道才能开启在线预约。",
+    "Demo Rates is for internal testing only.": "测试费率仅限内部测试使用。",
+    "Example calculation": "示例计算",
+    "Carrier cost": "承运商成本",
+    "Customer price": "客户报价",
+    "This rule changes the customer quote price and does not change carrier cost.": "此规则只影响客户报价，不改变承运商成本。",
+    "Save pricing for {name}": "保存 {name} 的加价与渠道",
+    "Save basic information": "保存基本资料",
+    "Save portal access": "保存门户访问",
+    "Portal status": "门户状态",
+    "Configured portal username": "已配置门户用户名",
+    "New temporary password": "新的临时密码",
+    "Show password": "显示密码",
+    "Hide password": "隐藏密码",
+    "Generate temporary password": "生成临时密码",
+    "Copy temporary password": "复制临时密码",
+    "Leave blank to keep the existing password.": "留空则保留现有密码。",
+    "No customer selected.": "未选择客户。",
+    "View customer details": "查看客户详情",
+    "Open customer drawer": "打开客户抽屉",
+    "Customer management is available to staff users only.": "客户管理仅供员工账号使用。",
     "Customer Accounts": "客户账户",
     "Company name": "公司名称",
     "Billing email": "账单邮箱",
@@ -381,11 +453,11 @@ const translations = {
     "Booking": "运输预约",
     "Allowed carrier modes": "允许的承运商模式",
     "Allowed booking modes": "允许在线预约的承运商渠道",
-    "Mothership sandbox": "Mothership 沙箱",
+    "Mothership sandbox": "Mothership 测试环境",
     "SpeedShip LTL": "SpeedShip LTL",
     "Priority1 LTL": "Priority1 LTL",
     "FedEx Freight": "FedEx Freight",
-    "Demo rates": "演示费率",
+    "Demo rates": "测试费率（仅限内部测试）",
     "Customers can book only the selected carrier modes. Uncheck all to disable booking.": "客户只能通过已选择的承运商渠道进行在线运输预约。取消全选可禁用在线预约。",
     "Quotes for this customer will pull rates from every selected carrier mode.": "该客户的报价会从所有已选承运商模式拉取费率。",
     "Save Tariff": "保存加价规则",
@@ -438,7 +510,6 @@ const translations = {
     "Freight": "货物信息",
     "Apply suggestions to all items": "为全部货物应用建议等级",
     "Add Item": "添加条目",
-    "Get Rates": "获取运价",
     "Quote Results": "报价结果",
     "Submit a quote to see available rates.": "提交报价后即可查看可用运价。",
     "Mothership invoice sync": "Mothership 账单同步",
@@ -669,6 +740,7 @@ const translations = {
     "invoice.status.open": "未结清",
     "shipment.filter.active": "运输中",
     "account.status.active": "启用",
+    "account.status.disabled": "已停用",
     "document.status.pending": "待生成",
     "operation.status.pending": "待处理"
   },
@@ -679,6 +751,8 @@ const translations = {
     "invoice.status.open": "Open",
     "shipment.filter.active": "Active",
     "account.status.active": "Active",
+    "account.status.disabled": "Disabled",
+    "customerManagement.onlineBooking": "Online Booking",
     "document.status.pending": "Pending",
     "operation.status.pending": "Pending"
   }
@@ -971,6 +1045,20 @@ const state = {
     sort: "lowestPrice",
     search: ""
   },
+  customerManagement: {
+    query: "",
+    statusFilter: "all",
+    configurationFilter: "all",
+    sort: "recent",
+    selectedCustomerId: "",
+    drawerMode: "",
+    drawerTab: "basic",
+    dirty: false,
+    temporaryPassword: "",
+    saving: "",
+    blockedCarrierLoading: false,
+    error: ""
+  },
   lastModalFocus: null,
   modal: null
 };
@@ -1242,6 +1330,60 @@ function wireNavigation() {
       return;
     }
 
+    const addCustomerButton = event.target.closest("[data-customer-management-add]");
+    if (addCustomerButton) {
+      openCustomerManagementDrawer("", "create", "basic");
+      return;
+    }
+
+    const viewCustomerButton = event.target.closest("[data-customer-management-view]");
+    if (viewCustomerButton) {
+      openCustomerManagementDrawer(viewCustomerButton.dataset.customerManagementView, "view", "basic");
+      return;
+    }
+
+    const editCustomerButton = event.target.closest("[data-customer-management-edit]");
+    if (editCustomerButton) {
+      openCustomerManagementDrawer(editCustomerButton.dataset.customerManagementEdit, "edit", "basic");
+      return;
+    }
+
+    const customerTabButton = event.target.closest("[data-customer-drawer-tab]");
+    if (customerTabButton) {
+      setCustomerDrawerTab(customerTabButton.dataset.customerDrawerTab);
+      return;
+    }
+
+    const passwordGenerateButton = event.target.closest("[data-generate-temp-password]");
+    if (passwordGenerateButton) {
+      generateCustomerTemporaryPassword();
+      return;
+    }
+
+    const passwordCopyButton = event.target.closest("[data-copy-temp-password]");
+    if (passwordCopyButton) {
+      copyCustomerTemporaryPassword();
+      return;
+    }
+
+    const passwordToggleButton = event.target.closest("[data-toggle-temp-password]");
+    if (passwordToggleButton) {
+      toggleCustomerTemporaryPasswordVisibility();
+      return;
+    }
+
+    const toggleCustomerButton = event.target.closest("[data-toggle-customer-status]");
+    if (toggleCustomerButton) {
+      toggleCustomerStatus(toggleCustomerButton.dataset.toggleCustomerStatus);
+      return;
+    }
+
+    const deleteCustomerButton = event.target.closest("[data-delete-customer]");
+    if (deleteCustomerButton) {
+      deleteCustomerAccount(deleteCustomerButton.dataset.deleteCustomer);
+      return;
+    }
+
     const applyAllFreightSuggestionsButton = event.target.closest("[data-apply-all-freight-suggestions]");
     if (applyAllFreightSuggestionsButton) {
       applyAllFreightClassSuggestions();
@@ -1332,6 +1474,18 @@ function wireForms() {
     if (search) {
       updateCustomerQuoteDetailsSearch(search.dataset.customerQuoteSearch, search.value);
     }
+    const customerSearch = event.target.closest("[data-customer-management-query]");
+    if (customerSearch) {
+      state.customerManagement.query = customerSearch.value;
+      renderCustomers();
+      return;
+    }
+    if (event.target.closest("[data-customer-drawer-field]")) {
+      state.customerManagement.dirty = true;
+    }
+    if (event.target.closest("#customerPricingForm")) {
+      updateCustomerPricingPreview();
+    }
   });
 
   document.addEventListener("keydown", (event) => {
@@ -1351,9 +1505,49 @@ function wireForms() {
       state.staffDashboardRange = staffRange.value || "last7";
       renderDashboard();
     }
+    const customerManagementFilter = event.target.closest("[data-customer-management-filter]");
+    if (customerManagementFilter) {
+      state.customerManagement[customerManagementFilter.dataset.customerManagementFilter] = customerManagementFilter.value;
+      renderCustomers();
+      return;
+    }
+    const drawerField = event.target.closest("[data-customer-drawer-field]");
+    if (drawerField) {
+      state.customerManagement.dirty = true;
+    }
+    const pricingRuleType = event.target.closest("#customerPricingForm [name='ruleType']");
+    if (pricingRuleType) {
+      renderCustomerManagementDrawer();
+      return;
+    }
+    const quoteMode = event.target.closest("[data-customer-mode-quote]");
+    if (quoteMode) {
+      handleCustomerModeQuoteChange(quoteMode);
+      return;
+    }
+    const bookingMode = event.target.closest("[data-customer-mode-booking]");
+    if (bookingMode) {
+      handleCustomerModeBookingChange(bookingMode);
+    }
   });
 
-  document.getElementById("customerForm").addEventListener("submit", async (event) => {
+  document.addEventListener("submit", (event) => {
+    if (event.target?.id === "customerBasicForm") {
+      event.preventDefault();
+      saveCustomerBasicForm(event.target);
+    } else if (event.target?.id === "customerPricingForm") {
+      event.preventDefault();
+      saveCustomerPricingForm(event.target);
+    } else if (event.target?.id === "customerPortalForm") {
+      event.preventDefault();
+      saveCustomerPortalForm(event.target);
+    } else if (event.target?.id === "customerBlockedCarrierForm") {
+      event.preventDefault();
+      saveCustomerBlockedCarrierForm(event.target);
+    }
+  });
+
+  document.getElementById("customerForm")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     await api("/api/customers", {
@@ -1378,7 +1572,7 @@ function wireForms() {
     await refreshAll();
   });
 
-  document.getElementById("tariffForm").addEventListener("submit", async (event) => {
+  document.getElementById("tariffForm")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const allowedCarrierModes = form.getAll("allowedCarrierModes");
@@ -1590,6 +1784,12 @@ async function refreshAll(options = {}) {
 
     state.health = health;
     state.customers = customers.customers;
+    if (state.customerManagement.selectedCustomerId && !state.customers.some((customer) => customer.id === state.customerManagement.selectedCustomerId)) {
+      state.customerManagement.selectedCustomerId = "";
+      state.customerManagement.drawerMode = "";
+      state.customerManagement.drawerTab = "basic";
+      state.customerManagement.dirty = false;
+    }
     state.tariffs = tariffs.tariffRules;
     state.addressBookEntries = addressBook.entries || [];
     state.quotes = quotes.quotes;
@@ -1607,7 +1807,9 @@ async function refreshAll(options = {}) {
     renderDashboard();
     renderShipments();
     renderInvoices();
-    renderModal();
+    if (!(state.modal?.type === "customerManagement" && state.customerManagement.dirty)) {
+      renderModal();
+    }
     syncCarrierControls();
     if (isCustomerUser() && isPickupAutofillEmpty()) {
       autofillPickupFromCustomer(state.user?.customerId, false);
@@ -1664,6 +1866,13 @@ async function api(path, options = {}) {
 }
 
 function setView(name, options = {}) {
+  const activeView = document.querySelector(".nav-button.active")?.dataset.view || "";
+  if (activeView === "customers" && name !== "customers" && state.customerManagement.dirty) {
+    if (!window.confirm(t("Unsaved changes will be lost. Continue?"))) {
+      return;
+    }
+    state.customerManagement.dirty = false;
+  }
   if (options.resetCustomerFilter) {
     resetCustomerFilterForView(name);
     resetStaffFilterForView(name);
@@ -1962,22 +2171,31 @@ function paintModal(title, bodyHtml) {
   document.getElementById("modalTitle").textContent = title;
   document.getElementById("modalBody").innerHTML = bodyHtml;
   overlay.classList.toggle("customer-quote-details-modal", state.modal?.modalClass === "customer-quote-details-modal");
+  overlay.classList.toggle("customer-management-drawer-modal", state.modal?.modalClass === "customer-management-drawer-modal");
   overlay.classList.remove("hidden");
   overlay.setAttribute("aria-hidden", "false");
 }
 
-function closeModal() {
+function closeModal(options = {}) {
+  if (!options.force && state.modal?.modalClass === "customer-management-drawer-modal" && state.customerManagement.dirty) {
+    if (!window.confirm(t("Unsaved changes will be lost. Continue?"))) {
+      return false;
+    }
+  }
   const overlay = document.getElementById("modalOverlay");
   overlay.classList.add("hidden");
   overlay.classList.remove("customer-quote-details-modal");
+  overlay.classList.remove("customer-management-drawer-modal");
   overlay.setAttribute("aria-hidden", "true");
   document.getElementById("modalBody").innerHTML = "";
   state.modal = null;
   state.pendingBooking = null;
+  clearCustomerTemporaryPassword();
   if (state.lastModalFocus && document.contains(state.lastModalFocus)) {
     state.lastModalFocus.focus();
   }
   state.lastModalFocus = null;
+  return true;
 }
 
 function renderModal() {
@@ -1997,6 +2215,12 @@ function renderModal() {
     if (modal) {
       paintModal(modal.title, modal.body);
     }
+    return;
+  }
+
+  if (state.modal.type === "customerManagement") {
+    paintModal(customerManagementDrawerTitle(), customerManagementDrawerHtml());
+    afterRenderCustomerManagementDrawer();
     return;
   }
 
@@ -2290,141 +2514,583 @@ async function openInvoiceDetails(invoiceId) {
 }
 
 function openCustomerEditor(customerId) {
-  const customer = state.customers.find((item) => item.id === customerId);
-  const tariff = state.tariffs.find((rule) => rule.customerId === customerId) || {
-    ruleType: "percentage",
-    fixedAmount: 0,
-    markupPercentage: 0
-  };
+  openCustomerManagementDrawer(customerId, "edit", "basic");
+}
 
-  if (!customer) {
+function openCustomerManagementDrawer(customerId = "", mode = "edit", tab = "basic") {
+  if (!isStaffUser()) {
     return;
   }
+  if (state.customerManagement.dirty && state.modal?.modalClass === "customer-management-drawer-modal" && !window.confirm(t("Unsaved changes will be lost. Continue?"))) {
+    return;
+  }
+  state.customerManagement.selectedCustomerId = customerId;
+  state.customerManagement.drawerMode = mode;
+  state.customerManagement.drawerTab = tab;
+  state.customerManagement.dirty = false;
+  state.customerManagement.error = "";
+  clearCustomerTemporaryPassword();
+  state.modal = {
+    type: "customerManagement",
+    modalClass: "customer-management-drawer-modal"
+  };
+  renderModal();
+  if (customerId) {
+    refreshCarrierPreferences({ silent: true });
+  } else {
+    state.carrierPreferences = [];
+  }
+}
 
-  openModal(
-    `${t("Edit")} ${customer.companyName}`,
-    `
-      <form id="customerEditForm" class="modal-grid">
-        <label>
-          ${t("Company name")}
-          <input name="companyName" required value="${escapeHtml(customer.companyName)}">
-        </label>
-        <label>
-          ${t("Billing email")}
-          <input name="billingEmail" value="${escapeHtml(customer.billingEmail || "")}">
-        </label>
-        <label>
-          ${t("Payment terms")}
-          <input name="paymentTerms" value="${escapeHtml(customer.paymentTerms || "Net 15")}">
-        </label>
-        <label>
-          ${t("Company phone")}
-          <input name="companyPhone" type="tel" inputmode="numeric" autocomplete="tel" value="${escapeHtml(customer.companyPhone || "")}" placeholder="(555) 123-4567">
-        </label>
-        <label class="span-2">
-          ${t("Company street")}
-          <input name="companyStreet" value="${escapeHtml(customer.companyStreet || "")}" placeholder="123 Main St">
-        </label>
-        <label>
-          ${t("Company city")}
-          <input name="companyCity" value="${escapeHtml(customer.companyCity || "")}" placeholder="City">
-        </label>
-        <label>
-          ${t("Company state")}
-          <input name="companyState" value="${escapeHtml(customer.companyState || "")}" placeholder="CA" maxlength="2">
-        </label>
-        <label>
-          ${t("Company ZIP")}
-          <input name="companyZip" value="${escapeHtml(customer.companyZip || "")}" placeholder="ZIP">
-        </label>
-        <label>
-          ${t("business.openingTime")}
-          <select name="companyOpenTime" data-time-select>
-            <option value="">${t("Select time")}</option>
-          </select>
-        </label>
-        <label>
-          ${t("business.closingTime")}
-          <select name="companyCloseTime" data-time-select>
-            <option value="">${t("Select time")}</option>
-          </select>
-        </label>
-        <label>
-          ${t("Portal username")}
-          <input name="portalEmail" value="${escapeHtml(customer.portalEmail || "")}">
-        </label>
-        <label>
-          ${t("Portal password")}
-          <input name="portalPassword" type="password" placeholder="Leave blank to keep current password">
-        </label>
-        <label>
-          ${t("Account status")}
-          <select name="status">
-            <option value="active" ${customer.status === "active" ? "selected" : ""}>${t("account.status.active")}</option>
-            <option value="disabled" ${customer.status === "disabled" ? "selected" : ""}>${t("Disabled")}</option>
-          </select>
-        </label>
-        <label>
-          ${t("Tariff rule")}
-          <select name="ruleType">
-            <option value="fixed" ${tariff.ruleType === "fixed" ? "selected" : ""}>${t("Fixed markup")}</option>
-            <option value="percentage" ${tariff.ruleType === "percentage" ? "selected" : ""}>${t("Percentage markup")}</option>
-          </select>
-        </label>
-        <label>
-          ${t("Fixed amount")}
-          <input name="fixedAmount" type="number" min="0" step="0.01" value="${escapeHtml(String(tariff.fixedAmount ?? 0))}">
-        </label>
-        <label>
-          ${t("Markup percent")}
-          <input name="markupPercentage" type="number" min="0" step="0.1" value="${escapeHtml(String(tariff.markupPercentage ?? 0))}">
-        </label>
-        <div class="modal-actions">
-          <button class="primary-action" type="submit">${t("Save Changes")}</button>
+function customerManagementDrawerTitle() {
+  const customer = selectedCustomer();
+  if (state.customerManagement.drawerMode === "create") {
+    return t("+ Add Customer");
+  }
+  return `${t("Customer Management")}: ${customer?.companyName || t("No customer selected.")}`;
+}
+
+function customerManagementDrawerHtml() {
+  if (!isStaffUser()) {
+    return `<div class="empty-state">${escapeHtml(t("Customer management is available to staff users only."))}</div>`;
+  }
+  const customer = selectedCustomer();
+  const isCreate = state.customerManagement.drawerMode === "create";
+  const title = isCreate ? t("+ Add Customer") : customer?.companyName || t("No customer selected.");
+  const subtitle = isCreate ? t("Customer created. Configure pricing and carrier channels.") : customerAddressLine(customer);
+  const tabs = [
+    ["basic", "Basic Information"],
+    ["pricing", "Pricing & Channels"],
+    ["blocked", "Blocked Carriers"],
+    ["portal", "Customer Portal"]
+  ];
+  return `
+    <div class="customer-drawer" data-customer-management-drawer>
+      <header class="customer-drawer-header">
+        <div>
+          <small>${escapeHtml(t("Customer Management"))}</small>
+          <h2>${escapeHtml(title)}</h2>
+          ${subtitle ? `<p>${escapeHtml(subtitle)}</p>` : ""}
         </div>
-      </form>
-    `
-  );
-  populateTimeSelects();
-  const openTimeField = document.querySelector("#customerEditForm [name='companyOpenTime']");
-  const closeTimeField = document.querySelector("#customerEditForm [name='companyCloseTime']");
-  if (openTimeField) {
-    openTimeField.value = customer.companyOpenTime || "";
-  }
-  if (closeTimeField) {
-    closeTimeField.value = customer.companyCloseTime || "";
-  }
-  wireZipAutofill();
-  triggerZipAutofillField("companyZip", document.getElementById("customerEditForm"));
+      </header>
+      <nav class="customer-drawer-tabs" aria-label="${escapeHtml(t("Customer Management"))}">
+        ${tabs.map(([key, label]) => `<button type="button" class="${state.customerManagement.drawerTab === key ? "active" : ""}" data-customer-drawer-tab="${escapeHtml(key)}">${escapeHtml(t(label))}</button>`).join("")}
+      </nav>
+      ${state.customerManagement.error ? `<div class="form-error">${escapeHtml(state.customerManagement.error)}</div>` : ""}
+      <section class="customer-drawer-body">
+        ${customerDrawerTabHtml(customer)}
+      </section>
+    </div>
+  `;
+}
 
-  document.getElementById("customerEditForm").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    await api(`/api/customers/${customer.id}`, {
-      method: "PATCH",
-      body: {
-        companyName: form.get("companyName"),
-        billingEmail: form.get("billingEmail"),
-        paymentTerms: form.get("paymentTerms"),
-        companyPhone: form.get("companyPhone"),
-        companyOpenTime: form.get("companyOpenTime"),
-        companyCloseTime: form.get("companyCloseTime"),
-        companyStreet: form.get("companyStreet"),
-        companyCity: form.get("companyCity"),
-        companyState: form.get("companyState"),
-        companyZip: form.get("companyZip"),
-        portalEmail: form.get("portalEmail"),
-        portalPassword: form.get("portalPassword"),
-        status: form.get("status"),
-        ruleType: form.get("ruleType"),
-        fixedAmount: form.get("fixedAmount"),
-        markupPercentage: form.get("markupPercentage")
+function customerDrawerTabHtml(customer) {
+  const tab = state.customerManagement.drawerTab;
+  if (tab === "pricing") return customerPricingDrawerHtml(customer);
+  if (tab === "blocked") return customerBlockedCarriersDrawerHtml(customer);
+  if (tab === "portal") return customerPortalDrawerHtml(customer);
+  return customerBasicDrawerHtml(customer);
+}
+
+function customerBasicDrawerHtml(customer = {}) {
+  const isCreate = state.customerManagement.drawerMode === "create";
+  return `
+    <form id="customerBasicForm" class="customer-drawer-form form-grid compact">
+      <label>
+        <span>${escapeHtml(t("Company name"))}</span>
+        <input data-customer-drawer-field name="companyName" required value="${escapeHtml(customer?.companyName || "")}">
+      </label>
+      <label>
+        <span>${escapeHtml(t("Billing email"))}</span>
+        <input data-customer-drawer-field name="billingEmail" type="email" value="${escapeHtml(customer?.billingEmail || "")}">
+      </label>
+      <label>
+        <span>${escapeHtml(t("Payment terms"))}</span>
+        <input data-customer-drawer-field name="paymentTerms" value="${escapeHtml(customer?.paymentTerms || "Net 15")}">
+      </label>
+      <label>
+        <span>${escapeHtml(t("Company phone"))}</span>
+        <input data-customer-drawer-field name="companyPhone" type="tel" inputmode="numeric" autocomplete="tel" value="${escapeHtml(customer?.companyPhone || "")}">
+      </label>
+      <label class="span-2">
+        <span>${escapeHtml(t("Company street"))}</span>
+        <input data-customer-drawer-field name="companyStreet" value="${escapeHtml(customer?.companyStreet || "")}">
+      </label>
+      <label>
+        <span>${escapeHtml(t("Company city"))}</span>
+        <input data-customer-drawer-field name="companyCity" value="${escapeHtml(customer?.companyCity || "")}">
+      </label>
+      <label>
+        <span>${escapeHtml(t("Company state"))}</span>
+        <input data-customer-drawer-field name="companyState" maxlength="2" value="${escapeHtml(customer?.companyState || "")}">
+      </label>
+      <label>
+        <span>${escapeHtml(t("Company ZIP"))}</span>
+        <input data-customer-drawer-field name="companyZip" data-zip-autofill="company" value="${escapeHtml(customer?.companyZip || "")}">
+      </label>
+      <label>
+        <span>${escapeHtml(t("business.openingTime"))}</span>
+        <select data-customer-drawer-field name="companyOpenTime" data-time-select><option value="">${escapeHtml(t("Select time"))}</option></select>
+      </label>
+      <label>
+        <span>${escapeHtml(t("business.closingTime"))}</span>
+        <select data-customer-drawer-field name="companyCloseTime" data-time-select><option value="">${escapeHtml(t("Select time"))}</option></select>
+      </label>
+      <label>
+        <span>${escapeHtml(t("Account status"))}</span>
+        <select data-customer-drawer-field name="status">
+          <option value="active" ${normalizeCustomerAccountStatus(customer?.status) === "active" ? "selected" : ""}>${escapeHtml(t("account.status.active"))}</option>
+          <option value="disabled" ${normalizeCustomerAccountStatus(customer?.status) === "disabled" ? "selected" : ""}>${escapeHtml(t("account.status.disabled"))}</option>
+        </select>
+      </label>
+      ${isCreate ? customerPortalFieldsHtml(customer) : ""}
+      <div class="modal-actions span-2">
+        <button class="primary-action" type="submit" ${state.customerManagement.saving === "basic" ? "disabled" : ""}>${escapeHtml(state.customerManagement.saving === "basic" ? t("Customer save in progress...") : t(isCreate ? "Add Customer" : "Save basic information"))}</button>
+      </div>
+    </form>
+  `;
+}
+
+function customerPricingDrawerHtml(customer = selectedCustomer()) {
+  if (!customer?.id) return `<div class="empty-state">${escapeHtml(t("No customer selected."))}</div>`;
+  const tariff = state.tariffs.find((rule) => rule.customerId === customer.id) || { ruleType: "percentage", fixedAmount: 50, markupPercentage: 15 };
+  const ruleType = tariff.ruleType === "fixed" ? "fixed" : "percentage";
+  return `
+    <form id="customerPricingForm" class="customer-drawer-form">
+      <div class="form-grid compact">
+        <label>
+          <span>${escapeHtml(t("Rule type"))}</span>
+          <select data-customer-drawer-field name="ruleType">
+            <option value="fixed" ${ruleType === "fixed" ? "selected" : ""}>${escapeHtml(t("Fixed markup"))}</option>
+            <option value="percentage" ${ruleType === "percentage" ? "selected" : ""}>${escapeHtml(t("Percentage markup"))}</option>
+          </select>
+        </label>
+        ${ruleType === "fixed" ? `
+          <label>
+            <span>${escapeHtml(t("Fixed amount"))}</span>
+            <input data-customer-drawer-field name="fixedAmount" type="number" min="0" step="0.01" value="${escapeHtml(String(tariff.fixedAmount ?? 50))}">
+          </label>
+        ` : `
+          <label>
+            <span>${escapeHtml(t("Markup percentage"))}</span>
+            <input data-customer-drawer-field name="markupPercentage" type="number" min="0" step="0.1" value="${escapeHtml(String(tariff.markupPercentage ?? 15))}">
+          </label>
+        `}
+      </div>
+      <div class="pricing-preview" id="customerPricingPreview">${pricingPreviewHtml(ruleType, tariff)}</div>
+      <p class="helper-text">${escapeHtml(t("This rule changes the customer quote price and does not change carrier cost."))}</p>
+      <div class="carrier-mode-matrix">
+        <div class="carrier-mode-matrix-head">
+          <strong>${escapeHtml(t("Carrier Channel"))}</strong>
+          <strong>${escapeHtml(t("Get Rates"))}</strong>
+          <strong>${escapeHtml(t("customerManagement.onlineBooking"))}</strong>
+        </div>
+        ${carrierModeMatrixHtml(customer)}
+      </div>
+      <p class="helper-text">${escapeHtml(t("Online booking can only be enabled for channels that are enabled for quoting."))}</p>
+      <div id="customerPricingFormError" class="form-error"></div>
+      <div class="modal-actions">
+        <button class="primary-action" type="submit" ${state.customerManagement.saving === "pricing" ? "disabled" : ""}>${escapeHtml(state.customerManagement.saving === "pricing" ? t("Tariff save in progress...") : t("Save pricing for {name}", { name: customer.companyName }))}</button>
+      </div>
+    </form>
+  `;
+}
+
+function carrierModeMatrixHtml(customer) {
+  return carrierModeMatrixRows(customer, { showDemo: true })
+    .map((row) => `
+      <div class="carrier-mode-row ${row.isDemo ? "is-demo" : ""}">
+        <div>
+          <strong>${escapeHtml(t(row.label))}</strong>
+          ${row.isDemo ? `<small>${escapeHtml(t("Demo Rates is for internal testing only."))}</small>` : ""}
+        </div>
+        <label class="checkbox-wrap">
+          <input data-customer-drawer-field data-customer-mode-quote type="checkbox" value="${escapeHtml(row.key)}" ${row.quotingEnabled ? "checked" : ""}>
+          <span>${escapeHtml(t("Get Rates"))}</span>
+        </label>
+        <label class="checkbox-wrap">
+          <input data-customer-drawer-field data-customer-mode-booking type="checkbox" value="${escapeHtml(row.key)}" ${row.bookingEnabled ? "checked" : ""} ${row.bookingAllowed ? "" : "disabled"}>
+          <span>${escapeHtml(t("customerManagement.onlineBooking"))}</span>
+        </label>
+      </div>
+    `).join("");
+}
+
+function customerBlockedCarriersDrawerHtml(customer = selectedCustomer()) {
+  if (!customer?.id) return `<div class="empty-state">${escapeHtml(t("No customer selected."))}</div>`;
+  return `
+    <form id="customerBlockedCarrierForm" class="form-grid compact customer-drawer-form">
+      <label>
+        <span>${escapeHtml(t("Carrier code or name"))}</span>
+        <input data-customer-drawer-field name="carrierKey" required placeholder="XPOL or XPO Logistics">
+      </label>
+      <label>
+        <span>${escapeHtml(t("Display name"))}</span>
+        <input data-customer-drawer-field name="carrierName" placeholder="XPO Logistics">
+      </label>
+      <label class="span-2">
+        <span>${escapeHtml(t("Reason"))}</span>
+        <input data-customer-drawer-field name="reason" placeholder="${escapeHtml(t("Optional internal reason"))}">
+      </label>
+      <div class="modal-actions span-2">
+        <button class="primary-action" type="submit">${escapeHtml(t("Block Carrier"))}</button>
+      </div>
+    </form>
+    <div id="carrierPreferenceList" class="blocked-carrier-list"></div>
+  `;
+}
+
+function customerPortalDrawerHtml(customer = selectedCustomer()) {
+  if (!customer?.id) return `<div class="empty-state">${escapeHtml(t("No customer selected."))}</div>`;
+  return `
+    <form id="customerPortalForm" class="customer-drawer-form form-grid compact">
+      ${customerPortalFieldsHtml(customer)}
+      <p class="helper-text span-2">${escapeHtml(t("Leave blank to keep the existing password."))}</p>
+      <div class="modal-actions span-2">
+        <button class="primary-action" type="submit" ${state.customerManagement.saving === "portal" ? "disabled" : ""}>${escapeHtml(t("Save portal access"))}</button>
+      </div>
+    </form>
+  `;
+}
+
+function customerPortalFieldsHtml(customer = {}) {
+  const password = state.customerManagement.temporaryPassword || "";
+  return `
+    <label>
+      <span>${escapeHtml(t("Portal status"))}</span>
+      <input readonly value="${escapeHtml(customer?.portalEmail ? t("Configured") : t("Not Configured"))}">
+    </label>
+    <label>
+      <span>${escapeHtml(t("Portal username"))}</span>
+      <input data-customer-drawer-field name="portalEmail" value="${escapeHtml(customer?.portalEmail || "")}">
+    </label>
+    <label class="span-2">
+      <span>${escapeHtml(t("New temporary password"))}</span>
+      <input data-customer-drawer-field name="portalPassword" type="password" value="${escapeHtml(password)}" autocomplete="new-password">
+    </label>
+    <div class="modal-actions span-2">
+      <button class="secondary-action" type="button" data-toggle-temp-password>${escapeHtml(t("Show password"))}</button>
+      <button class="secondary-action" type="button" data-generate-temp-password>${escapeHtml(t("Generate temporary password"))}</button>
+      <button class="secondary-action" type="button" data-copy-temp-password ${password ? "" : "disabled"}>${escapeHtml(t("Copy temporary password"))}</button>
+    </div>
+  `;
+}
+
+function afterRenderCustomerManagementDrawer() {
+  populateTimeSelects();
+  const customer = selectedCustomer();
+  const form = document.getElementById("customerBasicForm");
+  if (form) {
+    const openTimeField = form.elements.companyOpenTime;
+    const closeTimeField = form.elements.companyCloseTime;
+    if (openTimeField) openTimeField.value = customer?.companyOpenTime || "";
+    if (closeTimeField) closeTimeField.value = customer?.companyCloseTime || "";
+    wireZipAutofill();
+  }
+  renderCarrierPreferences();
+  updateCustomerPricingPreview();
+}
+
+function renderCustomerManagementDrawer() {
+  if (state.modal?.type === "customerManagement") {
+    renderModal();
+  }
+}
+
+function selectedCustomer() {
+  return state.customers.find((customer) => customer.id === state.customerManagement.selectedCustomerId) || null;
+}
+
+function setCustomerDrawerTab(tab) {
+  if (state.customerManagement.dirty && !window.confirm(t("Unsaved changes will be lost. Continue?"))) {
+    return;
+  }
+  state.customerManagement.drawerTab = tab || "basic";
+  state.customerManagement.dirty = false;
+  renderCustomerManagementDrawer();
+  if (state.customerManagement.drawerTab === "blocked") {
+    refreshCarrierPreferences({ silent: true });
+  }
+}
+
+function customerAddressLine(customer) {
+  return customer ? [customer.companyStreet, customer.companyCity, customer.companyState, customer.companyZip].filter(Boolean).join(", ") : "";
+}
+
+function pricingPreviewHtml(ruleType, tariff) {
+  const base = 500;
+  const fixedAmount = Number(tariff.fixedAmount || 0);
+  const markupPercentage = Number(tariff.markupPercentage || 0);
+  const customerPrice = ruleType === "fixed" ? base + fixedAmount : base * (1 + markupPercentage / 100);
+  return `
+    <strong>${escapeHtml(t("Example calculation"))}</strong>
+    <span>${escapeHtml(t("Carrier cost"))}: ${money.format(base)}</span>
+    <span>${escapeHtml(t("Customer price"))}: ${money.format(customerPrice)}</span>
+  `;
+}
+
+function updateCustomerPricingPreview() {
+  const form = document.getElementById("customerPricingForm");
+  const preview = document.getElementById("customerPricingPreview");
+  if (!form || !preview) return;
+  const ruleType = form.elements.ruleType?.value === "fixed" ? "fixed" : "percentage";
+  preview.innerHTML = pricingPreviewHtml(ruleType, {
+    fixedAmount: form.elements.fixedAmount?.value,
+    markupPercentage: form.elements.markupPercentage?.value
+  });
+}
+
+async function saveCustomerBasicForm(formElement) {
+  if (!isStaffUser()) return;
+  if (state.customerManagement.saving) return;
+  const form = new FormData(formElement);
+  const payload = customerPayloadFromForm(form);
+  const validation = validateCustomerBasicPayload(payload);
+  if (validation) {
+    state.customerManagement.error = validation;
+    renderCustomerManagementDrawer();
+    return;
+  }
+  try {
+    state.customerManagement.saving = "basic";
+    renderCustomerManagementDrawer();
+    if (state.customerManagement.drawerMode === "create") {
+      const response = await api("/api/customers", { method: "POST", body: payload });
+      const createdCustomer = response.customer || null;
+      await refreshAll();
+      const createdId = createdCustomer?.id || resolveCreatedCustomerId(payload);
+      if (createdId) {
+        state.customerManagement.selectedCustomerId = createdId;
       }
-    });
-    closeModal();
+      state.customerManagement.drawerMode = "edit";
+      state.customerManagement.drawerTab = "pricing";
+      state.customerManagement.dirty = false;
+      state.customerManagement.error = "";
+      clearCustomerTemporaryPassword();
+      showToast(t("Customer created. Configure pricing and carrier channels."));
+      renderCustomerManagementDrawer();
+      return;
+    }
+    const customerId = state.customerManagement.selectedCustomerId;
+    await api(`/api/customers/${encodeURIComponent(customerId)}`, { method: "PATCH", body: payload });
+    state.customerManagement.dirty = false;
+    state.customerManagement.error = "";
     showToast(t("Customer updated."));
     await refreshAll();
+  } catch (error) {
+    state.customerManagement.error = error.message || t("Request failed.");
+    showToast(state.customerManagement.error, true);
+    renderCustomerManagementDrawer();
+  } finally {
+    state.customerManagement.saving = "";
+    renderCustomerManagementDrawer();
+  }
+}
+
+async function saveCustomerPricingForm(formElement) {
+  if (!isStaffUser()) return;
+  if (state.customerManagement.saving) return;
+  const customer = selectedCustomer();
+  if (!customer) return;
+  const form = new FormData(formElement);
+  const allowedCarrierModes = Array.from(formElement.querySelectorAll("[data-customer-mode-quote]:checked")).map((item) => item.value);
+  const allowedBookingCarrierModes = Array.from(formElement.querySelectorAll("[data-customer-mode-booking]:checked")).map((item) => item.value).filter((mode) => allowedCarrierModes.includes(mode));
+  const error = document.getElementById("customerPricingFormError");
+  if (error) error.textContent = "";
+  if (allowedCarrierModes.length === 0) {
+    const message = t("Select at least one carrier mode for this customer.");
+    if (error) error.textContent = message;
+    showToast(message, true);
+    return;
+  }
+  try {
+    state.customerManagement.saving = "pricing";
+    renderCustomerManagementDrawer();
+    await api("/api/tariffs", {
+      method: "POST",
+      body: {
+        customerId: customer.id,
+        ruleType: form.get("ruleType"),
+        fixedAmount: form.get("ruleType") === "fixed" ? form.get("fixedAmount") : "0",
+        markupPercentage: form.get("ruleType") === "percentage" ? form.get("markupPercentage") : "0",
+        allowedCarrierModes,
+        allowedBooking: allowedBookingCarrierModes.length > 0,
+        allowedBookingCarrierModes
+      }
+    });
+    state.customerManagement.dirty = false;
+    showToast(t("Tariff saved."));
+    await refreshAll();
+  } catch (error) {
+    showToast(error.message || t("Request failed."), true);
+  } finally {
+    state.customerManagement.saving = "";
+    renderCustomerManagementDrawer();
+  }
+}
+
+async function saveCustomerPortalForm(formElement) {
+  if (!isStaffUser()) return;
+  if (state.customerManagement.saving) return;
+  const customer = selectedCustomer();
+  if (!customer) return;
+  const form = new FormData(formElement);
+  const body = {
+    portalEmail: form.get("portalEmail")
+  };
+  if (String(form.get("portalPassword") || "").trim()) {
+    body.portalPassword = form.get("portalPassword");
+  }
+  try {
+    state.customerManagement.saving = "portal";
+    renderCustomerManagementDrawer();
+    await api(`/api/customers/${encodeURIComponent(customer.id)}`, { method: "PATCH", body });
+    state.customerManagement.dirty = false;
+    clearCustomerTemporaryPassword();
+    showToast(t("Customer updated."));
+    await refreshAll();
+  } catch (error) {
+    showToast(error.message || t("Request failed."), true);
+  } finally {
+    state.customerManagement.saving = "";
+    renderCustomerManagementDrawer();
+  }
+}
+
+async function saveCustomerBlockedCarrierForm(formElement) {
+  if (!isStaffUser()) return;
+  if (state.customerManagement.saving) return;
+  const customer = selectedCustomer();
+  if (!customer) return;
+  const form = new FormData(formElement);
+  try {
+    state.customerManagement.saving = "blocked";
+    await api("/api/carrier-preferences", {
+      method: "POST",
+      body: {
+        customerId: customer.id,
+        carrierKey: form.get("carrierKey"),
+        carrierName: form.get("carrierName") || form.get("carrierKey"),
+        preference: "blocked",
+        reason: form.get("reason")
+      }
+    });
+    formElement.reset();
+    state.customerManagement.dirty = false;
+    showToast(t("Blocked carrier added."));
+    await refreshCarrierPreferences();
+    renderCustomerManagementDrawer();
+  } catch (error) {
+    showToast(error.message || t("Request failed."), true);
+  } finally {
+    state.customerManagement.saving = "";
+  }
+}
+
+function customerPayloadFromForm(form) {
+  const payload = {
+    companyName: form.get("companyName"),
+    billingEmail: form.get("billingEmail"),
+    paymentTerms: form.get("paymentTerms"),
+    companyPhone: form.get("companyPhone"),
+    companyOpenTime: form.get("companyOpenTime"),
+    companyCloseTime: form.get("companyCloseTime"),
+    companyStreet: form.get("companyStreet"),
+    companyCity: form.get("companyCity"),
+    companyState: form.get("companyState"),
+    companyZip: form.get("companyZip"),
+    status: form.get("status") || "active"
+  };
+  if (form.has("portalEmail")) {
+    payload.portalEmail = form.get("portalEmail");
+  }
+  if (String(form.get("portalPassword") || "").trim()) {
+    payload.portalPassword = form.get("portalPassword");
+  }
+  return payload;
+}
+
+function validateCustomerBasicPayload(payload) {
+  if (!String(payload.companyName || "").trim()) return t("Please fill in the required fields.");
+  if (payload.billingEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(payload.billingEmail))) return t("Please fill in the required fields.");
+  if (payload.companyState && !/^[A-Za-z]{2}$/.test(String(payload.companyState))) return t("Please fill in the required fields.");
+  if (payload.companyOpenTime && payload.companyCloseTime) {
+    const open = normalizeTimeForCustomerManagement(payload.companyOpenTime);
+    const close = normalizeTimeForCustomerManagement(payload.companyCloseTime);
+    if (open !== null && close !== null && open >= close) return t("Pickup open time must be earlier than pickup close time.");
+  }
+  return "";
+}
+
+function normalizeTimeForCustomerManagement(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (digits.length !== 4) return null;
+  const hours = Number(digits.slice(0, 2));
+  const minutes = Number(digits.slice(2));
+  if (hours > 23 || minutes > 59) return null;
+  return hours * 60 + minutes;
+}
+
+function resolveCreatedCustomerId(payload) {
+  const portalEmail = String(payload.portalEmail || "").trim().toLowerCase();
+  const companyName = String(payload.companyName || "").trim().toLowerCase();
+  const matches = state.customers.filter((customer) => {
+    if (portalEmail && String(customer.portalEmail || "").trim().toLowerCase() === portalEmail) return true;
+    return companyName && String(customer.companyName || "").trim().toLowerCase() === companyName;
   });
+  return matches.length === 1 ? matches[0].id : "";
+}
+
+function handleCustomerModeQuoteChange(checkbox) {
+  const form = checkbox.closest("form");
+  if (!form) return;
+  const booking = Array.from(form.querySelectorAll("[data-customer-mode-booking]")).find((item) => item.value === checkbox.value);
+  if (booking) {
+    booking.disabled = !checkbox.checked;
+    if (!checkbox.checked) booking.checked = false;
+  }
+  state.customerManagement.dirty = true;
+}
+
+function handleCustomerModeBookingChange(checkbox) {
+  const form = checkbox.closest("form");
+  if (!form) return;
+  const allowedModes = Array.from(form.querySelectorAll("[data-customer-mode-quote]:checked")).map((item) => item.value);
+  checkbox.checked = checkbox.checked && canEnableBookingMode(checkbox.value, allowedModes);
+  state.customerManagement.dirty = true;
+}
+
+function generateCustomerTemporaryPassword() {
+  state.customerManagement.temporaryPassword = `Tmp-${Math.random().toString(36).slice(2, 8)}-${Math.random().toString(36).slice(2, 8)}`;
+  state.customerManagement.dirty = true;
+  renderCustomerManagementDrawer();
+}
+
+async function copyCustomerTemporaryPassword() {
+  const password = state.customerManagement.temporaryPassword || document.querySelector("#customerPortalForm [name='portalPassword'], #customerBasicForm [name='portalPassword']")?.value || "";
+  if (!password) return;
+  try {
+    await navigator.clipboard?.writeText(password);
+    showToast(t("Copy temporary password"));
+  } catch {
+    showToast(password);
+  }
+}
+
+function toggleCustomerTemporaryPasswordVisibility() {
+  const inputs = Array.from(document.querySelectorAll("[name='portalPassword']"));
+  const shouldShow = inputs.some((input) => input.type === "password");
+  inputs.forEach((input) => {
+    input.type = shouldShow ? "text" : "password";
+  });
+  document.querySelectorAll("[data-toggle-temp-password]").forEach((button) => {
+    button.textContent = t(shouldShow ? "Hide password" : "Show password");
+  });
+}
+
+function clearCustomerTemporaryPassword() {
+  state.customerManagement.temporaryPassword = "";
+  state.customerManagement.dirty = false;
 }
 
 async function toggleCustomerStatus(customerId) {
@@ -2438,7 +3104,7 @@ async function toggleCustomerStatus(customerId) {
     method: "PATCH",
     body: { status: nextStatus }
   });
-  showToast(t("Customer {status}.", { status: nextStatus }));
+  showToast(t("Customer {status}.", { status: t(nextStatus === "disabled" ? "account.status.disabled" : "account.status.active") }));
   await refreshAll();
 }
 
@@ -2448,7 +3114,10 @@ async function deleteCustomerAccount(customerId) {
     return;
   }
 
-  if (!window.confirm(t("Delete {name}? This removes the customer and related data.", { name: customer.companyName }))) {
+  window.alert(t("Deleting this customer may affect related quotes, shipments, and invoices."));
+  const typed = window.prompt(t("Type {name} to confirm deletion.", { name: customer.companyName }));
+  if (typed !== customer.companyName) {
+    showToast(t("Delete confirmation did not match the company name."), true);
     return;
   }
 
@@ -5032,14 +5701,14 @@ async function refreshCarrierPreferences(options = {}) {
     renderCarrierPreferences();
     return;
   }
-  const select = document.getElementById("carrierPreferenceCustomerSelect");
-  const customerId = select?.value || state.customers[0]?.id || "";
+  const customerId = state.customerManagement.selectedCustomerId || "";
   if (!customerId) {
     state.carrierPreferences = [];
     renderCarrierPreferences();
     return;
   }
   try {
+    state.customerManagement.blockedCarrierLoading = true;
     const response = await api(`/api/carrier-preferences?customerId=${encodeURIComponent(customerId)}`);
     state.carrierPreferences = response.preferences || [];
     renderCarrierPreferences();
@@ -5049,15 +5718,14 @@ async function refreshCarrierPreferences(options = {}) {
     if (!options.silent) {
       showToast(error.message, true);
     }
+  } finally {
+    state.customerManagement.blockedCarrierLoading = false;
+    renderCarrierPreferences();
   }
 }
 
 function renderCarrierPreferences() {
-  const panel = document.getElementById("carrierBlacklistPanel");
   const list = document.getElementById("carrierPreferenceList");
-  if (panel) {
-    panel.classList.toggle("hidden", !isStaffUser());
-  }
   if (!list) {
     return;
   }
@@ -5065,16 +5733,21 @@ function renderCarrierPreferences() {
     list.innerHTML = "";
     return;
   }
+  if (state.customerManagement.blockedCarrierLoading) {
+    list.innerHTML = `<div class="empty-state">${escapeHtml(t("Blocked carriers are loading..."))}</div>`;
+    return;
+  }
   if (state.carrierPreferences.length === 0) {
-    list.innerHTML = `<div class="empty-state">${t("No blocked carriers.")}</div>`;
+    list.innerHTML = `<div class="empty-state">${escapeHtml(t("No blocked carriers."))}</div>`;
     return;
   }
   list.innerHTML = state.carrierPreferences
     .map((preference) => `
-      <article class="row-item">
+      <article class="blocked-carrier-row">
         <div>
           <strong>${escapeHtml(preference.carrierName || preference.carrierKey)}</strong>
-          <small>${escapeHtml(preference.carrierKey)}${preference.reason ? ` · ${escapeHtml(preference.reason)}` : ""}</small>
+          <small>${escapeHtml(preference.carrierKey)}</small>
+          ${preference.reason ? `<p>${escapeHtml(preference.reason)}</p>` : ""}
         </div>
         <button class="danger-action" type="button" data-delete-carrier-preference="${escapeHtml(preference.id)}">${t("Remove")}</button>
       </article>
@@ -5086,91 +5759,176 @@ async function deleteCarrierPreference(id) {
   if (!isStaffUser()) {
     return;
   }
-  const customerId = document.getElementById("carrierPreferenceCustomerSelect")?.value || "";
+  const customerId = state.customerManagement.selectedCustomerId || "";
   await api(`/api/carrier-preferences/${encodeURIComponent(id)}?customerId=${encodeURIComponent(customerId)}`, {
     method: "DELETE"
   });
   showToast(t("Blocked carrier removed."));
   await refreshCarrierPreferences();
+  renderCustomerManagementDrawer();
 }
 
 function renderCustomers() {
   const list = document.getElementById("customerList");
+  const filters = document.getElementById("customerManagementFilters");
+  const metrics = document.getElementById("customerManagementMetrics");
+  if (!list || !filters || !metrics) {
+    return;
+  }
+  if (!isStaffUser()) {
+    list.innerHTML = "";
+    filters.innerHTML = "";
+    metrics.innerHTML = "";
+    return;
+  }
+
+  const cm = state.customerManagement;
+  const viewModel = customerManagementViewModel({
+    customers: state.customers,
+    tariffs: state.tariffs,
+    quotes: state.quotes,
+    shipments: state.shipments,
+    query: cm.query,
+    statusFilter: cm.statusFilter,
+    configurationFilter: cm.configurationFilter,
+    sort: cm.sort
+  });
+
+  filters.innerHTML = customerManagementFilterHtml();
+  metrics.innerHTML = customerManagementMetricHtml(viewModel.metrics);
 
   if (state.customers.length === 0) {
-    list.innerHTML = `<div class="empty-state">${t("No customers yet.")}</div>`;
+    list.innerHTML = `<div class="empty-state">${escapeHtml(t("No customers yet."))}</div>`;
+    return;
+  }
+  if (viewModel.rows.length === 0) {
+    list.innerHTML = `<div class="empty-state">${escapeHtml(t("No customers match your search or filters."))}</div>`;
     return;
   }
 
-  list.innerHTML = state.customers
-    .map((customer) => {
-      const tariff = state.tariffs.find((rule) => rule.customerId === customer.id);
-      const allowedModes = Array.isArray(customer.allowedCarrierModes) ? customer.allowedCarrierModes : [];
-      const bookingModes = customerAllowedBookingModes(customer);
-      return `
-        <article class="row-item" data-customer-id="${escapeHtml(customer.id)}">
-          <div>
-            <strong>${escapeHtml(customer.companyName)}</strong>
-            <small>${escapeHtml(customer.billingEmail || t("No billing email"))} · ${escapeHtml(customer.paymentTerms)}</small>
-            <div class="meta-line">
-              ${(customer.companyStreet || customer.companyCity || customer.companyState || customer.companyZip)
-                ? `<span class="pill">${escapeHtml([customer.companyStreet, customer.companyCity, customer.companyState, customer.companyZip].filter(Boolean).join(", "))}</span>`
-                : ""}
-              ${allowedModes.length > 0
-                ? `<span class="pill">${escapeHtml(carrierModeListLabel(allowedModes, false))}</span>`
-                : ""}
-              <span class="pill">${bookingModes.length > 0 ? `${t("Booking")}: ${escapeHtml(carrierModeListLabel(bookingModes, false))}` : t("Booking disabled")}</span>
-              <span class="pill">${escapeHtml(tariff?.ruleType || t("no tariff"))}</span>
-              <span class="pill">${Number(tariff?.markupPercentage || 0)}% ${t("markup")}</span>
-              <span class="pill">${money.format(Number(tariff?.fixedAmount || 0))} ${t("fixed")}</span>
-            </div>
-          </div>
-          <span class="pill">${escapeHtml(customer.status)}</span>
-        </article>
-      `;
-    })
+  list.innerHTML = viewModel.rows
+    .map(customerManagementCardHtml)
     .join("");
-
-  decorateCustomerRows(list);
 }
 
-function decorateCustomerRows(list) {
-  const isStaff = ["admin", "operations"].includes(state.user?.role);
-  if (!isStaff) {
-    return;
+function customerManagementFilterHtml() {
+  const cm = state.customerManagement;
+  const statusOptions = [
+    ["all", "All"],
+    ["active", "account.status.active"],
+    ["disabled", "account.status.disabled"]
+  ];
+  const configurationOptions = [
+    ["all", "All"],
+    ["missingTariff", "Missing Tariff"],
+    ["noCarrierModes", "No Carrier Modes"],
+    ["onlineBookingDisabled", "Online Booking Disabled"],
+    ["portalNotConfigured", "Portal Not Configured"],
+    ["configurationComplete", "Configuration complete"]
+  ];
+  const sortOptions = [
+    ["recent", "Recently Updated"],
+    ["company", "Company Name"],
+    ["quotes", "Most Quotes"],
+    ["shipments", "Most Shipments"]
+  ];
+  return `
+    <label class="customer-management-search">
+      <span class="sr-only">${escapeHtml(t("Search"))}</span>
+      <input type="search" data-customer-management-query value="${escapeHtml(cm.query)}" placeholder="${escapeHtml(t("Search customers..."))}">
+    </label>
+    ${customerManagementSelectHtml("statusFilter", "Status", statusOptions, cm.statusFilter)}
+    ${customerManagementSelectHtml("configurationFilter", "Configuration", configurationOptions, cm.configurationFilter)}
+    ${customerManagementSelectHtml("sort", "Sort", sortOptions, cm.sort)}
+  `;
+}
+
+function customerManagementSelectHtml(name, label, options, value) {
+  return `
+    <label>
+      <span>${escapeHtml(t(label))}</span>
+      <select data-customer-management-filter="${escapeHtml(name)}">
+        ${options.map(([optionValue, optionLabel]) => `<option value="${escapeHtml(optionValue)}" ${value === optionValue ? "selected" : ""}>${escapeHtml(t(optionLabel))}</option>`).join("")}
+      </select>
+    </label>
+  `;
+}
+
+function customerManagementMetricHtml(metrics) {
+  return [
+    ["Total Customers", metrics.totalCustomers],
+    ["Configuration Incomplete", metrics.configurationIncomplete],
+    ["Online booking enabled", metrics.onlineBookingEnabled]
+  ].map(([label, value]) => `
+    <div class="customer-management-metric">
+      <span>${escapeHtml(t(label))}</span>
+      <strong>${escapeHtml(String(value))}</strong>
+    </div>
+  `).join("");
+}
+
+function customerManagementCardHtml(row) {
+  const customer = row.customer;
+  const statusLabel = t(customerStatusLabelKey(customer));
+  const address = [customer.companyStreet, customer.companyCity, customer.companyState, customer.companyZip].filter(Boolean).join(", ");
+  const quoteModes = normalizeAllowedCarrierModes(customer.allowedCarrierModes || [], []);
+  const bookingModes = customerAllowedBookingModes(customer);
+  const pricing = customerPricingLine(row.pricing);
+  const statusAction = normalizeCustomerAccountStatus(customer.status) === "disabled" ? "Enable" : "Disable";
+  return `
+    <article class="customer-management-card" data-customer-card="${escapeHtml(customer.id)}">
+      <div class="customer-card-main">
+        <div class="customer-management-title-row">
+          <h3>${escapeHtml(customer.companyName || t("Customer"))}</h3>
+          <span class="pill">${escapeHtml(statusLabel)}</span>
+        </div>
+        <p>${escapeHtml([customer.billingEmail || t("No billing email"), customer.paymentTerms || "Net 15"].filter(Boolean).join(" · "))}</p>
+        ${address ? `<p>${escapeHtml(address)}</p>` : ""}
+        <div class="customer-management-details">
+          ${customerManagementDetail("Quote channels", quoteModes.length ? customerManagementCarrierModeListLabel(quoteModes) : t("No Carrier Modes"))}
+          ${customerManagementDetail("customerManagement.onlineBooking", bookingModes.length ? customerManagementCarrierModeListLabel(bookingModes) : t("Booking disabled"))}
+          ${customerManagementDetail("Pricing rule", pricing)}
+          ${customerManagementDetail("Last 30 days", `${t("{count} quotes", { count: row.activity.quotesLast30 })} · ${t("{count} shipments", { count: row.activity.shipmentsLast30 })}`)}
+        </div>
+      </div>
+      <div class="customer-management-card-actions">
+        <button class="secondary-action" type="button" data-customer-management-view="${escapeHtml(customer.id)}">${escapeHtml(t("View Details"))}</button>
+        <button class="secondary-action" type="button" data-customer-management-edit="${escapeHtml(customer.id)}">${escapeHtml(t("Edit"))}</button>
+        <details class="customer-more-menu">
+          <summary>${escapeHtml(t("More"))}</summary>
+          <div class="customer-more-menu-panel">
+            <button type="button" data-toggle-customer-status="${escapeHtml(customer.id)}">${escapeHtml(t(statusAction))}</button>
+            <button type="button" class="danger-link" data-delete-customer="${escapeHtml(customer.id)}">${escapeHtml(t("Delete Customer"))}</button>
+          </div>
+        </details>
+      </div>
+    </article>
+  `;
+}
+
+function customerManagementDetail(label, value) {
+  return `
+    <div>
+      <small>${escapeHtml(t(label))}</small>
+      <strong>${escapeHtml(value || t("N/A"))}</strong>
+    </div>
+  `;
+}
+
+function customerPricingLine(pricing) {
+  if (!pricing?.hasRule) {
+    return t("no tariff");
   }
+  if (pricing.ruleType === "fixed") {
+    return `${t("Fixed markup")}: ${money.format(Number(pricing.value || 0))}`;
+  }
+  return `${t("Percentage markup")}: ${Number(pricing.value || 0)}%`;
+}
 
-  list.querySelectorAll("[data-customer-id]").forEach((row) => {
-    if (row.querySelector(".customer-row-actions")) {
-      return;
-    }
-
-    const customerId = row.dataset.customerId;
-    const customer = state.customers.find((item) => item.id === customerId);
-    if (!customer) {
-      return;
-    }
-
-    const statusAction = customer.status === "disabled" ? "Enable" : "Disable";
-    const actions = document.createElement("div");
-    actions.className = "customer-row-actions";
-    actions.innerHTML = `
-      <button class="secondary-action" type="button" data-edit-customer="${escapeHtml(customer.id)}">Edit</button>
-      <button class="secondary-action" type="button" data-toggle-customer-status="${escapeHtml(customer.id)}">${statusAction}</button>
-      <button class="danger-action" type="button" data-delete-customer="${escapeHtml(customer.id)}">Delete</button>
-    `;
-    row.appendChild(actions);
-  });
-
-  list.querySelectorAll("[data-edit-customer]").forEach((button) => {
-    button.addEventListener("click", () => openCustomerEditor(button.dataset.editCustomer));
-  });
-  list.querySelectorAll("[data-toggle-customer-status]").forEach((button) => {
-    button.addEventListener("click", () => toggleCustomerStatus(button.dataset.toggleCustomerStatus));
-  });
-  list.querySelectorAll("[data-delete-customer]").forEach((button) => {
-    button.addEventListener("click", () => deleteCustomerAccount(button.dataset.deleteCustomer));
-  });
+function customerManagementCarrierModeListLabel(modes) {
+  return normalizeAllowedCarrierModes(modes, [])
+    .map((mode) => t(carrierModeSummaryLabel(mode, false)))
+    .join(" · ");
 }
 
 function renderDashboard() {

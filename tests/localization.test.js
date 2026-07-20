@@ -43,7 +43,8 @@ assert.equal(translate("zh", "Degraded"), "部分异常");
 assert.equal(app.includes("订舱"), false, "customer-facing Chinese translation source should not contain 订舱");
 assert.equal(app.includes("\"Close\": \"下班时间\""), false, "generic Close should not render as business closing time");
 assert.match(html, /id="modalCloseButton"[\s\S]*data-i18n="action\.close"/, "modal close button should use action.close semantic key");
-assert.match(html, /name="companyOpenTime"[\s\S]*data-i18n="business\.closingTime"/, "company hours labels should use business semantic keys");
+assert.match(html, /data-i18n="business\.openingTime"[\s\S]*name="pickupOpen"[\s\S]*data-i18n="business\.closingTime"[\s\S]*name="pickupClose"/, "static pickup hours labels should use business semantic keys");
+assert.match(app, /name="companyOpenTime"[\s\S]*t\("business\.closingTime"\)/, "customer drawer company hours labels should use business semantic keys");
 assert.match(app, /const englishDictionary = translations\.en \|\| \{\};/, "translation helper should include English semantic fallback");
 assert.match(app, /quotes: isCustomer \? "My Quotes" : "Quote Management"/, "customer and staff role presentation should remain separated");
 
