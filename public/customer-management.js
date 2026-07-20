@@ -191,6 +191,23 @@ export function customerExplicitBookingModes(customer = {}) {
   return normalizeModeList(customer.allowedBookingCarrierModes).filter((mode) => allowedModes.includes(mode));
 }
 
+export function shouldCaptureCustomerManagementDraft(drawerMode) {
+  return drawerMode !== "view";
+}
+
+export function customerManagementDirtyAfterTabSwitch(wasDirty) {
+  return Boolean(wasDirty);
+}
+
+export function isCustomerManagementTabDisabled({ drawerMode = "", tab = "basic" } = {}) {
+  return drawerMode === "create" && tab !== "basic";
+}
+
+export function customerPortalStatusLabelKey({ drawerMode = "", draftPortalEmail = "", persistedPortalEmail = "" } = {}) {
+  const value = drawerMode === "view" ? persistedPortalEmail : draftPortalEmail;
+  return String(value || "").trim() ? "Configured" : "Not Configured";
+}
+
 export function updateCarrierModeSelection({ allowedCarrierModes = [], allowedBookingCarrierModes = [] }, mode, quoteEnabled) {
   const key = normalizeCarrierMode(mode);
   const allowed = new Set(normalizeModeList(allowedCarrierModes));

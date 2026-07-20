@@ -6,13 +6,17 @@ import {
   customerActivityCounts,
   customerConfigurationFlags,
   customerExplicitBookingModes,
+  customerManagementDirtyAfterTabSwitch,
   customerManagementViewModel,
   customerMatchesConfigurationFilter,
   customerMatchesSearch,
   customerMatchesStatusFilter,
+  customerPortalStatusLabelKey,
   customerPricingSummary,
   customerStatusLabelKey,
+  isCustomerManagementTabDisabled,
   normalizeCustomerAccountStatus,
+  shouldCaptureCustomerManagementDraft,
   sortCustomerManagementRows,
   updateCarrierModeSelection
 } from "../public/customer-management.js";
@@ -132,6 +136,19 @@ assert.deepEqual(cleared, { allowedCarrierModes: [], allowedBookingCarrierModes:
 assert.equal(carrierModeMatrixRows({}, { showDemo: true }).find((row) => row.key === "demo").quotingEnabled, false, "Demo Rates should not be selected for new customers");
 assert.equal(carrierModeMatrixRows(customers[0], { showDemo: false }).some((row) => row.key === "demo"), true, "existing Demo Rates assignment should be preserved and visible");
 
+assert.equal(customerManagementDirtyAfterTabSwitch(true), true, "dirty drawer should remain dirty after internal tab switching");
+assert.equal(customerManagementDirtyAfterTabSwitch(false), false, "clean drawer should remain clean after internal tab switching");
+assert.equal(shouldCaptureCustomerManagementDraft("view"), false, "View Details tab switching should not capture editable drafts");
+assert.equal(shouldCaptureCustomerManagementDraft("edit"), true, "Edit mode tab switching should capture drafts");
+assert.equal(isCustomerManagementTabDisabled({ drawerMode: "create", tab: "basic" }), false, "Basic Information should stay enabled before create");
+assert.equal(isCustomerManagementTabDisabled({ drawerMode: "create", tab: "pricing" }), true, "Pricing tab should be disabled before create");
+assert.equal(isCustomerManagementTabDisabled({ drawerMode: "create", tab: "blocked" }), true, "Blocked Carriers tab should be disabled before create");
+assert.equal(isCustomerManagementTabDisabled({ drawerMode: "create", tab: "portal" }), true, "Portal tab should be disabled before create");
+assert.equal(isCustomerManagementTabDisabled({ drawerMode: "edit", tab: "pricing" }), false, "Pricing tab should be enabled after create");
+assert.equal(customerPortalStatusLabelKey({ drawerMode: "edit", draftPortalEmail: "draft-user", persistedPortalEmail: "" }), "Configured", "portal status should reflect draft portal username while editing");
+assert.equal(customerPortalStatusLabelKey({ drawerMode: "edit", draftPortalEmail: "", persistedPortalEmail: "saved-user" }), "Not Configured", "empty draft portal username should show Not Configured while editing");
+assert.equal(customerPortalStatusLabelKey({ drawerMode: "view", draftPortalEmail: "", persistedPortalEmail: "saved-user" }), "Configured", "View Details portal status should use persisted portal username");
+
 const app = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
 assert.match(app, /customerManagementViewModel/, "Customer Management rendering should use the pure view model");
 assert.match(app, /function renderCustomerManagementControls/, "Customer Management controls should be rendered independently");
@@ -140,11 +157,22 @@ assert.match(app, /data-customer-management-query[\s\S]*renderCustomerManagement
 assert.match(app, /if \(options\.forceControls \|\| !filters\.hasChildNodes\(\)\)/, "search controls should remain mounted during continuous typing unless intentionally rebuilt");
 assert.doesNotMatch(app.match(/const customerSearch[\s\S]*?return;\n    \}/)?.[0] || "", /renderCustomers\(/, "search input handler must not rerender the full customer workspace");
 assert.match(app, /data-customer-management-add/, "Add Customer drawer action should exist");
+assert.match(app, /Enter the customer's basic information and optional portal access\./, "Add Customer should show pre-creation basic information copy");
+assert.doesNotMatch(app.match(/const subtitle[\s\S]*?;/)?.[0] || "", /Customer created\. Configure pricing and carrier channels\./, "Add Customer must not display success copy before POST succeeds");
+assert.match(app, /isCustomerManagementTabDisabled\(\{ drawerMode: state\.customerManagement\.drawerMode, tab: key \}\)/, "create-mode unavailable tabs should use disabled attributes");
 assert.match(app, /state\.customerManagement\.selectedCustomerId = createdId;/, "creating Customer A should select Customer A after refresh");
+assert.match(app, /state\.customerManagement\.drawerMode = "edit";\n\s+state\.customerManagement\.drawerTab = "pricing";/, "successful creation should enable normal tabs and open Pricing & Channels");
 assert.match(app, /customerId: customer\.id/, "tariff and blocked-carrier saves should use the selected customer ID");
-assert.match(app, /portalPassword: form\.get\("portalPassword"\)/, "Customer PATCH payload should preserve portalPassword field shape when provided");
+assert.match(app, /payload\.portalPassword = portal\.portalPassword;/, "Customer PATCH payload should preserve portalPassword field shape when provided");
 assert.match(app, /allowedCarrierModes,\n\s+allowedBooking:\s+allowedBookingCarrierModes\.length > 0,\n\s+allowedBookingCarrierModes/, "Tariff POST payload should preserve carrier mode fields");
 assert.match(app, /draft:\s*\{\n\s+basic:\s*\{\}/, "customer management should keep explicit drawer draft state");
+assert.match(app, /function customerBasicDraftFromForm\(formElement\)[\s\S]*formElement\.elements\[name\]/, "editable Basic draft capture should read current controls directly");
+assert.match(app, /companyOpenTime: value\("companyOpenTime"\)[\s\S]*companyCloseTime: value\("companyCloseTime"\)[\s\S]*status: value\("status"\)/, "Basic draft capture should preserve time and status controls reliably");
+assert.match(app, /const wasDirty = state\.customerManagement\.dirty;[\s\S]*state\.customerManagement\.dirty = customerManagementDirtyAfterTabSwitch\(wasDirty\);/, "tab switching should preserve dirty state");
+assert.doesNotMatch(app.match(/function setCustomerDrawerTab[\s\S]*?function customerAddressLine/)?.[0] || "", /window\.confirm/, "internal drawer tab switching should not show a loss warning");
+assert.match(app, /if \(!options\.force && state\.modal\?\.modalClass === "customer-management-drawer-modal" && state\.customerManagement\.dirty\)/, "closing a dirty drawer should still warn");
+assert.match(app, /activeView === "customers" && name !== "customers" && state\.customerManagement\.dirty/, "navigating away from a dirty customer drawer should still warn");
+assert.match(app, /shouldCaptureCustomerManagementDraft\(state\.customerManagement\.drawerMode\)/, "View Details should skip editable draft capture");
 assert.match(app, /captureCustomerManagementDraft\(\);\n\s+renderCustomerManagementDrawer\(\);/, "pricing rule type switches should capture draft before re-rendering");
 assert.match(app, /fixedAmount: form\.get\("ruleType"\) === "fixed" \? form\.get\("fixedAmount"\) : "0"/, "inactive fixed pricing field should submit as zero");
 assert.match(app, /markupPercentage: form\.get\("ruleType"\) === "percentage" \? form\.get\("markupPercentage"\) : "0"/, "inactive percentage pricing field should submit as zero");
@@ -158,6 +186,7 @@ assert.match(app, /isView \? "" : `<div class="modal-actions[\s\S]*Save pricing/
 assert.match(app, /isView \? "" : `\n    <form id="customerBlockedCarrierForm"/, "View Details should not render blocked-carrier add form");
 assert.match(app, /isView \? "" : `<div class="modal-actions span-2">[\s\S]*Generate temporary password/, "View Details should not render generated password controls");
 assert.match(app, /data-customer-management-edit/, "View Details should provide an Edit action");
+assert.match(app, /customerPortalStatusLabelKey\(\{[\s\S]*draftPortalEmail: draft\.portalEmail,[\s\S]*persistedPortalEmail: customer\?\.portalEmail/, "Portal status should use draft while editing and persisted value in view mode");
 assert.match(app, /state\.customerManagement\.saving = "blocked";\n\s+renderCustomerManagementDrawer\(\);/, "blocked-carrier save should disable the button before the API request");
 assert.match(app, /state\.customerManagement\.draft\.blocked = \{ carrierKey: "", carrierName: "", reason: "" \};/, "blocked-carrier form should clear only after success");
 assert.match(app, /Opening time must be earlier than closing time\./, "company-hours validation should use company-specific wording");

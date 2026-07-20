@@ -51,7 +51,11 @@ import {
   canEnableBookingMode,
   carrierModeMatrixRows,
   customerExplicitBookingModes,
+  customerManagementDirtyAfterTabSwitch,
   customerManagementViewModel,
+  customerPortalStatusLabelKey,
+  isCustomerManagementTabDisabled,
+  shouldCaptureCustomerManagementDraft,
   customerStatusLabelKey,
   normalizeCustomerAccountStatus
 } from "./customer-management.js";
@@ -414,6 +418,7 @@ const translations = {
     "View customer details": "查看客户详情",
     "Open customer drawer": "打开客户抽屉",
     "Customer management is available to staff users only.": "客户管理仅供员工账号使用。",
+    "Enter the customer's basic information and optional portal access.": "填写客户基本资料和可选的门户账户信息。",
     "Customer Accounts": "客户账户",
     "Company name": "公司名称",
     "Billing email": "账单邮箱",
@@ -2589,13 +2594,14 @@ function customerManagementDrawerHtml() {
   const isCreate = state.customerManagement.drawerMode === "create";
   const isView = state.customerManagement.drawerMode === "view";
   const title = isCreate ? t("+ Add Customer") : customer?.companyName || t("No customer selected.");
-  const subtitle = isCreate ? t("Customer created. Configure pricing and carrier channels.") : customerAddressLine(customer);
+  const subtitle = isCreate ? t("Enter the customer's basic information and optional portal access.") : customerAddressLine(customer);
   const tabs = [
     ["basic", "Basic Information"],
     ["pricing", "Pricing & Channels"],
     ["blocked", "Blocked Carriers"],
     ["portal", "Customer Portal"]
   ];
+  const unavailableTabMessage = t("Enter the customer's basic information and optional portal access.");
   return `
     <div class="customer-drawer" data-customer-management-drawer>
       <header class="customer-drawer-header">
@@ -2607,7 +2613,10 @@ function customerManagementDrawerHtml() {
         ${isView && customer?.id ? `<button class="secondary-action" type="button" data-customer-management-edit="${escapeHtml(customer.id)}">${escapeHtml(t("Edit"))}</button>` : ""}
       </header>
       <nav class="customer-drawer-tabs" aria-label="${escapeHtml(t("Customer Management"))}">
-        ${tabs.map(([key, label]) => `<button type="button" class="${state.customerManagement.drawerTab === key ? "active" : ""}" data-customer-drawer-tab="${escapeHtml(key)}">${escapeHtml(t(label))}</button>`).join("")}
+        ${tabs.map(([key, label]) => {
+          const disabled = isCustomerManagementTabDisabled({ drawerMode: state.customerManagement.drawerMode, tab: key });
+          return `<button type="button" class="${state.customerManagement.drawerTab === key ? "active" : ""}" data-customer-drawer-tab="${escapeHtml(key)}" ${disabled ? `disabled aria-label="${escapeHtml(`${t(label)}. ${unavailableTabMessage}`)}" title="${escapeHtml(unavailableTabMessage)}"` : ""}>${escapeHtml(t(label))}</button>`;
+        }).join("")}
       </nav>
       ${state.customerManagement.error ? `<div class="form-error">${escapeHtml(state.customerManagement.error)}</div>` : ""}
       <section class="customer-drawer-body">
@@ -2808,10 +2817,15 @@ function customerPortalFieldsHtml(customer = {}) {
   const isView = state.customerManagement.drawerMode === "view";
   const draft = state.customerManagement.draft.portal || {};
   const password = draft.portalPassword || "";
+  const portalStatusLabel = customerPortalStatusLabelKey({
+    drawerMode: state.customerManagement.drawerMode,
+    draftPortalEmail: draft.portalEmail,
+    persistedPortalEmail: customer?.portalEmail
+  });
   return `
     <label>
       <span>${escapeHtml(t("Portal status"))}</span>
-      <input readonly value="${escapeHtml(customer?.portalEmail ? t("Configured") : t("Not Configured"))}">
+      <input readonly value="${escapeHtml(t(portalStatusLabel))}">
     </label>
     <label>
       <span>${escapeHtml(t("Portal username"))}</span>
@@ -2909,11 +2923,14 @@ function initializeCustomerManagementDraft(customer = null) {
 }
 
 function captureCustomerManagementDraft() {
+  if (!shouldCaptureCustomerManagementDraft(state.customerManagement.drawerMode)) {
+    return;
+  }
   const basicForm = document.getElementById("customerBasicForm");
   if (basicForm) {
     state.customerManagement.draft.basic = {
       ...state.customerManagement.draft.basic,
-      ...customerPayloadFromForm(new FormData(basicForm))
+      ...customerBasicDraftFromForm(basicForm)
     };
     if (basicForm.elements.portalEmail || basicForm.elements.portalPassword) {
       state.customerManagement.draft.portal = {
@@ -2960,12 +2977,16 @@ function captureCustomerManagementDraft() {
 }
 
 function setCustomerDrawerTab(tab) {
-  if (state.customerManagement.dirty && !window.confirm(t("Unsaved changes will be lost. Continue?"))) {
+  const nextTab = tab || "basic";
+  if (isCustomerManagementTabDisabled({ drawerMode: state.customerManagement.drawerMode, tab: nextTab })) {
     return;
   }
-  captureCustomerManagementDraft();
-  state.customerManagement.drawerTab = tab || "basic";
-  state.customerManagement.dirty = false;
+  const wasDirty = state.customerManagement.dirty;
+  if (shouldCaptureCustomerManagementDraft(state.customerManagement.drawerMode)) {
+    captureCustomerManagementDraft();
+  }
+  state.customerManagement.drawerTab = nextTab;
+  state.customerManagement.dirty = customerManagementDirtyAfterTabSwitch(wasDirty);
   renderCustomerManagementDrawer();
   if (state.customerManagement.drawerTab === "blocked") {
     refreshCarrierPreferences({ silent: true });
@@ -3003,8 +3024,7 @@ async function saveCustomerBasicForm(formElement) {
   if (!isStaffUser()) return;
   if (state.customerManagement.saving) return;
   captureCustomerManagementDraft();
-  const form = new FormData(formElement);
-  const payload = customerPayloadFromForm(form);
+  const payload = customerPayloadFromDraft();
   const validation = validateCustomerBasicPayload(payload);
   if (validation) {
     state.customerManagement.error = validation;
@@ -3021,12 +3041,12 @@ async function saveCustomerBasicForm(formElement) {
       const createdId = createdCustomer?.id || resolveCreatedCustomerId(payload);
       if (createdId) {
         state.customerManagement.selectedCustomerId = createdId;
+        state.customerManagement.drawerMode = "edit";
+        state.customerManagement.drawerTab = "pricing";
+        initializeCustomerManagementDraft(state.customers.find((customer) => customer.id === createdId) || createdCustomer);
       }
-      state.customerManagement.drawerMode = "edit";
-      state.customerManagement.drawerTab = "pricing";
       state.customerManagement.dirty = false;
       state.customerManagement.error = "";
-      initializeCustomerManagementDraft(state.customers.find((customer) => customer.id === createdId) || createdCustomer);
       showToast(t("Customer created. Configure pricing and carrier channels."));
       renderCustomerManagementDrawer();
       return;
@@ -3176,6 +3196,52 @@ function customerPayloadFromForm(form) {
     payload.portalPassword = form.get("portalPassword");
   }
   return payload;
+}
+
+function customerPayloadFromDraft() {
+  const basic = state.customerManagement.draft.basic || {};
+  const portal = state.customerManagement.draft.portal || {};
+  const payload = {
+    companyName: basic.companyName,
+    billingEmail: basic.billingEmail,
+    paymentTerms: basic.paymentTerms,
+    companyPhone: basic.companyPhone,
+    companyOpenTime: basic.companyOpenTime,
+    companyCloseTime: basic.companyCloseTime,
+    companyStreet: basic.companyStreet,
+    companyCity: basic.companyCity,
+    companyState: basic.companyState,
+    companyZip: basic.companyZip,
+    status: basic.status || "active"
+  };
+  if (state.customerManagement.drawerMode === "create") {
+    payload.portalEmail = portal.portalEmail || "";
+  }
+  if (String(portal.portalPassword || "").trim()) {
+    payload.portalPassword = portal.portalPassword;
+  }
+  return payload;
+}
+
+function customerBasicDraftFromForm(formElement) {
+  const previous = state.customerManagement.draft.basic || {};
+  const value = (name) => {
+    const field = formElement.elements[name];
+    return field ? field.value : previous[name] || "";
+  };
+  return {
+    companyName: value("companyName"),
+    billingEmail: value("billingEmail"),
+    paymentTerms: value("paymentTerms"),
+    companyPhone: value("companyPhone"),
+    companyOpenTime: value("companyOpenTime"),
+    companyCloseTime: value("companyCloseTime"),
+    companyStreet: value("companyStreet"),
+    companyCity: value("companyCity"),
+    companyState: value("companyState"),
+    companyZip: value("companyZip"),
+    status: value("status") || previous.status || "active"
+  };
 }
 
 function validateCustomerBasicPayload(payload) {
