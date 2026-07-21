@@ -458,17 +458,37 @@ function auditRowWasAttempted(row = {}) {
 
 function responseHasFailure(value) {
   if (!value || typeof value !== "object") {
-    return failureMessagePattern.test(stringValue(value));
+    return false;
   }
   if (Array.isArray(value)) {
     return value.some(responseHasFailure);
   }
   return Object.entries(value).some(([key, item]) => {
     const normalized = normalizeKey(key);
-    if (["error", "errors", "errorcode", "error_code", "code", "status", "message"].includes(normalized) && failureMessagePattern.test(stringValue(item))) {
+    const errorSemanticKey = [
+      "error",
+      "errors",
+      "errorcode",
+      "code",
+      "status",
+      "message",
+      "errormessage",
+      "failure",
+      "failurereason"
+    ].includes(normalized);
+    if (
+      errorSemanticKey &&
+      item !== null &&
+      item !== undefined &&
+      typeof item !== "object" &&
+      failureMessagePattern.test(String(item))
+    ) {
       return true;
     }
-    return responseHasFailure(item);
+    if (item && typeof item === "object") {
+      return responseHasFailure(item);
+    }
+    return false;
   });
 }
 
@@ -538,7 +558,17 @@ function formatTimeValue(value) {
 
 function keyIsSensitive(key) {
   const normalized = normalizeKey(key);
-  return sensitiveKeyNames.has(normalized) || normalized.endsWith("apikey") || normalized.endsWith("authorization");
+  return sensitiveKeyNames.has(normalized) || [
+    "authorization",
+    "token",
+    "apikey",
+    "secret",
+    "password",
+    "credential",
+    "cookie",
+    "session",
+    "accountnumber"
+  ].some((suffix) => normalized.endsWith(suffix));
 }
 
 function normalizeKey(key) {

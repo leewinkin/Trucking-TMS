@@ -208,6 +208,69 @@ assert.equal(blockedMothershipChannels[0].onlineCarrierBookingSupported, false, 
 const shippedRows = adminQuoteRateRows({ status: "quoted", rates: [{ id: "booked", carrierSource: "speedshipLtl", sellPrice: 100, carrierCost: 80 }] }, { quoteHasShipment: true });
 assert.equal(shippedRows[0].tmsBookingAvailable, false, "quote with an existing shipment should not show an active booking action");
 
+const bookingUnavailableSuccess = adminQuoteCarrierChannelRows({
+  carrierModes: ["speedshipLtl"],
+  rates: [{ id: "rate_1", carrierSource: "speedshipLtl", sellPrice: 120, carrierCost: 100 }],
+  carrierAudit: [{
+    mode: "speedshipLtl",
+    rateCount: 1,
+    carrierMessage: "SpeedShip quote request completed.",
+    request: {},
+    response: {
+      rates: [{ id: "rate_1" }],
+      bookingAvailability: "unavailable",
+      serviceDescription: "Online booking unavailable"
+    }
+  }]
+});
+assert.equal(bookingUnavailableSuccess[0].status, "success", "booking-unavailable response fields should not turn returned rates into quote failures");
+
+const bookingUnavailableNoRates = adminQuoteCarrierChannelRows({
+  carrierModes: ["speedshipLtl"],
+  rates: [],
+  carrierAudit: [{
+    mode: "speedshipLtl",
+    rateCount: 0,
+    carrierMessage: "SpeedShip quote request completed.",
+    request: {},
+    response: {
+      rates: [],
+      bookingAvailability: "unavailable"
+    }
+  }]
+});
+assert.equal(bookingUnavailableNoRates[0].status, "noRates", "booking-unavailable zero-rate responses should remain noRates");
+
+const responseErrorFailed = adminQuoteCarrierChannelRows({
+  carrierModes: ["speedshipLtl"],
+  rates: [],
+  carrierAudit: [{ mode: "speedshipLtl", rateCount: 0, request: {}, response: { error: "Carrier request timed out" } }]
+});
+assert.equal(responseErrorFailed[0].status, "failed", "real response error containers should classify as failed");
+
+const responseErrorPartial = adminQuoteCarrierChannelRows({
+  carrierModes: ["speedshipLtl"],
+  rates: [{ id: "rate_1", carrierSource: "speedshipLtl", sellPrice: 120, carrierCost: 100 }],
+  carrierAudit: [{ mode: "speedshipLtl", rateCount: 1, request: {}, response: { rates: [{ id: "rate_1" }], error: "One provider request failed" } }]
+});
+assert.equal(responseErrorPartial[0].status, "partial", "response errors with returned rates should classify as partial");
+
+const mothershipNotPurchasable = adminQuoteCarrierChannelRows({
+  carrierModes: ["mothershipSandbox"],
+  rates: [{ id: "ms", carrierSource: "mothershipSandbox", sellPrice: 100, carrierCost: 80, purchaseMetadata: { purchasable: false } }],
+  carrierAudit: [{
+    mode: "mothershipSandbox",
+    rateCount: 1,
+    carrierMessage: "Mothership quote request succeeded.",
+    request: {},
+    response: {
+      purchasable: false,
+      invalidFields: ["pickup.time"]
+    }
+  }]
+});
+assert.equal(mothershipNotPurchasable[0].status, "success", "Mothership purchasable false metadata alone must not classify as quote failure");
+
 const sensitive = {
   headers: { authorization: "Bearer abc123", "x-api-key": "x-key", "Authorization": "Basic abc123" },
   nested: { apiKey: "key", "api-key": "dash-key", client_secret: "client", "client-secret": "client-dash", account_number: "12345", "account-number": "dash-account", normal: "Bearer visible-token" },
@@ -232,6 +295,61 @@ assert.equal(diagnosticPayloadIsSafe(redacted), true, "redacted payload should b
 assert.equal(diagnosticPayloadIsSafe({ headers: { "x-api-key": "still-secret" } }), false, "safety check should reject unredacted normalized sensitive keys");
 assert.equal(diagnosticPayloadIsSafe({ headers: { authorization: "Basic abc123" } }), false, "safety check should reject unredacted Basic authorization");
 assert.equal(diagnosticPayloadIsSafe({ body: "Bearer abc123" }), false, "safety check should reject unredacted Bearer strings");
+
+const suffixSensitive = {
+  id_token: "id",
+  auth_token: "auth",
+  "x-auth-token": "xauth",
+  session_token: "session-token",
+  "set-cookie": "cookie",
+  client_password: "client-pass",
+  database_password: "db-pass",
+  serviceAccountNumber: "acct",
+  tokenCount: 42,
+  tokenizationMethod: "wordpiece",
+  headers: {
+    "Proxy-Authorization": "Basic proxy",
+    "X-Authorization": "Bearer xauth",
+    "X-API-Key": "api-key",
+    Cookie: "cookie-value",
+    "X-Auth-Token": "auth-token"
+  }
+};
+const suffixRedacted = redactDiagnosticPayload(suffixSensitive);
+assert.equal(suffixSensitive.id_token, "id", "suffix redaction must not mutate the source");
+assert.equal(suffixRedacted.id_token, "[REDACTED]");
+assert.equal(suffixRedacted.auth_token, "[REDACTED]");
+assert.equal(suffixRedacted["x-auth-token"], "[REDACTED]");
+assert.equal(suffixRedacted.session_token, "[REDACTED]");
+assert.equal(suffixRedacted["set-cookie"], "[REDACTED]");
+assert.equal(suffixRedacted.client_password, "[REDACTED]");
+assert.equal(suffixRedacted.database_password, "[REDACTED]");
+assert.equal(suffixRedacted.serviceAccountNumber, "[REDACTED]");
+assert.equal(suffixRedacted.tokenCount, 42, "tokenCount should not be redacted by a loose contains(token) rule");
+assert.equal(suffixRedacted.tokenizationMethod, "wordpiece", "tokenizationMethod should not be redacted by a loose contains(token) rule");
+assert.equal(suffixRedacted.headers["Proxy-Authorization"], "[REDACTED]");
+assert.equal(suffixRedacted.headers["X-Authorization"], "[REDACTED]");
+assert.equal(suffixRedacted.headers["X-API-Key"], "[REDACTED]");
+assert.equal(suffixRedacted.headers.Cookie, "[REDACTED]");
+assert.equal(suffixRedacted.headers["X-Auth-Token"], "[REDACTED]");
+assert.equal(diagnosticPayloadIsSafe(suffixRedacted), true, "suffix-redacted payload should be safe");
+[
+  { id_token: "id" },
+  { auth_token: "auth" },
+  { "x-auth-token": "xauth" },
+  { session_token: "session" },
+  { "set-cookie": "cookie" },
+  { client_password: "password" },
+  { database_password: "password" },
+  { serviceAccountNumber: "account" },
+  { headers: { "Proxy-Authorization": "Basic proxy" } },
+  { headers: { "X-Authorization": "Bearer xauth" } },
+  { headers: { "X-API-Key": "api-key" } },
+  { headers: { Cookie: "cookie-value" } },
+  { headers: { "X-Auth-Token": "auth-token" } }
+].forEach((payload) => {
+  assert.equal(diagnosticPayloadIsSafe(payload), false, `unredacted sensitive variant should be unsafe: ${JSON.stringify(payload)}`);
+});
 
 const app = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
 const customerQuoteDetailsSlice = app.slice(app.indexOf("function customerQuoteDetailsHtml"), app.indexOf("function quoteDetailsHtml"));
