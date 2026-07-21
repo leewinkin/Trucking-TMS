@@ -357,6 +357,7 @@ const translations = {
     "Copy Sanitized Response": "复制已脱敏响应",
     "Sanitized diagnostic copied.": "已复制脱敏诊断数据。",
     "Copy failed. Select and copy the diagnostic manually.": "复制失败，请手动选择并复制诊断数据。",
+    "Sanitized diagnostic failed safety validation and cannot be copied.": "脱敏诊断数据未通过安全校验，无法复制。",
     "No rates": "暂无运价",
     "rate(s)": "条运价",
     "Customer price unavailable": "客户报价不可用",
@@ -1309,6 +1310,12 @@ function wireNavigation() {
     const adminQuoteLoadMoreButton = event.target.closest("[data-admin-quote-load-more]");
     if (adminQuoteLoadMoreButton) {
       loadMoreAdminQuoteDetailsRates(adminQuoteLoadMoreButton.dataset.adminQuoteLoadMore);
+      return;
+    }
+
+    const adminQuoteCloseButton = event.target.closest("[data-admin-quote-close]");
+    if (adminQuoteCloseButton) {
+      closeModal();
       return;
     }
 
@@ -2693,7 +2700,9 @@ function openBookingConfirmation(quoteId, rateId) {
     return;
   }
 
-  const rate = Array.isArray(quote.rates) ? quote.rates.find((item) => item.id === rateId) : null;
+  const rate = Array.isArray(quote.rates)
+    ? quote.rates.find((item) => item.id === rateId || (!item.id && item.carrierRateId === rateId))
+    : null;
   if (!rate) {
     return;
   }
@@ -2724,7 +2733,9 @@ async function confirmPendingBooking() {
     return;
   }
 
-  const rate = Array.isArray(quote.rates) ? quote.rates.find((item) => item.id === pending.rateId) : null;
+  const rate = Array.isArray(quote.rates)
+    ? quote.rates.find((item) => item.id === pending.rateId || (!item.id && item.carrierRateId === pending.rateId))
+    : null;
   if (!rate) {
     cancelPendingBooking();
     return;
@@ -4520,7 +4531,13 @@ function detailSection(title, contentHtml) {
 
 function quoteAuditRows(quote) {
   if (Array.isArray(quote?.carrierAudit) && quote.carrierAudit.length > 0) {
-    return quote.carrierAudit;
+    return quote.carrierAudit.map((row) => ({
+      ...row,
+      carrierMessage: row.carrierMessage || row.message || row.error || "",
+      request: row.request ?? row.carrierRequest,
+      response: row.response ?? row.rawCarrierResponse,
+      carrierQuoteId: row.carrierQuoteId || row.quoteId || ""
+    }));
   }
 
   if (Array.isArray(quote?.rawCarrierResponse) && quote.rawCarrierResponse.length > 0) {
@@ -4528,10 +4545,10 @@ function quoteAuditRows(quote) {
       mode: run.mode,
       carrier: run.carrier,
       carrierQuoteId: run.carrierQuoteId,
-      carrierMessage: run.carrierMessage,
+      carrierMessage: run.carrierMessage || run.message || run.error || "",
       rateCount: Array.isArray(run.rates) ? run.rates.length : 0,
-      request: null,
-      response: run.rawCarrierResponse
+      request: run.carrierRequest || run.request || null,
+      response: run.rawCarrierResponse || run.response
     }));
   }
 
@@ -5185,9 +5202,19 @@ function safeDiagnosticJson(value) {
 }
 
 async function copySanitizedDiagnostic(button) {
+  if (button.disabled || button.getAttribute("aria-disabled") === "true") {
+    showToast(t("Sanitized diagnostic failed safety validation and cannot be copied."), true);
+    return;
+  }
   const block = button.closest(".audit-block");
-  const payload = block?.querySelector(".audit-json")?.textContent || "";
-  if (!payload) {
+  const payloadBlock = block?.querySelector(".audit-json");
+  const payload = payloadBlock?.textContent || "";
+  if (!payload || payloadBlock?.dataset.diagnosticSafe !== "true") {
+    if (button) {
+      button.disabled = true;
+      button.setAttribute("aria-disabled", "true");
+    }
+    showToast(t("Sanitized diagnostic failed safety validation and cannot be copied."), true);
     return;
   }
   try {
@@ -5222,7 +5249,7 @@ function adminQuoteDetailsHtml(quote) {
         </div>
         <div class="admin-quote-actions">
           <button class="secondary-action" type="button" data-reenter-quote="${escapeHtml(quote.id)}">${t("Use as New Quote")}</button>
-          <button class="secondary-action" type="button" onclick="document.getElementById('modalCloseButton').click()">${t("action.close")}</button>
+          <button class="secondary-action" type="button" data-admin-quote-close>${t("action.close")}</button>
         </div>
       </section>
       ${adminQuoteOverviewHtml(quote, viewModel)}
@@ -5548,7 +5575,7 @@ function adminQuoteCarrierChannelsHtml(quote) {
             <small>${escapeHtml(t("{count} rate(s) returned", { count: channel.rateCount || 0 }))}</small>
             ${channel.carrierQuoteId ? `<small>${escapeHtml(t("Carrier quote ID"))}: ${escapeHtml(channel.carrierQuoteId)}</small>` : ""}
             ${channel.message ? `<p>${escapeHtml(channel.message)}</p>` : ""}
-            <small>${escapeHtml(channel.bookingSupported ? t("Online booking supported") : t("Online booking unavailable"))}</small>
+            <small>${escapeHtml(channel.onlineCarrierBookingSupported ? t("Online booking supported") : t("Online booking unavailable"))}</small>
           </article>
         `).join("")}
       </div>
@@ -5581,6 +5608,8 @@ function adminDiagnosticEntryHtml(quote, row, index) {
   const response = redactDiagnosticPayload(row.response);
   const requestText = safeDiagnosticJson(request);
   const responseText = safeDiagnosticJson(response);
+  const requestSafe = diagnosticPayloadIsSafe(request);
+  const responseSafe = diagnosticPayloadIsSafe(response);
   return `
     <details class="audit-entry admin-diagnostic-entry">
       <summary>
@@ -5596,16 +5625,16 @@ function adminDiagnosticEntryHtml(quote, row, index) {
           <div class="audit-block">
             <div class="audit-block-heading">
               <strong>${escapeHtml(t("Outbound request"))}</strong>
-              <button class="secondary-action compact-action" type="button" data-copy-sanitized-diagnostic>${escapeHtml(t("Copy Sanitized Request"))}</button>
+              <button class="secondary-action compact-action" type="button" data-copy-sanitized-diagnostic ${requestSafe ? "" : "disabled aria-disabled=\"true\""}>${escapeHtml(t("Copy Sanitized Request"))}</button>
             </div>
-            <pre class="audit-json" data-diagnostic-safe="${diagnosticPayloadIsSafe(request) ? "true" : "false"}">${escapeHtml(requestText)}</pre>
+            <pre class="audit-json" data-diagnostic-safe="${requestSafe ? "true" : "false"}">${escapeHtml(requestText)}</pre>
           </div>
           <div class="audit-block">
             <div class="audit-block-heading">
               <strong>${escapeHtml(t("Carrier response"))}</strong>
-              <button class="secondary-action compact-action" type="button" data-copy-sanitized-diagnostic>${escapeHtml(t("Copy Sanitized Response"))}</button>
+              <button class="secondary-action compact-action" type="button" data-copy-sanitized-diagnostic ${responseSafe ? "" : "disabled aria-disabled=\"true\""}>${escapeHtml(t("Copy Sanitized Response"))}</button>
             </div>
-            <pre class="audit-json" data-diagnostic-safe="${diagnosticPayloadIsSafe(response) ? "true" : "false"}">${escapeHtml(responseText)}</pre>
+            <pre class="audit-json" data-diagnostic-safe="${responseSafe ? "true" : "false"}">${escapeHtml(responseText)}</pre>
           </div>
         </div>
       </div>

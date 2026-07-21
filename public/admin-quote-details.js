@@ -21,7 +21,21 @@ const carrierCodeNames = {
   XPOL: "XPO Logistics"
 };
 
-const sensitiveKeyPattern = /authorization|token|access\s*token|refresh\s*token|api\s*key|apikey|client\s*secret|secret|password|credential|cookie|session|account\s*number|account_number/i;
+const sensitiveKeyNames = new Set([
+  "authorization",
+  "token",
+  "accesstoken",
+  "refreshtoken",
+  "apikey",
+  "clientsecret",
+  "secret",
+  "password",
+  "credential",
+  "cookie",
+  "session",
+  "accountnumber"
+]);
+const failureMessagePattern = /\b(fail(?:ed|ure)?|timeout|timed\s*out|error|invalid|reject(?:ed)?|exception|denied|unavailable)\b/i;
 
 export function adminQuoteDetailsViewModel(quote = {}, options = {}) {
   const rates = adminQuoteRateRows(quote, options);
@@ -110,6 +124,8 @@ export function adminQuoteRateRows(quote = {}, options = {}) {
       provider: stringValue(rate?.provider || ""),
       financials,
       booking,
+      tmsBookingAvailable: booking.tmsBookingAvailable,
+      onlineCarrierBookingSupported: booking.onlineCarrierBookingSupported,
       badges: []
     };
   });
@@ -205,9 +221,10 @@ export function adminQuoteCarrierChannelRows(quote = {}) {
     const rows = auditRows.filter((row) => normalizeCarrierMode(row.mode || row.carrier || row.provider) === mode);
     const rates = rateRows.filter((row) => row.source === mode);
     const primary = rows[0] || {};
-    const excluded = rows.some((row) => row.excluded || row.status === "excluded");
-    const failed = rows.some((row) => /fail|error|invalid/i.test(`${row.status || ""} ${row.error || ""}`));
+    const excluded = rows.some((row) => auditRowIsExcluded(row));
+    const failed = !excluded && rows.some((row) => auditRowIsFailure(row));
     const rateCount = rows.reduce((max, row) => Math.max(max, Number(row.rateCount) || 0), rates.length);
+    const attempted = rows.some((row) => auditRowWasAttempted(row));
     let status = "unknown";
     if (excluded) {
       status = "excluded";
@@ -217,9 +234,9 @@ export function adminQuoteCarrierChannelRows(quote = {}) {
       status = "failed";
     } else if (rateCount > 0) {
       status = "success";
-    } else if (rows.length > 0) {
+    } else if (attempted) {
       status = "noRates";
-    } else {
+    } else if (rows.length === 0) {
       status = "notAttempted";
     }
     return {
@@ -229,7 +246,8 @@ export function adminQuoteCarrierChannelRows(quote = {}) {
       rateCount,
       carrierQuoteId: stringValue(primary.carrierQuoteId || primary.quoteId || ""),
       message: stringValue(primary.carrierMessage || primary.message || primary.error || ""),
-      bookingSupported: rates.some((row) => row.booking.bookable),
+      tmsBookingAvailable: rates.some((row) => row.tmsBookingAvailable),
+      onlineCarrierBookingSupported: rates.some((row) => row.onlineCarrierBookingSupported) || rows.some((row) => auditRowIndicatesOnlineBooking(row, mode)),
       auditRows: rows
     };
   });
@@ -287,8 +305,8 @@ export function adminAddressViewModel(stop = {}) {
     name: stringValue(stop.name || stop.companyName || stop.contactName),
     street: stringValue(address.street || stop.street),
     cityStateZip: [cityState, zip].filter(Boolean).join(" "),
-    phone: stringValue(stop.phone || stop.contactPhone),
-    hours: [stop.openTime, stop.closeTime].filter(Boolean).join("-"),
+    phone: stringValue(stop.phoneNumber || stop.phone || stop.contactPhone),
+    hours: formatHoursRange(stop.openTime, stop.closeTime),
     accessorials: Array.isArray(stop.accessorials) ? stop.accessorials.filter(Boolean) : []
   };
 }
@@ -299,10 +317,16 @@ export function adminTariffSummary(tariffRule = null) {
   }
   const type = stringValue(tariffRule.ruleType || tariffRule.type).toLowerCase();
   if (type === "fixed") {
-    return { available: true, labelKey: "Fixed markup", value: readMoney(tariffRule.fixedAmount) };
+    const value = readMoney(tariffRule.fixedAmount);
+    return Number.isFinite(value)
+      ? { available: true, labelKey: "Fixed markup", value }
+      : { available: false, labelKey: "Pricing rule unavailable", value: "" };
   }
   if (type === "percentage") {
-    return { available: true, labelKey: "Percentage markup", value: readFiniteNumber(tariffRule.markupPercentage) };
+    const value = readFiniteNumber(tariffRule.markupPercentage);
+    return Number.isFinite(value)
+      ? { available: true, labelKey: "Percentage markup", value }
+      : { available: false, labelKey: "Pricing rule unavailable", value: "" };
   }
   return { available: false, labelKey: "Pricing rule unavailable", value: "" };
 }
@@ -314,49 +338,50 @@ export function redactDiagnosticPayload(value) {
   if (value && typeof value === "object") {
     return Object.fromEntries(Object.entries(value).map(([key, item]) => [
       key,
-      sensitiveKeyPattern.test(key) ? "[REDACTED]" : redactDiagnosticPayload(item)
+      keyIsSensitive(key) ? "[REDACTED]" : redactDiagnosticPayload(item)
     ]));
   }
   if (typeof value === "string") {
-    return value.replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [REDACTED]");
+    return redactSensitiveString(value);
   }
   return value;
 }
 
 export function diagnosticPayloadIsSafe(value) {
-  const text = JSON.stringify(value);
-  return !/(Bearer\s+(?!\[REDACTED\])|sk-[A-Za-z0-9]|AKIA[0-9A-Z]{16})/i.test(text);
+  return diagnosticValueIsSafe(value);
 }
 
 export function adminRateBookingState(rate = {}, options = {}) {
   const normalizedStatus = stringValue(options.quoteStatus).toLowerCase().replace(/[\s-]+/g, "_");
   if (["expired", "cancelled", "canceled", "failed", "booked"].includes(normalizedStatus) || options.quoteHasShipment) {
-    return { bookable: false, reason: "Quote is not bookable" };
+    return bookingState(false, "Quote is not bookable", false);
   }
   if (options.bookingAllowed === false || rate?.bookingAllowed === false) {
-    return { bookable: false, reason: "Booking unavailable" };
+    return bookingState(false, "Booking unavailable", onlineCarrierBookingSupportedForRate(rate));
   }
   if (rate?.purchaseMetadata?.purchasable === false || rate?.mothershipMetadata?.purchasable === false) {
-    return { bookable: false, reason: "Carrier purchase validation blocked booking" };
+    return bookingState(false, "Carrier purchase validation blocked booking", false);
   }
   if (!Number.isFinite(adminRateFinancials(rate).customerPrice)) {
-    return { bookable: false, reason: "Customer price unavailable" };
+    return bookingState(false, "Customer price unavailable", onlineCarrierBookingSupportedForRate(rate));
   }
-  return { bookable: true, reason: "" };
+  return bookingState(true, "", onlineCarrierBookingSupportedForRate(rate));
 }
 
 function quoteAuditRows(quote) {
   if (Array.isArray(quote?.carrierAudit) && quote.carrierAudit.length > 0) {
-    return quote.carrierAudit;
+    return quote.carrierAudit.map(normalizeAuditRow);
   }
   if (Array.isArray(quote?.rawCarrierResponse)) {
-    return quote.rawCarrierResponse.map((run) => ({
+    return quote.rawCarrierResponse.map((run) => normalizeAuditRow({
       mode: run.carrier || run.mode,
       status: run.status,
       rateCount: Array.isArray(run.rates) ? run.rates.length : 0,
-      carrierMessage: run.error || run.message,
-      request: run.request,
-      response: run.rawCarrierResponse || run.response
+      carrierMessage: run.carrierMessage || run.error || run.message,
+      carrierQuoteId: run.carrierQuoteId,
+      request: run.carrierRequest || run.request,
+      response: run.rawCarrierResponse || run.response,
+      quoteMetadata: run.quoteMetadata
     }));
   }
   return [];
@@ -365,7 +390,8 @@ function quoteAuditRows(quote) {
 function resolveAdminCarrierName(rate = {}, source = "") {
   const explicit = stringValue(rate.actualCarrierName || rate.carrierName || rate.providerCarrierName || rate.carrier?.name || rate.vendor?.name);
   if (explicit) {
-    return explicit;
+    const explicitCodeName = carrierCodeNames[explicit.toUpperCase()];
+    return explicitCodeName || explicit;
   }
   const scac = stringValue(rate.providerScac || rate.scac || rate.carrierCode).toUpperCase();
   if (carrierCodeNames[scac]) {
@@ -375,6 +401,175 @@ function resolveAdminCarrierName(rate = {}, source = "") {
     return "Mothership Test Environment";
   }
   return humanize(rate.provider || source || "Contracted Carrier");
+}
+
+function normalizeAuditRow(row = {}) {
+  return {
+    ...row,
+    carrierMessage: stringValue(row.carrierMessage || row.message || row.error),
+    request: row.request ?? row.carrierRequest,
+    response: row.response ?? row.rawCarrierResponse,
+    carrierQuoteId: row.carrierQuoteId || row.quoteId || "",
+    quoteMetadata: row.quoteMetadata || row.metadata || row.response?.metadata || row.rawCarrierResponse?.metadata || row.response?.data?.metadata || row.rawCarrierResponse?.data?.metadata || null
+  };
+}
+
+function auditRowIsExcluded(row = {}) {
+  const status = stringValue(row.status).toLowerCase();
+  const message = stringValue(row.carrierMessage || row.message || row.error).toLowerCase();
+  return Boolean(
+    row.excluded ||
+    row.intentionalExclusion ||
+    row.exclusion ||
+    status === "excluded" ||
+    status === "preference_excluded" ||
+    message.includes("excluded by customer") ||
+    message.includes("customer preference") ||
+    message.includes("blocked by customer")
+  );
+}
+
+function auditRowIsFailure(row = {}) {
+  if (auditRowIsExcluded(row)) {
+    return false;
+  }
+  const status = stringValue(row.status || row.code || row.errorCode || row.error_code);
+  if (failureMessagePattern.test(status)) {
+    return true;
+  }
+  if (responseHasFailure(row.response)) {
+    return true;
+  }
+  return failureMessagePattern.test(stringValue(row.carrierMessage || row.message || row.error));
+}
+
+function auditRowWasAttempted(row = {}) {
+  return Boolean(
+    row.request ||
+    row.response ||
+    row.carrierMessage ||
+    row.message ||
+    row.error ||
+    row.carrierQuoteId ||
+    row.quoteMetadata ||
+    row.status
+  );
+}
+
+function responseHasFailure(value) {
+  if (!value || typeof value !== "object") {
+    return failureMessagePattern.test(stringValue(value));
+  }
+  if (Array.isArray(value)) {
+    return value.some(responseHasFailure);
+  }
+  return Object.entries(value).some(([key, item]) => {
+    const normalized = normalizeKey(key);
+    if (["error", "errors", "errorcode", "error_code", "code", "status", "message"].includes(normalized) && failureMessagePattern.test(stringValue(item))) {
+      return true;
+    }
+    return responseHasFailure(item);
+  });
+}
+
+function auditRowIndicatesOnlineBooking(row = {}, mode = "") {
+  if (normalizeCarrierMode(mode) !== "mothershipSandbox") {
+    return false;
+  }
+  return purchasableValue(row.quoteMetadata) === true || purchasableValue(row.response?.metadata) === true || purchasableValue(row.response?.data?.metadata) === true;
+}
+
+function onlineCarrierBookingSupportedForRate(rate = {}) {
+  if (normalizeCarrierMode(rate?.carrierSource || rate?.mode || rate?.provider) !== "mothershipSandbox") {
+    return false;
+  }
+  return purchasableValue(rate.purchaseMetadata || rate.mothershipMetadata) === true;
+}
+
+function purchasableValue(metadata) {
+  if (!metadata || typeof metadata !== "object") {
+    return null;
+  }
+  if (typeof metadata.purchasable === "boolean") {
+    return metadata.purchasable;
+  }
+  if (metadata.readyToBook && typeof metadata.readyToBook === "object" && typeof metadata.readyToBook.purchasable === "boolean") {
+    return metadata.readyToBook.purchasable;
+  }
+  if (metadata.purchase && typeof metadata.purchase === "object" && typeof metadata.purchase.purchasable === "boolean") {
+    return metadata.purchase.purchasable;
+  }
+  return null;
+}
+
+function bookingState(tmsBookingAvailable, reason, onlineCarrierBookingSupported) {
+  return {
+    bookable: tmsBookingAvailable,
+    tmsBookingAvailable,
+    onlineCarrierBookingSupported,
+    reason
+  };
+}
+
+function formatHoursRange(openTime, closeTime) {
+  const open = formatTimeValue(openTime);
+  const close = formatTimeValue(closeTime);
+  return open && close ? `${open}\u2013${close}` : [open, close].filter(Boolean).join("\u2013");
+}
+
+function formatTimeValue(value) {
+  const text = stringValue(value);
+  if (!text) {
+    return "";
+  }
+  const digits = text.replace(/\D/g, "");
+  if (/^\d{4}$/.test(digits)) {
+    return `${digits.slice(0, 2)}:${digits.slice(2)}`;
+  }
+  if (/^\d{3}$/.test(digits)) {
+    return `0${digits.slice(0, 1)}:${digits.slice(1)}`;
+  }
+  const match = text.match(/^(\d{1,2}):(\d{2})$/);
+  if (match) {
+    return `${match[1].padStart(2, "0")}:${match[2]}`;
+  }
+  return text;
+}
+
+function keyIsSensitive(key) {
+  const normalized = normalizeKey(key);
+  return sensitiveKeyNames.has(normalized) || normalized.endsWith("apikey") || normalized.endsWith("authorization");
+}
+
+function normalizeKey(key) {
+  return String(key || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function redactSensitiveString(value) {
+  return value
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [REDACTED]")
+    .replace(/\bBasic\s+[A-Za-z0-9._~+/=-]+/gi, "Basic [REDACTED]");
+}
+
+function diagnosticValueIsSafe(value, parentKey = "") {
+  if (Array.isArray(value)) {
+    return value.every((item) => diagnosticValueIsSafe(item, parentKey));
+  }
+  if (value && typeof value === "object") {
+    return Object.entries(value).every(([key, item]) => {
+      if (keyIsSensitive(key) && item !== "[REDACTED]") {
+        return false;
+      }
+      return diagnosticValueIsSafe(item, key);
+    });
+  }
+  if (typeof value === "string") {
+    if ((keyIsSensitive(parentKey) && value !== "[REDACTED]") || /\b(?:Bearer|Basic)\s+(?!\[REDACTED\])\S+/i.test(value)) {
+      return false;
+    }
+    return !/(sk-[A-Za-z0-9]|AKIA[0-9A-Z]{16})/i.test(value);
+  }
+  return true;
 }
 
 function normalizeCarrierModes(value) {
