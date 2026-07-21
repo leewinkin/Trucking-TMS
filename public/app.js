@@ -20,6 +20,21 @@ import {
   quoteHasUsableRates
 } from "./admin-dashboard.js";
 import {
+  adminAddressViewModel,
+  adminFreightSummary,
+  adminQuoteCarrierChannelRows,
+  adminQuoteDetailsViewModel,
+  adminQuoteFinancialSummary,
+  adminQuoteRateRows,
+  adminRateFinancials,
+  adminTariffSummary,
+  aggregateAdminFreightRows,
+  diagnosticPayloadIsSafe,
+  filterAdminQuoteRates,
+  redactDiagnosticPayload,
+  sortAdminQuoteRates
+} from "./admin-quote-details.js";
+import {
   accessorialChargeNotice,
   accessorialExplanation,
   accessorialLabel
@@ -303,6 +318,49 @@ const translations = {
     "Available Rates": "可用运价",
     "Quote Number": "报价编号",
     "Quote Status": "报价状态",
+    "Quote Overview": "报价概览",
+    "Route & Freight": "路线与货物",
+    "Pricing & Profit": "价格与利润",
+    "Carrier Channel Results": "承运商渠道结果",
+    "Technical Diagnostics": "技术诊断",
+    "Quote Expiration": "报价有效期",
+    "Configured carrier channels": "已配置承运商渠道",
+    "Available rate count": "可用运价数量",
+    "Customer pricing rule": "客户加价规则",
+    "Pricing rule unavailable": "加价规则不可用",
+    "Carrier Cost": "承运商成本",
+    "Customer Price": "客户报价",
+    "Gross Profit": "预计毛利",
+    "Margin": "毛利率",
+    "Lowest Carrier Cost": "最低承运商成本",
+    "Lowest Customer Price": "最低客户报价",
+    "Highest Gross Profit": "最高预计毛利",
+    "Highest Margin": "最高毛利率",
+    "Bookable": "可在线预约",
+    "Booking Unavailable": "不可在线预约",
+    "Negative Margin": "负毛利",
+    "All Channels": "全部渠道",
+    "Channel": "渠道",
+    "Carrier Name": "承运商名称",
+    "Bookable rates only": "仅显示可预约运价",
+    "No rates match your filters.": "没有符合筛选条件的运价。",
+    "No carrier channels recorded.": "未记录承运商渠道。",
+    "Success": "成功",
+    "Partial": "部分成功",
+    "Excluded by Customer Settings": "已按客户设置排除",
+    "Not Attempted": "未请求",
+    "{count} rate(s) returned": "返回 {count} 条运价",
+    "Carrier quote ID": "承运商报价 ID",
+    "Online booking supported": "支持在线预约运输",
+    "Online booking unavailable": "暂不支持在线预约运输",
+    "Copy Sanitized Request": "复制已脱敏请求",
+    "Copy Sanitized Response": "复制已脱敏响应",
+    "Sanitized diagnostic copied.": "已复制脱敏诊断数据。",
+    "Copy failed. Select and copy the diagnostic manually.": "复制失败，请手动选择并复制诊断数据。",
+    "No rates": "暂无运价",
+    "rate(s)": "条运价",
+    "Customer price unavailable": "客户报价不可用",
+    "Quote is not bookable": "该报价不可预约运输",
     "Created": "创建时间",
     "Pickup company": "提货公司",
     "Pickup address": "提货地址",
@@ -310,9 +368,14 @@ const translations = {
     "Delivery address": "收货地址",
     "Pickup ready": "可提货时间",
     "Total handling units": "总包装单位数",
+    "Total pieces": "总件数",
     "Total weight": "总重量",
     "Freight class": "货运等级",
     "Dimensions": "尺寸",
+    "Packaging": "包装",
+    "Pieces": "件数",
+    "Weight each": "单件重量",
+    "Distinct freight groups": "货物组数",
     "Description": "货物描述",
     "Pickup accessorials": "提货附加服务",
     "Delivery accessorials": "派送附加服务",
@@ -1063,6 +1126,15 @@ const state = {
     sort: "lowestPrice",
     search: ""
   },
+  adminQuoteDetails: {
+    quoteId: "",
+    search: "",
+    sort: "customerPrice",
+    sourceFilter: "all",
+    bookableOnly: false,
+    visibleCount: 20,
+    diagnosticsOpen: false
+  },
   customerManagement: {
     query: "",
     statusFilter: "all",
@@ -1231,6 +1303,18 @@ function wireNavigation() {
     const customerQuoteLoadMoreButton = event.target.closest("[data-customer-quote-load-more]");
     if (customerQuoteLoadMoreButton) {
       loadMoreCustomerQuoteDetailsRates(customerQuoteLoadMoreButton.dataset.customerQuoteLoadMore);
+      return;
+    }
+
+    const adminQuoteLoadMoreButton = event.target.closest("[data-admin-quote-load-more]");
+    if (adminQuoteLoadMoreButton) {
+      loadMoreAdminQuoteDetailsRates(adminQuoteLoadMoreButton.dataset.adminQuoteLoadMore);
+      return;
+    }
+
+    const diagnosticCopyButton = event.target.closest("[data-copy-sanitized-diagnostic]");
+    if (diagnosticCopyButton) {
+      copySanitizedDiagnostic(diagnosticCopyButton);
       return;
     }
 
@@ -1508,6 +1592,10 @@ function wireForms() {
     if (search) {
       updateCustomerQuoteDetailsSearch(search.dataset.customerQuoteSearch, search.value);
     }
+    const adminSearch = event.target.closest("[data-admin-quote-search]");
+    if (adminSearch) {
+      updateAdminQuoteDetailsSearch(adminSearch.dataset.adminQuoteSearch, adminSearch.value);
+    }
     const customerSearch = event.target.closest("[data-customer-management-query]");
     if (customerSearch) {
       state.customerManagement.query = customerSearch.value;
@@ -1538,6 +1626,18 @@ function wireForms() {
     const sort = event.target.closest("[data-customer-quote-sort]");
     if (sort) {
       updateCustomerQuoteDetailsSort(sort.dataset.customerQuoteSort, sort.value);
+    }
+    const adminSort = event.target.closest("[data-admin-quote-sort]");
+    if (adminSort) {
+      updateAdminQuoteDetailsSort(adminSort.dataset.adminQuoteSort, adminSort.value);
+    }
+    const adminSource = event.target.closest("[data-admin-quote-source-filter]");
+    if (adminSource) {
+      updateAdminQuoteDetailsSourceFilter(adminSource.dataset.adminQuoteSourceFilter, adminSource.value);
+    }
+    const adminBookable = event.target.closest("[data-admin-quote-bookable-only]");
+    if (adminBookable) {
+      updateAdminQuoteDetailsBookableOnly(adminBookable.dataset.adminQuoteBookableOnly, adminBookable.checked);
     }
     const staffRange = event.target.closest("[data-staff-dashboard-range]");
     if (staffRange) {
@@ -2223,6 +2323,7 @@ function paintModal(title, bodyHtml) {
   document.getElementById("modalTitle").textContent = title;
   document.getElementById("modalBody").innerHTML = bodyHtml;
   overlay.classList.toggle("customer-quote-details-modal", state.modal?.modalClass === "customer-quote-details-modal");
+  overlay.classList.toggle("admin-quote-details-modal", state.modal?.modalClass === "admin-quote-details-modal");
   overlay.classList.toggle("customer-management-drawer-modal", state.modal?.modalClass === "customer-management-drawer-modal");
   overlay.classList.remove("hidden");
   overlay.setAttribute("aria-hidden", "false");
@@ -2238,11 +2339,13 @@ function closeModal(options = {}) {
   const overlay = document.getElementById("modalOverlay");
   overlay.classList.add("hidden");
   overlay.classList.remove("customer-quote-details-modal");
+  overlay.classList.remove("admin-quote-details-modal");
   overlay.classList.remove("customer-management-drawer-modal");
   overlay.setAttribute("aria-hidden", "true");
   document.getElementById("modalBody").innerHTML = "";
   state.modal = null;
   state.pendingBooking = null;
+  resetAdminQuoteDetailsControls("");
   if (wasCustomerManagementDrawer) {
     resetCustomerManagementDraft();
   } else {
@@ -2398,13 +2501,15 @@ async function openQuoteDetails(quoteId) {
     return;
   }
 
-  resetCustomerQuoteDetailsControls(quoteId);
   if (isCustomerUser()) {
+    resetCustomerQuoteDetailsControls(quoteId);
     openModal(t("Quote Details"), renderCustomerQuoteDetailsShell(quote), { modalClass: "customer-quote-details-modal" });
     updateCustomerQuoteRateResults(quoteId);
     return;
   }
-  openModal(t("Quote Details"), quoteDetailsHtml(quote));
+  resetAdminQuoteDetailsControls(quoteId);
+  openModal(t("Quote Details"), adminQuoteDetailsHtml(quote), { modalClass: "admin-quote-details-modal" });
+  updateAdminQuoteRateResults(quoteId);
 }
 
 function resetCustomerQuoteDetailsControls(quoteId) {
@@ -2454,6 +2559,92 @@ function updateCustomerQuoteRateResults(quoteId) {
   const count = document.querySelector(`[data-customer-quote-rate-count="${escapedQuoteId}"]`);
   const list = document.querySelector(`[data-customer-quote-rate-list="${escapedQuoteId}"]`);
   const footer = document.querySelector(`[data-customer-quote-rate-footer="${escapedQuoteId}"]`);
+  if (count) {
+    count.textContent = rendered.countText;
+  }
+  if (list) {
+    list.innerHTML = rendered.listHtml;
+  }
+  if (footer) {
+    footer.innerHTML = rendered.footerHtml;
+  }
+}
+
+function resetAdminQuoteDetailsControls(quoteId) {
+  state.adminQuoteDetails = {
+    quoteId,
+    search: "",
+    sort: "customerPrice",
+    sourceFilter: "all",
+    bookableOnly: false,
+    visibleCount: 20,
+    diagnosticsOpen: false
+  };
+}
+
+function adminQuoteDetailsControls(quoteId) {
+  if (state.adminQuoteDetails.quoteId !== quoteId) {
+    resetAdminQuoteDetailsControls(quoteId);
+  }
+  return state.adminQuoteDetails;
+}
+
+function updateAdminQuoteDetailsSearch(quoteId, search) {
+  if (isCustomerUser() || state.adminQuoteDetails.quoteId !== quoteId) {
+    return;
+  }
+  state.adminQuoteDetails.search = String(search || "");
+  state.adminQuoteDetails.visibleCount = 20;
+  updateAdminQuoteRateResults(quoteId);
+}
+
+function updateAdminQuoteDetailsSort(quoteId, sort) {
+  if (isCustomerUser() || state.adminQuoteDetails.quoteId !== quoteId) {
+    return;
+  }
+  state.adminQuoteDetails.sort = ["customerPrice", "carrierCost", "grossProfit", "margin", "transit", "eta", "carrierName"].includes(sort) ? sort : "customerPrice";
+  state.adminQuoteDetails.visibleCount = 20;
+  updateAdminQuoteRateResults(quoteId);
+}
+
+function updateAdminQuoteDetailsSourceFilter(quoteId, sourceFilter) {
+  if (isCustomerUser() || state.adminQuoteDetails.quoteId !== quoteId) {
+    return;
+  }
+  state.adminQuoteDetails.sourceFilter = normalizeCarrierModeValue(sourceFilter || "all");
+  state.adminQuoteDetails.visibleCount = 20;
+  updateAdminQuoteRateResults(quoteId);
+}
+
+function updateAdminQuoteDetailsBookableOnly(quoteId, checked) {
+  if (isCustomerUser() || state.adminQuoteDetails.quoteId !== quoteId) {
+    return;
+  }
+  state.adminQuoteDetails.bookableOnly = Boolean(checked);
+  state.adminQuoteDetails.visibleCount = 20;
+  updateAdminQuoteRateResults(quoteId);
+}
+
+function loadMoreAdminQuoteDetailsRates(quoteId) {
+  if (isCustomerUser() || state.adminQuoteDetails.quoteId !== quoteId) {
+    return;
+  }
+  const quote = state.quotes.find((item) => item.id === quoteId);
+  const total = adminQuoteRateCollections(quote).sortedFilteredRows.length;
+  state.adminQuoteDetails.visibleCount = Math.min((state.adminQuoteDetails.visibleCount || 20) + 20, total);
+  updateAdminQuoteRateResults(quoteId);
+}
+
+function updateAdminQuoteRateResults(quoteId) {
+  const quote = state.quotes.find((item) => item.id === quoteId);
+  if (!quote || !state.modal || state.modal.title !== t("Quote Details")) {
+    return;
+  }
+  const rendered = renderAdminQuoteRateResults(quote);
+  const escapedQuoteId = cssAttributeEscape(quoteId);
+  const count = document.querySelector(`[data-admin-quote-rate-count="${escapedQuoteId}"]`);
+  const list = document.querySelector(`[data-admin-quote-rate-list="${escapedQuoteId}"]`);
+  const footer = document.querySelector(`[data-admin-quote-rate-footer="${escapedQuoteId}"]`);
   if (count) {
     count.textContent = rendered.countText;
   }
@@ -4926,74 +5117,499 @@ function quoteDetailsHtml(quote) {
   if (customerView) {
     return customerQuoteDetailsHtml(quote);
   }
-  const bookingAllowed = customerView ? customerBookingAllowed(quote.customerId) : true;
-  const quoteCarrierModes = quoteCarrierModesList(quote);
-  const sortedRates = sortedQuoteRates(quote);
-  const carrierStatus = quoteCarrierStatusHtml(quote);
-  const availabilityNotice = customerView ? rateAvailabilityNoticeHtml(quote.rateAvailability) : "";
-  const rateCards = sortedRates.length
-    ? sortedRates
-        .map(
-          (rate) => `
-            <article class="rate-item compact-rate quote-rate-card">
-              <div class="rate-main">
-                <div class="rate-title-row">
-                  <span class="carrier-name-badge">${escapeHtml(carrierNameLabel(rate, quote, customerView))}</span>
-                  <span class="service-badge">${escapeHtml(formatRateService(rate?.service))}</span>
-                  ${customerView ? "" : `<span class="carrier-badge">${escapeHtml(carrierBadgeLabel(rate.provider, rate.carrierSource || quote.carrierMode, customerView))}</span>`}
-                </div>
-                <div class="rate-meta-row">
-                  ${customerView ? "" : `<span class="pill">${escapeHtml(rate.carrierSource ? carrierModeSummaryLabel(rate.carrierSource, false) : t("Carrier"))}</span>`}
-                  ${customerView ? "" : `<span class="pill">${escapeHtml(rate.providerScac || t("No SCAC"))}</span>`}
-                  ${customerView ? "" : `<span class="pill">${t("Offer")} ${escapeHtml(rate.carrierQuoteId || rate.carrierRateId || rate.id || "")}</span>`}
-                  ${hasDisplayValue(rate.transitDays) ? `<span class="pill">${t("Transit")} ${escapeHtml(formatTransitDays(rate.transitDays))}</span>` : ""}
-                  ${hasDisplayValue(rate.estimatedDeliveryDate) ? `<span class="pill">ETA ${escapeHtml(formatDate(rate.estimatedDeliveryDate))}</span>` : ""}
-                  ${customerView ? "" : `<span class="pill">${t("Markup")} ${money.format(rate.markup)}</span>`}
-                </div>
-              </div>
-            </article>
-          `
-        )
-        .join("")
-    : `<div class="empty-state">${customerView ? t(quote.rateAvailability?.messageCode === "NO_RATES_AVAILABLE_BY_PREFERENCE" ? "No rates are available based on your current carrier preferences." : "No rates are currently available. Please contact customer service.") : t("No rate details.")}</div>`;
-  const carrierNotice = quote.carrierMessage
-    ? `
-      <div class="quote-status notice-state success-state">
-        <strong>${t("Carrier response")}</strong>
-        <p>${escapeHtml(quote.carrierMessage)}</p>
-      </div>
-    `
-    : "";
-  const bookingNotice = customerView && !bookingAllowed
-    ? `
-      <div class="quote-status notice-state">
-        <strong>${t("Booking disabled")}</strong>
-        <p>${t("Your admin has not enabled shipment booking for this account.")}</p>
-      </div>
-    `
-    : "";
+  return adminQuoteDetailsHtml(quote);
+}
+
+function customerNameById(customerId) {
+  return state.customers.find((customer) => customer.id === customerId)?.companyName || "";
+}
+
+function adminSummaryItem(label, value) {
   return `
-    <div class="detail-grid">
-      ${detailSection(
-        t("Quote Summary"),
-        `
-          ${carrierNotice}
-          ${bookingNotice}
-          ${carrierStatus}
-          ${availabilityNotice}
-          <p><strong>${t("Reference / PO")}:</strong> ${escapeHtml(quote.referenceNumber || "")}</p>
-          ${customerView ? "" : `<p><strong>${t("Tariff")}:</strong> ${escapeHtml(quote.tariffRule?.ruleType || "n/a")} ${quote.tariffRule?.ruleType === "fixed" ? `· ${money.format(Number(quote.tariffRule?.fixedAmount || 0))}` : `· ${Number(quote.tariffRule?.markupPercentage || 0)}%`}</p>`}
-          <p><strong>${t("Pickup")}:</strong> ${escapeHtml(quote.pickup?.name || "")}, ${escapeHtml(quote.pickup?.address?.street || "")}, ${escapeHtml(quote.pickup?.address?.city || "")}, ${escapeHtml(quote.pickup?.address?.state || "")}</p>
-          <p><strong>${t("Delivery")}:</strong> ${escapeHtml(quote.delivery?.name || "")}, ${escapeHtml(quote.delivery?.address?.street || "")}, ${escapeHtml(quote.delivery?.address?.city || "")}, ${escapeHtml(quote.delivery?.address?.state || "")}</p>
-          <p><strong>${t("Freight")}:</strong><br>${freightDetailLinesHtml(convertFreightRowsForDisplay(quote.freight, "imperial", quote.displayFreightUnits || "imperial"), quote.displayFreightUnits || "imperial")}</p>
-        `
-      )}
-      ${customerView ? "" : detailSection(t("Quote Audit"), quoteAuditHtml(quote))}
-      ${detailSection(t("Rates"), rateCards)}
-      <div class="modal-actions">
-        <button class="primary-action" type="button" data-reenter-quote="${escapeHtml(quote.id)}">${t("Re-enter Quote")}</button>
-      </div>
+    <div>
+      <small>${escapeHtml(t(label))}</small>
+      <strong>${escapeHtml(String(value || t("Unavailable")))}</strong>
     </div>
+  `;
+}
+
+function adminMoneyLabel(value) {
+  return Number.isFinite(value) ? money.format(value) : t("Unavailable");
+}
+
+function formatPackagingLabel(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  const labels = {
+    pallet: "Pallet",
+    box: "Box",
+    crate: "Crate",
+    freight: "Freight"
+  };
+  return t(labels[normalized] || value || "Freight");
+}
+
+function adminChannelStatusLabel(status) {
+  const labels = {
+    success: "Success",
+    noRates: "No Rates",
+    partial: "Partial",
+    failed: "Failed",
+    excluded: "Excluded by Customer Settings",
+    notAttempted: "Not Attempted",
+    unknown: "Unknown"
+  };
+  return labels[status] || "Unknown";
+}
+
+function adminChannelStatusTone(status) {
+  if (status === "success") {
+    return "green";
+  }
+  if (status === "partial" || status === "noRates") {
+    return "amber";
+  }
+  if (status === "failed") {
+    return "red";
+  }
+  if (status === "excluded" || status === "notAttempted") {
+    return "gray";
+  }
+  return "neutral";
+}
+
+function safeDiagnosticJson(value) {
+  if (value === undefined || value === null || value === "") {
+    return t("No data recorded.");
+  }
+  return JSON.stringify(value, null, 2);
+}
+
+async function copySanitizedDiagnostic(button) {
+  const block = button.closest(".audit-block");
+  const payload = block?.querySelector(".audit-json")?.textContent || "";
+  if (!payload) {
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(payload);
+    showToast(t("Sanitized diagnostic copied."));
+  } catch (error) {
+    showToast(t("Copy failed. Select and copy the diagnostic manually."), true);
+  }
+}
+
+function adminQuoteDetailsHtml(quote) {
+  const viewModel = adminQuoteDetailsViewModel(quote, {
+    customerName: customerNameById(quote.customerId),
+    quoteHasShipment: quoteHasShipment(quote, state.shipments),
+    bookingAllowed: (sourceQuote, rate) => rateBookingAllowedForUser(sourceQuote, rate)
+  });
+  const header = viewModel.header;
+  const expiration = header.expiresAt ? formatDateTime(header.expiresAt) : t("Unavailable");
+  return `
+    <div class="admin-quote-details">
+      <section class="admin-quote-header">
+        <div class="admin-quote-heading">
+          <div class="customer-quote-title-row">
+            <strong>${escapeHtml(t("Quote Details"))}</strong>
+            ${customerQuoteStatusBadgeHtml(quote)}
+          </div>
+          <h2>${escapeHtml(t("Quote {quoteNumber}", { quoteNumber: customerQuoteNumber(quote) }))}</h2>
+          <p>${escapeHtml(header.route || routeLabel(quote.pickup, quote.delivery))}</p>
+          <small>${escapeHtml(t("Customer"))}: ${escapeHtml(header.customerName || customerNameById(quote.customerId) || t("None"))}</small>
+          <small>${escapeHtml(t("Created"))}: ${escapeHtml(formatDateTime(header.createdAt))} · ${escapeHtml(t("Quote Expiration"))}: ${escapeHtml(expiration)}</small>
+          <small>${escapeHtml(t("Reference / PO"))}: ${escapeHtml(header.referenceNumber || t("None"))}</small>
+        </div>
+        <div class="admin-quote-actions">
+          <button class="secondary-action" type="button" data-reenter-quote="${escapeHtml(quote.id)}">${t("Use as New Quote")}</button>
+          <button class="secondary-action" type="button" onclick="document.getElementById('modalCloseButton').click()">${t("action.close")}</button>
+        </div>
+      </section>
+      ${adminQuoteOverviewHtml(quote, viewModel)}
+      ${adminQuoteRouteFreightHtml(quote, viewModel)}
+      ${adminQuoteFinancialSummaryHtml(viewModel.financial)}
+      ${adminQuoteRateComparisonHtml(quote)}
+      ${adminQuoteCarrierChannelsHtml(quote)}
+      ${adminQuoteDiagnosticsHtml(quote)}
+    </div>
+  `;
+}
+
+function adminQuoteOverviewHtml(quote, viewModel) {
+  const modes = quoteCarrierModesList(quote);
+  return `
+    <section class="detail-section admin-quote-section">
+      <h3>${escapeHtml(t("Quote Overview"))}</h3>
+      <div class="admin-overview-grid">
+        ${adminSummaryItem("Customer", viewModel.header.customerName || customerNameById(quote.customerId) || t("None"))}
+        ${adminSummaryItem("Quote Number", customerQuoteNumber(quote))}
+        ${adminSummaryItem("Quote Status", t(quoteStatusLabelKey(quote, state.shipments)))}
+        ${adminSummaryItem("Reference / PO", quote.referenceNumber || t("None"))}
+        ${adminSummaryItem("Created", formatDateTime(quote.createdAt))}
+        ${adminSummaryItem("Pickup ready", pickupReadyLabel(quote))}
+        ${adminSummaryItem("Available rate count", String(Array.isArray(quote.rates) ? quote.rates.length : 0))}
+        ${adminSummaryItem("Configured carrier channels", modes.length ? modes.map((mode) => t(carrierModeSummaryLabel(mode, false))).join(", ") : t("None"))}
+      </div>
+    </section>
+  `;
+}
+
+function adminQuoteRouteFreightHtml(quote, viewModel) {
+  const freightRows = aggregateAdminFreightRows(convertFreightRowsForDisplay(quote.freight, "imperial", quote.displayFreightUnits || "imperial"));
+  const freightSummary = adminFreightSummary(freightRows);
+  return `
+    <section class="detail-section admin-quote-section">
+      <h3>${escapeHtml(t("Route & Freight"))}</h3>
+      <div class="admin-route-grid">
+        ${adminAddressCardHtml("Pickup", adminAddressViewModel(quote.pickup || {}))}
+        ${adminAddressCardHtml("Delivery", adminAddressViewModel(quote.delivery || {}))}
+      </div>
+      ${adminFreightSummaryCardsHtml(freightSummary, quote.displayFreightUnits || "imperial")}
+      ${adminFreightTableHtml(freightRows, quote.displayFreightUnits || "imperial")}
+      ${adminTariffHtml(adminTariffSummary(quote.tariffRule || quote.tariffSnapshot || null))}
+    </section>
+  `;
+}
+
+function adminAddressCardHtml(label, address) {
+  return `
+    <article class="admin-address-card">
+      <h4>${escapeHtml(t(label))}</h4>
+      <strong>${escapeHtml(address.name || t("None"))}</strong>
+      ${address.street ? `<span>${escapeHtml(address.street)}</span>` : ""}
+      ${address.cityStateZip ? `<span>${escapeHtml(address.cityStateZip)}</span>` : ""}
+      ${address.phone ? `<span>${escapeHtml(address.phone)}</span>` : ""}
+      ${address.hours ? `<span>${escapeHtml(t("Hours"))}: ${escapeHtml(address.hours)}</span>` : ""}
+      <span>${escapeHtml(t("Accessorials"))}: ${escapeHtml(accessorialListLabel(address.accessorials))}</span>
+    </article>
+  `;
+}
+
+function adminFreightSummaryCardsHtml(summary, units = "imperial") {
+  const config = getFreightUnitConfig(units);
+  return `
+    <div class="admin-freight-summary">
+      ${adminSummaryItem("Total handling units", String(summary.handlingUnits || 0))}
+      ${adminSummaryItem("Total pieces", summary.totalPieces ? String(summary.totalPieces) : t("Unavailable"))}
+      ${adminSummaryItem("Total weight", summary.totalWeight ? `${summary.totalWeight} ${config.totalWeightSummaryUnit}` : t("Unavailable"))}
+      ${adminSummaryItem("Freight class", summary.freightClasses.length ? summary.freightClasses.join(", ") : t("Unavailable"))}
+      ${adminSummaryItem("Distinct freight groups", String(summary.groupCount || 0))}
+    </div>
+  `;
+}
+
+function adminFreightTableHtml(rows, units = "imperial") {
+  const config = getFreightUnitConfig(units);
+  if (!rows.length) {
+    return `<div class="empty-state">${escapeHtml(t("No freight details recorded."))}</div>`;
+  }
+  return `
+    <div class="admin-table-scroll">
+      <table class="admin-rate-table admin-freight-table">
+        <thead>
+          <tr>
+            <th>${escapeHtml(t("Quantity"))}</th>
+            <th>${escapeHtml(t("Packaging"))}</th>
+            <th>${escapeHtml(t("Pieces"))}</th>
+            <th>${escapeHtml(t("Dimensions"))}</th>
+            <th>${escapeHtml(t("Weight each"))}</th>
+            <th>${escapeHtml(t("Total weight"))}</th>
+            <th>${escapeHtml(t("Freight class"))}</th>
+            <th>${escapeHtml(t("Description"))}</th>
+            <th>${escapeHtml(t("Stackable"))}</th>
+            <th>${escapeHtml(t("Hazmat"))}</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map((row) => `
+            <tr>
+              <td>${escapeHtml(String(row.quantity || t("Unavailable")))}</td>
+              <td>${escapeHtml(formatPackagingLabel(row.type))}</td>
+              <td>${escapeHtml(row.pieces || t("Unavailable"))}</td>
+              <td>${escapeHtml([row.length, row.width, row.height].filter(Boolean).join(" x ") || t("Unavailable"))} ${[row.length, row.width, row.height].some(Boolean) ? escapeHtml(config.dimensionSummaryUnit) : ""}</td>
+              <td>${escapeHtml(row.weight || t("Unavailable"))} ${row.weight ? escapeHtml(config.weightSummaryUnit) : ""}</td>
+              <td>${row.totalWeight ? `${escapeHtml(String(row.totalWeight))} ${escapeHtml(config.totalWeightSummaryUnit)}` : escapeHtml(t("Unavailable"))}</td>
+              <td>${escapeHtml(row.freightClass || t("Unavailable"))}</td>
+              <td>${escapeHtml(row.description || t("Unavailable"))}</td>
+              <td>${escapeHtml(row.stackable ? t("Yes") : t("No"))}</td>
+              <td>${escapeHtml(row.hazmat ? t("Yes") : t("No"))}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function adminTariffHtml(tariff) {
+  if (!tariff.available) {
+    return `<div class="admin-tariff-card"><small>${escapeHtml(t("Customer pricing rule"))}</small><strong>${escapeHtml(t("Pricing rule unavailable"))}</strong></div>`;
+  }
+  const value = tariff.labelKey === "Fixed markup"
+    ? money.format(tariff.value)
+    : `${tariff.value}%`;
+  return `<div class="admin-tariff-card"><small>${escapeHtml(t("Customer pricing rule"))}</small><strong>${escapeHtml(t(tariff.labelKey))}: ${escapeHtml(value)}</strong></div>`;
+}
+
+function adminQuoteFinancialSummaryHtml(summary) {
+  return `
+    <section class="detail-section admin-quote-section">
+      <h3>${escapeHtml(t("Pricing & Profit"))}</h3>
+      <div class="admin-financial-grid">
+        ${adminSummaryItem("Available Rates", String(summary.availableRates || 0))}
+        ${adminSummaryItem("Lowest Carrier Cost", adminMoneyLabel(summary.lowestCarrierCost))}
+        ${adminSummaryItem("Lowest Customer Price", adminMoneyLabel(summary.lowestCustomerPrice))}
+        ${adminSummaryItem("Highest Gross Profit", adminMoneyLabel(summary.highestGrossProfit))}
+      </div>
+    </section>
+  `;
+}
+
+function adminQuoteRateComparisonHtml(quote) {
+  const controls = adminQuoteDetailsControls(quote.id);
+  const sources = adminQuoteRateRows(quote, {
+    quoteHasShipment: quoteHasShipment(quote, state.shipments),
+    bookingAllowed: (sourceQuote, rate) => rateBookingAllowedForUser(sourceQuote, rate)
+  })
+    .map((row) => row.source)
+    .filter(Boolean);
+  const sourceOptions = ["all", ...Array.from(new Set(sources))];
+  return `
+    <section class="detail-section admin-quote-section admin-rate-section">
+      <div class="admin-rate-toolbar">
+        <div>
+          <h3>${escapeHtml(t("Available Rates"))}</h3>
+          <small data-admin-quote-rate-count="${escapeHtml(quote.id)}"></small>
+        </div>
+        <label>
+          ${escapeHtml(t("Search carrier"))}
+          <input type="search" value="${escapeHtml(controls.search)}" data-admin-quote-search="${escapeHtml(quote.id)}" placeholder="${escapeHtml(t("Search carrier"))}">
+        </label>
+        <label>
+          ${escapeHtml(t("Channel"))}
+          <select data-admin-quote-source-filter="${escapeHtml(quote.id)}">
+            ${sourceOptions.map((source) => `<option value="${escapeHtml(source)}" ${controls.sourceFilter === source ? "selected" : ""}>${escapeHtml(source === "all" ? t("All Channels") : t(carrierModeSummaryLabel(source, false)))}</option>`).join("")}
+          </select>
+        </label>
+        <label>
+          ${escapeHtml(t("Sort"))}
+          <select data-admin-quote-sort="${escapeHtml(quote.id)}">
+            ${[
+              ["customerPrice", "Lowest Customer Price"],
+              ["carrierCost", "Lowest Carrier Cost"],
+              ["grossProfit", "Highest Gross Profit"],
+              ["margin", "Highest Margin"],
+              ["transit", "Fastest Transit"],
+              ["eta", "Earliest ETA"],
+              ["carrierName", "Carrier Name"]
+            ].map(([value, label]) => `<option value="${value}" ${controls.sort === value ? "selected" : ""}>${escapeHtml(t(label))}</option>`).join("")}
+          </select>
+        </label>
+        <label class="admin-bookable-filter">
+          <input type="checkbox" data-admin-quote-bookable-only="${escapeHtml(quote.id)}" ${controls.bookableOnly ? "checked" : ""}>
+          ${escapeHtml(t("Bookable rates only"))}
+        </label>
+      </div>
+      <div data-admin-quote-rate-list="${escapeHtml(quote.id)}"></div>
+      <div class="rate-list-footer" data-admin-quote-rate-footer="${escapeHtml(quote.id)}"></div>
+    </section>
+  `;
+}
+
+function adminQuoteRateCollections(quote) {
+  const controls = adminQuoteDetailsControls(quote?.id || "");
+  const rows = adminQuoteRateRows(quote, {
+    quoteHasShipment: quoteHasShipment(quote, state.shipments),
+    bookingAllowed: (sourceQuote, rate) => rateBookingAllowedForUser(sourceQuote, rate)
+  });
+  const filteredRows = filterAdminQuoteRates(rows, controls);
+  const sortedFilteredRows = sortAdminQuoteRates(filteredRows, controls.sort);
+  const visibleRows = sortedFilteredRows.slice(0, controls.visibleCount);
+  return {
+    controls,
+    rows,
+    filteredRows,
+    sortedFilteredRows,
+    visibleRows
+  };
+}
+
+function renderAdminQuoteRateResults(quote) {
+  const collections = adminQuoteRateCollections(quote);
+  const countText = adminQuoteRateCountText(collections);
+  const listHtml = collections.visibleRows.length
+    ? adminRateTableHtml(quote, collections.visibleRows)
+    : `<div class="empty-state">${escapeHtml(collections.rows.length ? t("No rates match your filters.") : t("No rate details."))}</div>`;
+  const footerHtml = collections.visibleRows.length < collections.sortedFilteredRows.length
+    ? `<button class="secondary-action" type="button" data-admin-quote-load-more="${escapeHtml(quote.id)}">${t("Load More")}</button>`
+    : "";
+  return { countText, listHtml, footerHtml };
+}
+
+function adminQuoteRateCountText(collections) {
+  if (collections.filteredRows.length !== collections.rows.length) {
+    return t("Showing {visible} of {matching} matching rates · {total} total", {
+      visible: collections.visibleRows.length,
+      matching: collections.filteredRows.length,
+      total: collections.rows.length
+    });
+  }
+  return t("Showing {visible} of {total} rates", {
+    visible: collections.visibleRows.length,
+    total: collections.rows.length
+  });
+}
+
+function adminRateTableHtml(quote, rows) {
+  return `
+    <div class="admin-table-scroll">
+      <table class="admin-rate-table">
+        <thead>
+          <tr>
+            <th>${escapeHtml(t("Carrier"))}</th>
+            <th>${escapeHtml(t("Service"))}</th>
+            <th>${escapeHtml(t("Channel"))}</th>
+            <th>${escapeHtml(t("SCAC"))}</th>
+            <th>${escapeHtml(t("Transit"))}</th>
+            <th>${escapeHtml(t("ETA"))}</th>
+            <th>${escapeHtml(t("Carrier Cost"))}</th>
+            <th>${escapeHtml(t("Customer Price"))}</th>
+            <th>${escapeHtml(t("Gross Profit"))}</th>
+            <th>${escapeHtml(t("Margin"))}</th>
+            <th>${escapeHtml(t("Booking"))}</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map((row) => adminRateRowHtml(quote, row)).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function adminRateRowHtml(quote, row) {
+  return `
+    <tr class="${row.financials.grossProfit < 0 ? "negative-margin-row" : ""}">
+      <td>
+        <strong>${escapeHtml(row.carrierName)}</strong>
+        ${row.carrierQuoteId ? `<small>${escapeHtml(t("Offer"))} ${escapeHtml(row.carrierQuoteId)}</small>` : ""}
+        <div class="admin-rate-badges">${adminRateBadgesHtml(row.badges)}</div>
+      </td>
+      <td>${escapeHtml(formatRateService(row.service))}</td>
+      <td>${escapeHtml(t(row.channel))}</td>
+      <td>${escapeHtml(row.scac || t("No SCAC"))}</td>
+      <td>${Number.isFinite(row.transitDays) ? escapeHtml(formatTransitDays(row.transitDays)) : escapeHtml(t("Unavailable"))}</td>
+      <td>${row.estimatedDeliveryDate ? escapeHtml(formatDate(row.estimatedDeliveryDate)) : escapeHtml(t("Unavailable"))}</td>
+      <td>${escapeHtml(adminMoneyLabel(row.financials.carrierCost))}</td>
+      <td>${escapeHtml(adminMoneyLabel(row.financials.customerPrice))}</td>
+      <td>${escapeHtml(adminMoneyLabel(row.financials.grossProfit))}</td>
+      <td>${Number.isFinite(row.financials.marginPercent) ? `${escapeHtml(String(row.financials.marginPercent))}%` : escapeHtml(t("Unavailable"))}</td>
+      <td>${row.booking.bookable
+        ? `<button class="primary-action rate-book-action" type="button" data-book-rate="${escapeHtml(row.id)}" data-book-quote="${escapeHtml(quote.id)}">${t("Book Shipment")}</button>`
+        : `<span class="booking-disabled-note">${escapeHtml(t(row.booking.reason || "Booking unavailable"))}</span>`}
+      </td>
+    </tr>
+  `;
+}
+
+function adminRateBadgesHtml(badges) {
+  const labels = {
+    lowestCustomerPrice: "Lowest Customer Price",
+    lowestCarrierCost: "Lowest Carrier Cost",
+    fastest: "Fastest",
+    highestMargin: "Highest Margin",
+    bookable: "Bookable",
+    unavailable: "Booking Unavailable",
+    negativeMargin: "Negative Margin"
+  };
+  return (Array.isArray(badges) ? badges : [])
+    .map((badge) => `<span class="best-rate-badge ${badge === "negativeMargin" ? "warning-pill" : ""}">${escapeHtml(t(labels[badge] || badge))}</span>`)
+    .join("");
+}
+
+function adminQuoteCarrierChannelsHtml(quote) {
+  const channels = adminQuoteCarrierChannelRows(quote);
+  if (!channels.length) {
+    return `
+      <section class="detail-section admin-quote-section">
+        <h3>${escapeHtml(t("Carrier Channel Results"))}</h3>
+        <div class="empty-state">${escapeHtml(t("No carrier channels recorded."))}</div>
+      </section>
+    `;
+  }
+  return `
+    <section class="detail-section admin-quote-section">
+      <h3>${escapeHtml(t("Carrier Channel Results"))}</h3>
+      <div class="admin-channel-grid">
+        ${channels.map((channel) => `
+          <article class="admin-channel-card status-${escapeHtml(adminChannelStatusTone(channel.status))}">
+            <strong>${escapeHtml(t(channel.channel))}</strong>
+            <span>${escapeHtml(t(adminChannelStatusLabel(channel.status)))}</span>
+            <small>${escapeHtml(t("{count} rate(s) returned", { count: channel.rateCount || 0 }))}</small>
+            ${channel.carrierQuoteId ? `<small>${escapeHtml(t("Carrier quote ID"))}: ${escapeHtml(channel.carrierQuoteId)}</small>` : ""}
+            ${channel.message ? `<p>${escapeHtml(channel.message)}</p>` : ""}
+            <small>${escapeHtml(channel.bookingSupported ? t("Online booking supported") : t("Online booking unavailable"))}</small>
+          </article>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function adminQuoteDiagnosticsHtml(quote) {
+  const rows = quoteAuditRows(quote);
+  if (!rows.length) {
+    return `
+      <details class="detail-section admin-quote-section admin-diagnostics">
+        <summary>${escapeHtml(t("Technical Diagnostics"))}</summary>
+        <div class="empty-state audit-empty">${escapeHtml(t("No carrier audit data recorded for this quote."))}</div>
+      </details>
+    `;
+  }
+  return `
+    <details class="detail-section admin-quote-section admin-diagnostics">
+      <summary>${escapeHtml(t("Technical Diagnostics"))}</summary>
+      <div class="audit-panel">
+        ${rows.map((row, index) => adminDiagnosticEntryHtml(quote, row, index)).join("")}
+      </div>
+    </details>
+  `;
+}
+
+function adminDiagnosticEntryHtml(quote, row, index) {
+  const request = redactDiagnosticPayload(row.request);
+  const response = redactDiagnosticPayload(row.response);
+  const requestText = safeDiagnosticJson(request);
+  const responseText = safeDiagnosticJson(response);
+  return `
+    <details class="audit-entry admin-diagnostic-entry">
+      <summary>
+        <span>${escapeHtml(t(carrierModeSummaryLabel(row.mode || row.carrier || quote.carrierMode, false)))}</span>
+        <span class="audit-summary-meta">
+          ${row.rateCount ? `${escapeHtml(String(row.rateCount))} ${escapeHtml(t("rate(s)"))}` : escapeHtml(t("No rates"))}
+          ${row.carrierQuoteId ? ` · ${escapeHtml(row.carrierQuoteId)}` : ""}
+        </span>
+      </summary>
+      <div class="audit-entry-body">
+        ${row.carrierMessage || row.message ? `<p class="audit-message">${escapeHtml(row.carrierMessage || row.message)}</p>` : ""}
+        <div class="audit-grid">
+          <div class="audit-block">
+            <div class="audit-block-heading">
+              <strong>${escapeHtml(t("Outbound request"))}</strong>
+              <button class="secondary-action compact-action" type="button" data-copy-sanitized-diagnostic>${escapeHtml(t("Copy Sanitized Request"))}</button>
+            </div>
+            <pre class="audit-json" data-diagnostic-safe="${diagnosticPayloadIsSafe(request) ? "true" : "false"}">${escapeHtml(requestText)}</pre>
+          </div>
+          <div class="audit-block">
+            <div class="audit-block-heading">
+              <strong>${escapeHtml(t("Carrier response"))}</strong>
+              <button class="secondary-action compact-action" type="button" data-copy-sanitized-diagnostic>${escapeHtml(t("Copy Sanitized Response"))}</button>
+            </div>
+            <pre class="audit-json" data-diagnostic-safe="${diagnosticPayloadIsSafe(response) ? "true" : "false"}">${escapeHtml(responseText)}</pre>
+          </div>
+        </div>
+      </div>
+    </details>
   `;
 }
 
@@ -5060,6 +5676,7 @@ function staffBookingConfirmationHtml(quote, rate) {
   const isCarrierBooking = rate?.carrierSource === "mothershipSandbox";
   const purchaseSummary = summarizeMothershipPurchaseMetadata(mothershipPurchaseMetadata(quote, rate));
   const bookingBlocked = Boolean(purchaseSummary && purchaseSummary.purchasable === false);
+  const financials = adminRateFinancials(rate);
   const eligibilityLines = purchaseSummary
     ? [
         `<p><strong>${t("Mothership status")}:</strong> ${purchaseSummary.purchasable ? t("Purchasable") : t("Not purchasable")}</p>`,
@@ -5104,8 +5721,12 @@ function staffBookingConfirmationHtml(quote, rate) {
           <strong>${escapeHtml([quote.pickup?.address?.zip, quote.delivery?.address?.zip].filter(Boolean).join(" → ") || "N/A")}</strong>
         </div>
         <div>
-          <small>${t("Cost")}</small>
-          <strong>${money.format(rate.sellPrice)}</strong>
+          <small>${t("Carrier Cost")}</small>
+          <strong>${escapeHtml(adminMoneyLabel(financials.carrierCost))}</strong>
+        </div>
+        <div>
+          <small>${t("Customer Price")}</small>
+          <strong>${escapeHtml(adminMoneyLabel(financials.customerPrice))}</strong>
         </div>
       </div>
       <div class="modal-actions">

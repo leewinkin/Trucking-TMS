@@ -335,8 +335,8 @@ assert.match(styles, /customer-quote-details-modal \.modal-header[\s\S]*clip-pat
 assert.match(styles, /compact-notice[\s\S]*padding: 10px 12px/, "booking-disabled notice should remain compact");
 assert.match(styles, /customer-rate-toolbar/, "customer quote rate controls should be styled");
 assert.match(styles, /customer-quote-rate-card[\s\S]*grid-template-columns: minmax\(0, 1fr\) minmax\(160px, auto\)/, "desktop rate row should keep price and booking action on the right");
-assert.match(employeeQuoteDetailsSlice, /Quote Audit/, "employee quote audit screen should remain available");
-assert.match(employeeQuoteDetailsSlice, /quoteAuditHtml\(quote\)/, "employee quote details should retain quote audit rendering");
+assert.match(employeeQuoteDetailsSlice, /Technical Diagnostics/, "employee quote diagnostics should remain available in the redesigned admin view");
+assert.match(employeeQuoteDetailsSlice, /adminQuoteDetailsHtml\(quote\)/, "employee quote details should use the admin quote details renderer");
 assert.match(app, /"Your Price": "您的报价"/, "Your Price Chinese translation should exist");
 assert.match(app, /"Price unavailable": "价格暂不可用"/, "Price unavailable Chinese translation should exist");
 assert.match(app, /"Book Shipment": "预约运输"/, "Book Shipment Chinese translation should use trucking booking terminology");
@@ -367,7 +367,8 @@ assert.match(staffBookingConfirmationSlice, /Booking blocked by Mothership/, "st
 assert.match(staffBookingConfirmationSlice, /Purchase eligibility/, "staff booking confirmation should retain purchase eligibility details");
 assert.match(staffBookingConfirmationSlice, /Pickup suggestions/, "staff booking confirmation should retain pickup suggestion details");
 assert.match(staffBookingConfirmationSlice, /Delivery suggestions/, "staff booking confirmation should retain delivery suggestion details");
-assert.match(staffBookingConfirmationSlice, /<small>\$\{t\("Cost"\)\}<\/small>/, "staff booking confirmation may retain internal Cost label");
+assert.match(staffBookingConfirmationSlice, /<small>\$\{t\("Carrier Cost"\)\}<\/small>/, "staff booking confirmation should label carrier cost explicitly");
+assert.match(staffBookingConfirmationSlice, /<small>\$\{t\("Customer Price"\)\}<\/small>/, "staff booking confirmation should label customer price explicitly");
 assert.match(app, /"This will submit the selected rate for shipment booking\. Please confirm before continuing\.": "系统将使用所选运价提交运输预约，请确认信息后继续。"/, "customer-safe confirmation wording Chinese translation should exist");
 assert.match(app, /"This rate cannot be booked online\. Please choose another rate or contact customer service\.": "此运价暂无法在线预约运输，请选择其他运价或联系客服。"/, "customer-safe blocked booking Chinese translation should exist");
 
