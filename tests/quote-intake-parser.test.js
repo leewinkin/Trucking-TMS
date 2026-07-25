@@ -184,6 +184,8 @@ const structuredQuestionnaire = `
 
 货物中文名称/英文名称：电动手推车
 是否是危险品：否
+危险品的UN编号：
+危险类别：
 托数：1
 托的长宽高（CM/in）：175*75*75CM
 单托重量（KG/lb）：247kg
@@ -192,10 +194,12 @@ const structuredQuestionnaire = `
 PGT TRANSPORT, INC.
 10125 NW 116TH WAY STE 1
 MIAMI, FL 33178-1164
+United States
 
 收货地址类型：办公
 是否需要带尾板：是
 是否预约派送：是
+麻烦帮忙测算一下费用，谢谢
 `;
 const questionnaire = parseQuoteQuestionnaireText(structuredQuestionnaire);
 assert.equal(questionnaire.pickup.street, "8449 Milliken Avenue, Unit 102, 30dock");
@@ -203,12 +207,14 @@ assert.equal(questionnaire.pickup.city, "Rancho Cucamonga");
 assert.equal(questionnaire.pickup.state, "CA");
 assert.equal(questionnaire.pickup.zip, "91730");
 assert.equal(questionnaire.pickup.addressType, "commercial");
+assert.equal(questionnaire.accessorials.pickup.residential, false);
 assert.equal(questionnaire.delivery.name, "PGT TRANSPORT, INC.");
 assert.equal(questionnaire.delivery.street, "10125 NW 116TH WAY STE 1");
 assert.equal(questionnaire.delivery.city, "MIAMI");
 assert.equal(questionnaire.delivery.state, "FL");
 assert.equal(questionnaire.delivery.zip, "33178-1164");
 assert.equal(questionnaire.delivery.addressType, "office");
+assert.equal(questionnaire.accessorials.delivery.residential, false);
 assert.equal(questionnaire.freight.quantity, 1);
 assert.equal(questionnaire.freight.type, "pallet");
 assert.equal(questionnaire.freight.description, "电动手推车");
@@ -219,22 +225,27 @@ assert.equal(questionnaire.freight.width, 75);
 assert.equal(questionnaire.freight.height, 75);
 assert.equal(questionnaire.freight.dimensionUnit, "cm");
 assert.equal(questionnaire.freight.hazmat, false);
+assert.equal(questionnaire.freight.unNumber, undefined);
+assert.equal(questionnaire.freight.hazardClass, undefined);
 assert.equal(questionnaire.accessorials.pickup.liftgate, true);
 assert.equal(questionnaire.accessorials.delivery.liftgate, true);
 assert.equal(questionnaire.accessorials.delivery.appointment, true);
+assert.deepEqual(questionnaire.notes, ["麻烦帮忙测算一下费用,谢谢"]);
 
-const structured = parseQuoteIntakeText(`${structuredQuestionnaire}\n麻烦帮忙测算一下费用，谢谢`);
+const structured = parseQuoteIntakeText(structuredQuestionnaire);
 assert.equal(structured.fields.pickup.city, "Rancho Cucamonga");
 assert.equal(structured.fields.pickup.state, "CA");
 assert.equal(structured.fields.pickup.zip, "91730");
 assert.equal(structured.fields.pickup.addressType, "commercial");
 assert.equal(structured.fields.pickup.name, undefined);
+assert.equal(structured.fields.accessorials.pickup.residential, false);
 assert.equal(structured.fields.delivery.name, "PGT TRANSPORT, INC.");
 assert.equal(structured.fields.delivery.city, "MIAMI");
 assert.equal(structured.fields.delivery.state, "FL");
 assert.equal(structured.fields.delivery.zip, "33178-1164");
 assert.equal(structured.fields.delivery.addressType, "office");
 assert.equal(structured.fields.delivery.name === "办公", false);
+assert.equal(structured.fields.accessorials.delivery.residential, false);
 assert.equal(structured.fields.freight.quantity, 1);
 assert.equal(structured.fields.freight.type, "pallet");
 assert.equal(structured.fields.freight.description, "电动手推车");
@@ -245,6 +256,8 @@ assert.equal(structured.fields.freight.width, 75);
 assert.equal(structured.fields.freight.height, 75);
 assert.equal(structured.fields.freight.dimensionUnit, "cm");
 assert.equal(structured.fields.freight.hazmat, false);
+assert.equal(structured.fields.freight.unNumber, undefined);
+assert.equal(structured.fields.freight.hazardClass, undefined);
 assert.equal(structured.fields.accessorials.pickup.liftgate, true);
 assert.equal(structured.fields.accessorials.delivery.liftgate, true);
 assert.equal(structured.fields.accessorials.delivery.appointment, true);
@@ -253,13 +266,31 @@ assert.notEqual(structured.fields.freight.description, "办公");
 assert.match(structured.unmatchedText, /麻烦帮忙测算一下费用, 谢谢/);
 assert.doesNotMatch(structured.unmatchedText, /商业仓/);
 assert.doesNotMatch(structured.unmatchedText, /办公/);
+assert.doesNotMatch(structured.unmatchedText, /United States/);
 const structuredPlan = buildQuoteIntakeApplicationPlan(structured, { formUnits: "imperial" });
 assert.equal(structuredPlan.formUnits, "metric");
 assert.equal(structuredPlan.changeFormUnits, true);
+assert.equal(structuredPlan.unsupported.some((item) => item.path === "pickup.addressType"), true);
+assert.equal(structuredPlan.unsupported.some((item) => item.path === "delivery.addressType"), true);
+assert.equal(structuredPlan.targets.find((item) => item.target === "pickupAccessorials.residential").value, false);
+assert.equal(structuredPlan.targets.find((item) => item.target === "deliveryAccessorials.residential").value, false);
 assert.equal(structuredPlan.targets.find((item) => item.target === "freight.weight").value, "247");
 assert.equal(structuredPlan.targets.find((item) => item.target === "freight.length").value, "175");
 assert.equal(structuredPlan.targets.find((item) => item.target === "freight.width").value, "75");
 assert.equal(structuredPlan.targets.find((item) => item.target === "freight.height").value, "75");
+
+const hazmatQuestionnaire = parseQuoteIntakeText(`
+是否是危险品：是
+危险品的UN编号：UN3481
+危险类别：9
+`);
+assert.equal(hazmatQuestionnaire.fields.freight.hazmat, true);
+assert.equal(hazmatQuestionnaire.fields.freight.unNumber, "UN3481");
+assert.equal(hazmatQuestionnaire.fields.freight.hazardClass, "9");
+const hazmatPlan = buildQuoteIntakeApplicationPlan(hazmatQuestionnaire);
+assert.equal(hazmatPlan.targets.some((item) => item.path === "freight.hazmat"), true);
+assert.equal(hazmatPlan.unsupported.some((item) => item.path === "freight.unNumber" && item.value === "UN3481"), true);
+assert.equal(hazmatPlan.unsupported.some((item) => item.path === "freight.hazardClass" && item.value === "9"), true);
 
 const englishScopedComma = parseQuoteIntakeText("Pickup requires liftgate, delivery does not need liftgate");
 assert.equal(englishScopedComma.fields.pickup.name, undefined);
@@ -285,6 +316,14 @@ assert.doesNotMatch(parserSource, /XMLHttpRequest|navigator\.sendBeacon/, "quote
 assert.match(htmlSource, /id="quoteIntakeText"/, "New Quote should expose a large paste box");
 assert.match(appSource, /"accessorials\.pickup\.liftgate": "Pickup liftgate"/, "scoped pickup accessorial preview labels should exist");
 assert.match(appSource, /"accessorials\.delivery\.liftgate": "Delivery liftgate"/, "scoped delivery accessorial preview labels should exist");
+assert.match(appSource, /"pickup\.addressType": "Pickup address type"/, "pickup address type preview label should exist");
+assert.match(appSource, /"delivery\.addressType": "Delivery address type"/, "delivery address type preview label should exist");
+assert.match(appSource, /"freight\.unNumber": "Hazmat UN number"/, "hazmat UN number preview label should exist");
+assert.match(appSource, /"freight\.hazardClass": "Hazard class"/, "hazard class preview label should exist");
+assert.match(appSource, /"Pickup address type": "提货地址类型"/, "pickup address type translation should exist");
+assert.match(appSource, /"Delivery address type": "派送地址类型"/, "delivery address type translation should exist");
+assert.match(appSource, /"Hazmat UN number": "危险品 UN 编号"/, "hazmat UN number translation should exist");
+assert.match(appSource, /"Hazard class": "危险类别"/, "hazard class translation should exist");
 assert.match(appSource, /"Pickup liftgate": "提货尾板"/, "scoped pickup accessorial Chinese translation should exist");
 assert.match(appSource, /"Delivery liftgate": "派送尾板"/, "scoped delivery accessorial Chinese translation should exist");
 assert.match(htmlSource, /data-quote-intake-parse/, "New Quote should expose an explicit Parse action");

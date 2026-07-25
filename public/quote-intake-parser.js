@@ -480,7 +480,7 @@ export function buildQuoteIntakeApplicationPlan(parsed, options = {}) {
     "freight.description": "freight.description"
   };
   (parsed?.parsedFields || []).forEach((item) => {
-    if (item.path.endsWith(".facilityCode")) {
+    if (item.path.endsWith(".facilityCode") || item.path.endsWith(".addressType") || item.path === "freight.unNumber" || item.path === "freight.hazardClass") {
       plan.unsupported.push({ ...item, reason: "review-only" });
       return;
     }

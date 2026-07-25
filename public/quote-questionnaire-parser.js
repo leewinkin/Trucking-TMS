@@ -60,7 +60,7 @@ function keyType(key) {
   if (/托的长宽高/.test(key)) return "dimensions";
   if (/单托(?:的)?重量|单托重量/.test(key)) return "weight";
   if (/是否是危险品/.test(key)) return "hazmat";
-  if (/危险品un编号|un编号/.test(key)) return "unNumber";
+  if (/危险品(?:的)?un编号|un编号/.test(key)) return "unNumber";
   if (/危险类别/.test(key)) return "hazardClass";
   if (/是否需要带尾板/.test(key)) return "liftgate";
   if (/是否预约派送/.test(key)) return "appointment";
@@ -92,8 +92,22 @@ function normalizeAddressType(value) {
   return text;
 }
 
+function addressTypeResidentialValue(value) {
+  if (value === "residential") {
+    return true;
+  }
+  if (value === "commercial" || value === "office") {
+    return false;
+  }
+  return undefined;
+}
+
 function normalizeCompanyName(value) {
   return compactSpaces(value);
+}
+
+function isRecognizedCountryLine(value) {
+  return /^(?:united states|usa|us|美国)$/i.test(compactSpaces(value));
 }
 
 const cityStateZipPattern = /^(.+?),?\s+([A-Za-z]{2})\s+(\d{5}(?:-\d{4})?)$/;
@@ -233,6 +247,9 @@ export function parseQuoteQuestionnaireText(input) {
     }
     const pair = splitKeyValue(line);
     if (!pair) {
+      if (isRecognizedCountryLine(line)) {
+        markLine(result.skippedLines, line);
+      }
       return;
     }
     const type = keyType(pair.key);
@@ -256,7 +273,12 @@ export function parseQuoteQuestionnaireText(input) {
     }
     if (type === "addressType") {
       const scope = context === "delivery" ? "delivery" : "pickup";
-      addField(result, `${scope}.addressType`, normalizeAddressType(pair.value), line);
+      const addressType = normalizeAddressType(pair.value);
+      addField(result, `${scope}.addressType`, addressType, line);
+      const residential = addressTypeResidentialValue(addressType);
+      if (residential !== undefined) {
+        addField(result, `accessorials.${scope}.residential`, residential, line);
+      }
       return;
     }
     if (type === "description") {
@@ -301,7 +323,12 @@ export function parseQuoteQuestionnaireText(input) {
       }
       return;
     }
-    if (type === "unNumber" || type === "hazardClass") {
+    if (type === "unNumber") {
+      addField(result, "freight.unNumber", pair.value, line);
+      return;
+    }
+    if (type === "hazardClass") {
+      addField(result, "freight.hazardClass", pair.value, line);
       return;
     }
     if (type === "liftgate") {
