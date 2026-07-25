@@ -1,3 +1,5 @@
+import { parseQuoteQuestionnaireText } from "./quote-questionnaire-parser.js";
+
 const confidenceLevels = ["high", "medium", "low"];
 
 const packagingTerms = [
@@ -81,6 +83,20 @@ function markMatched(result, line) {
   }
 }
 
+function markLineSkipped(result, line) {
+  const text = compactSpaces(line);
+  if (text) {
+    result.skippedLines.add(text);
+  }
+}
+
+function markStructuredLine(result, line) {
+  const text = compactSpaces(line);
+  if (text) {
+    result.structuredLines.add(text);
+  }
+}
+
 function markMatchedFragment(result, line, fragment) {
   const text = compactSpaces(line);
   const part = compactSpaces(fragment);
@@ -123,9 +139,26 @@ function sectionFromLabel(line) {
   return null;
 }
 
+function parseStructuredQuestionnaire(result, lines) {
+  const structured = parseQuoteQuestionnaireText(lines.join("\n"));
+  (structured.parsedFields || []).forEach((item) => {
+    addField(result, item.path, item.value, item.confidence || "high", item.source || "");
+  });
+  (structured.matchedLines || []).forEach((line) => {
+    markMatched(result, line);
+    markStructuredLine(result, line);
+  });
+  (structured.skippedLines || []).forEach((line) => {
+    markLineSkipped(result, line);
+  });
+}
+
 function parseAddressSections(result, lines) {
   let currentSection = "";
   lines.forEach((line, index) => {
+    if (result.structuredLines.has(compactSpaces(line)) || result.skippedLines.has(compactSpaces(line))) {
+      return;
+    }
     const label = sectionFromLabel(line);
     if (label) {
       currentSection = label.section;
@@ -211,6 +244,9 @@ function removeKnownFreightFragments(text) {
 
 function parseFreight(result, lines) {
   lines.forEach((line) => {
+    if (result.structuredLines.has(compactSpaces(line)) || result.skippedLines.has(compactSpaces(line))) {
+      return;
+    }
     const text = cleanText(line);
     const lower = text.toLowerCase();
     let matched = false;
@@ -299,6 +335,9 @@ function parseFreight(result, lines) {
 
 function parseAccessorials(result, lines) {
   lines.forEach((line) => {
+    if (result.structuredLines.has(compactSpaces(line)) || result.skippedLines.has(compactSpaces(line))) {
+      return;
+    }
     const text = cleanText(line);
     text.split(/[.,;]/).map((clause) => compactSpaces(clause)).filter(Boolean).forEach((clause) => {
       let matched = false;
@@ -397,18 +436,25 @@ function addPlanTarget(plan, options) {
 }
 
 export function buildQuoteIntakeApplicationPlan(parsed, options = {}) {
-  const formUnits = normalizeFormUnits(options.formUnits);
+  const currentFormUnits = normalizeFormUnits(options.formUnits);
+  const fields = parsed?.fields || {};
+  const weightUnit = fields.freight?.weightUnit || "";
+  const dimensionUnit = fields.freight?.dimensionUnit || "";
+  const consistentlyMetric = weightUnit === "kg" && dimensionUnit === "cm";
+  const consistentlyImperial = weightUnit === "lb" && dimensionUnit === "in";
+  const formUnits = consistentlyMetric ? "metric" : consistentlyImperial ? "imperial" : currentFormUnits;
   const selectedUnits = formUnitConfig[formUnits];
   const availableTimes = new Set(Array.isArray(options.availableTimeValues) ? options.availableTimeValues : []);
   const plan = {
     formUnits,
+    currentFormUnits,
+    changeFormUnits: formUnits !== currentFormUnits,
     currentValues: options.currentValues || {},
     targets: [],
     unsupported: [],
     warnings: [],
     conflictCount: 0
   };
-  const fields = parsed?.fields || {};
   const scalarMap = {
     "pickup.name": "pickupName",
     "pickup.street": "pickupStreet",
@@ -535,18 +581,24 @@ export function parseQuoteIntakeText(input) {
     confidence: "low",
     notes: [],
     unmatchedText: "",
-    matchedFragments: new Map()
+    matchedFragments: new Map(),
+    structuredLines: new Set(),
+    skippedLines: new Set()
   };
 
+  parseStructuredQuestionnaire(result, lines);
   parseAddressSections(result, lines);
   parseFreight(result, lines);
   parseAccessorials(result, lines);
 
   result.notes = lines
+    .filter((line) => !result.skippedLines.has(compactSpaces(line)))
     .map((line) => readableResidual(line, result.matchedFragments.get(compactSpaces(line)) || []))
     .filter(Boolean);
   result.unmatchedText = result.notes.join("\n");
   result.matchedFragments = Array.from(result.matchedFragments.entries()).map(([line, fragments]) => ({ line, fragments }));
+  result.structuredLines = Array.from(result.structuredLines);
+  result.skippedLines = Array.from(result.skippedLines);
   return buildSummary(result);
 }
 
