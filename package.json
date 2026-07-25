@@ -11,6 +11,6 @@
     "dev": "node server.js",
     "migrate:organizations": "node scripts/migrate-organizations.js",
     "start": "node server.js",
-    "test": "node tests/quote-time-validation.test.js && node tests/quote-reliability.test.js && node tests/accessorial-catalog.test.js && node tests/localization.test.js && node tests/customer-dashboard.test.js && node tests/admin-dashboard.test.js && node tests/admin-quote-details.test.js && node tests/customer-management.test.js && node tests/invoice-tabs.test.js && node tests/address-book.test.js && node tests/api-security.test.js && node tests/organization-migration.test.js && node tests/organization-startup-safety.test.js"
+    "test": "node tests/quote-time-validation.test.js && node tests/quote-reliability.test.js && node tests/quote-intake-parser.test.js && node tests/accessorial-catalog.test.js && node tests/localization.test.js && node tests/customer-dashboard.test.js && node tests/admin-dashboard.test.js && node tests/admin-quote-details.test.js && node tests/customer-management.test.js && node tests/invoice-tabs.test.js && node tests/address-book.test.js && node tests/api-security.test.js && node tests/organization-migration.test.js && node tests/organization-startup-safety.test.js"
   }
 }

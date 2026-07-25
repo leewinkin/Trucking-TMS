@@ -161,6 +161,25 @@
 
         <section class="view" id="quoteView">
           <form id="quoteForm" class="quote-layout" novalidate>
+            <section class="panel quote-intake-panel" aria-labelledby="quoteIntakeTitle">
+              <div class="panel-heading">
+                <div>
+                  <h2 id="quoteIntakeTitle" data-i18n="Smart Quote Intake">Smart Quote Intake</h2>
+                  <p class="helper-text" data-i18n="Paste shipment details, preview parsed fields, then apply them to the quote form.">Paste shipment details, preview parsed fields, then apply them to the quote form.</p>
+                </div>
+              </div>
+              <div class="quote-intake-body">
+                <label class="quote-intake-paste">
+                  <span data-i18n="Paste quote details">Paste quote details</span>
+                  <textarea id="quoteIntakeText" rows="8" placeholder="Paste pickup, delivery, freight, and accessorial notes here." data-i18n-placeholder="Paste pickup, delivery, freight, and accessorial notes here."></textarea>
+                </label>
+                <div class="quote-intake-actions">
+                  <button class="primary-action" type="button" data-quote-intake-parse data-i18n="Parse">Parse</button>
+                  <button class="secondary-action" type="button" data-quote-intake-clear data-i18n="Clear">Clear</button>
+                </div>
+                <div id="quoteIntakePreview" class="quote-intake-preview hidden" aria-live="polite"></div>
+              </div>
+            </section>
             <section class="panel" id="quoteMetaPanel">
               <div class="panel-heading">
                 <h2 data-i18n="Customer and Mode">Customer and Mode</h2>

@@ -39,6 +39,7 @@ import {
   accessorialExplanation,
   accessorialLabel
 } from "./accessorial-catalog.js";
+import { parseQuoteIntakeText } from "./quote-intake-parser.js";
 import {
   aggregateReadyQuoteAttentionItems,
   customerQuoteNumber,
@@ -544,6 +545,38 @@ const translations = {
     "Quotes for this customer will pull rates from every selected carrier mode.": "该客户的报价会从所有已选承运商模式拉取费率。",
     "Save Tariff": "保存加价规则",
     "Save Changes": "保存更改",
+    "Smart Quote Intake": "智能报价录入",
+    "Paste shipment details, preview parsed fields, then apply them to the quote form.": "粘贴货件信息，预览解析字段后再应用到报价表单。",
+    "Paste quote details": "粘贴报价信息",
+    "Paste pickup, delivery, freight, and accessorial notes here.": "在此粘贴提货、派送、货物和附加服务说明。",
+    "Parse": "解析",
+    "Clear": "清空",
+    "Parsed fields": "已解析字段",
+    "Apply to Form": "应用到表单",
+    "Smart intake parsed {count} field(s).": "智能录入已解析 {count} 个字段。",
+    "Paste quote details before parsing.": "请先粘贴报价信息再解析。",
+    "No fields were parsed. Review the notes and update the form manually.": "未解析出字段。请查看备注并手动填写表单。",
+    "Smart intake applied {count} field(s).": "智能录入已应用 {count} 个字段。",
+    "Smart intake cleared.": "智能录入已清空。",
+    "Applying this import will replace {count} non-empty field(s). Continue?": "应用本次导入将替换 {count} 个已有字段。是否继续？",
+    "Confidence": "置信度",
+    "High confidence": "高置信度",
+    "Medium confidence": "中等置信度",
+    "Low confidence": "低置信度",
+    "Unmatched notes": "未匹配备注",
+    "No unmatched notes.": "没有未匹配备注。",
+    "No parsed fields yet.": "尚未解析字段。",
+    "Yes": "是",
+    "No": "否",
+    "Pickup facility code": "提货仓库代码",
+    "Delivery facility code": "派送仓库代码",
+    "Pickup opening time": "提货营业开始时间",
+    "Pickup closing time": "提货营业结束时间",
+    "Delivery opening time": "派送营业开始时间",
+    "Delivery closing time": "派送营业结束时间",
+    "Packaging type": "包装类型",
+    "Weight unit": "重量单位",
+    "Dimension unit": "尺寸单位",
     "Customer and Mode": "客户与模式",
     "If the selected customer has an address on file, pickup will prefill from it.": "如果所选客户已有地址记录，提货信息会自动带出。",
     "Rates will use the carrier modes assigned to the selected customer.": "费率会使用所选客户已分配的承运商模式。",
@@ -830,6 +863,9 @@ const translations = {
     "action.close": "Close",
     "business.openingTime": "Opening time",
     "business.closingTime": "Closing time",
+    "High confidence": "High confidence",
+    "Medium confidence": "Medium confidence",
+    "Low confidence": "Low confidence",
     "invoice.status.open": "Open",
     "shipment.filter.active": "Active",
     "account.status.active": "Active",
@@ -881,6 +917,7 @@ function setLanguage(language) {
   populateTimeSelects();
   enhanceAccessorialDropdowns();
   document.querySelectorAll(".accessorial-dropdown").forEach((details) => syncAccessorialDropdown(details));
+  renderQuoteIntakePreview();
   updateFreightClassSuggestion();
 }
 
@@ -1095,6 +1132,7 @@ const state = {
   currentQuote: null,
   quoteLoading: false,
   quoteResultsLimit: 12,
+  quoteIntake: null,
   freightSuggestionTimer: null,
   freightSuggestionRequestToken: 0,
   carrierModeTouched: false,
@@ -1794,6 +1832,22 @@ function wireForms() {
     updateFreightClassSuggestion();
   });
   quoteForm.addEventListener("click", (event) => {
+    const intakeParseButton = event.target.closest("[data-quote-intake-parse]");
+    if (intakeParseButton) {
+      parseQuoteIntakeFromForm();
+      return;
+    }
+    const intakeApplyButton = event.target.closest("[data-quote-intake-apply]");
+    if (intakeApplyButton) {
+      applyQuoteIntakeToForm();
+      return;
+    }
+    const intakeClearButton = event.target.closest("[data-quote-intake-clear]");
+    if (intakeClearButton) {
+      clearQuoteIntake();
+      return;
+    }
+
     const saveAddressButton = event.target.closest("[data-save-address]");
     if (saveAddressButton) {
       saveCurrentAddress(saveAddressButton.dataset.saveAddress);
@@ -8893,6 +8947,248 @@ function normalizePhoneNumber(value) {
     return digits.slice(1);
   }
   return digits;
+}
+
+const quoteIntakeFieldLabels = {
+  "pickup.name": "Pickup company",
+  "pickup.street": "Pickup address",
+  "pickup.city": "City",
+  "pickup.state": "State",
+  "pickup.zip": "ZIP",
+  "pickup.phone": "Phone",
+  "pickup.openTime": "Pickup opening time",
+  "pickup.closeTime": "Pickup closing time",
+  "pickup.facilityCode": "Pickup facility code",
+  "delivery.name": "Delivery company",
+  "delivery.street": "Delivery address",
+  "delivery.city": "City",
+  "delivery.state": "State",
+  "delivery.zip": "ZIP",
+  "delivery.phone": "Phone",
+  "delivery.openTime": "Delivery opening time",
+  "delivery.closeTime": "Delivery closing time",
+  "delivery.facilityCode": "Delivery facility code",
+  "freight.quantity": "Quantity",
+  "freight.type": "Packaging type",
+  "freight.pieces": "Pieces",
+  "freight.weight": "Weight each",
+  "freight.weightUnit": "Weight unit",
+  "freight.length": "Length",
+  "freight.width": "Width",
+  "freight.height": "Height",
+  "freight.dimensionUnit": "Dimension unit",
+  "freight.freightClass": "Freight class",
+  "freight.nmfc": "Optional NMFC",
+  "freight.description": "Description",
+  "freight.stackable": "Stackable",
+  "freight.hazmat": "Hazmat",
+  "accessorials.liftgate": "Liftgate",
+  "accessorials.inside": "Inside",
+  "accessorials.appointment": "Appointment",
+  "accessorials.residential": "Residential"
+};
+
+function quoteIntakeConfidenceLabel(value) {
+  if (value === "high") {
+    return t("High confidence");
+  }
+  if (value === "medium") {
+    return t("Medium confidence");
+  }
+  return t("Low confidence");
+}
+
+function quoteIntakeDisplayValue(value) {
+  if (typeof value === "boolean") {
+    return value ? t("Yes") : t("No");
+  }
+  return String(value ?? "");
+}
+
+function parseQuoteIntakeFromForm() {
+  const textarea = document.getElementById("quoteIntakeText");
+  const text = String(textarea?.value || "").trim();
+  if (!text) {
+    showToast(t("Paste quote details before parsing."), true);
+    return;
+  }
+  state.quoteIntake = parseQuoteIntakeText(text);
+  renderQuoteIntakePreview();
+  const count = state.quoteIntake.parsedFields.length;
+  showToast(count ? t("Smart intake parsed {count} field(s).", { count }) : t("No fields were parsed. Review the notes and update the form manually."), !count);
+}
+
+function clearQuoteIntake() {
+  state.quoteIntake = null;
+  const textarea = document.getElementById("quoteIntakeText");
+  if (textarea) {
+    textarea.value = "";
+  }
+  renderQuoteIntakePreview();
+  showToast(t("Smart intake cleared."));
+}
+
+function renderQuoteIntakePreview() {
+  const container = document.getElementById("quoteIntakePreview");
+  if (!container) {
+    return;
+  }
+  const parsed = state.quoteIntake;
+  if (!parsed) {
+    container.classList.add("hidden");
+    container.innerHTML = "";
+    return;
+  }
+
+  const fields = Array.isArray(parsed.parsedFields) ? parsed.parsedFields : [];
+  const fieldHtml = fields.length
+    ? fields.map((item) => {
+      const label = quoteIntakeFieldLabels[item.path] || item.path;
+      return `
+        <div class="quote-intake-field">
+          <strong>${escapeHtml(t(label))}</strong>
+          <span>${escapeHtml(quoteIntakeDisplayValue(item.value))}</span>
+          <span class="confidence-pill ${escapeHtml(item.confidence)}">${escapeHtml(quoteIntakeConfidenceLabel(item.confidence))}</span>
+        </div>
+      `;
+    }).join("")
+    : `<p class="helper-text">${escapeHtml(t("No parsed fields yet."))}</p>`;
+  const notes = parsed.unmatchedText || "";
+  container.classList.remove("hidden");
+  container.innerHTML = `
+    <div class="quote-intake-preview-header">
+      <div>
+        <strong>${escapeHtml(t("Parsed fields"))}</strong>
+        <span class="confidence-pill ${escapeHtml(parsed.confidence)}">${escapeHtml(quoteIntakeConfidenceLabel(parsed.confidence))}</span>
+      </div>
+      <button class="primary-action" type="button" data-quote-intake-apply ${fields.length ? "" : "disabled"}>${escapeHtml(t("Apply to Form"))}</button>
+    </div>
+    <div class="quote-intake-field-list">${fieldHtml}</div>
+    <div>
+      <strong>${escapeHtml(t("Unmatched notes"))}</strong>
+      <p class="helper-text quote-intake-notes">${escapeHtml(notes || t("No unmatched notes."))}</p>
+    </div>
+  `;
+}
+
+function setControlThroughEvents(control, value) {
+  if (!control) {
+    return false;
+  }
+  if (control.type === "checkbox") {
+    control.checked = Boolean(value);
+  } else {
+    control.value = value ?? "";
+  }
+  control.dispatchEvent(new Event("input", { bubbles: true }));
+  control.dispatchEvent(new Event("change", { bubbles: true }));
+  return true;
+}
+
+function quoteIntakeControlTarget(form, path, value) {
+  const nameMap = {
+    "pickup.name": "pickupName",
+    "pickup.street": "pickupStreet",
+    "pickup.city": "pickupCity",
+    "pickup.state": "pickupState",
+    "pickup.zip": "pickupZip",
+    "pickup.phone": "pickupPhone",
+    "pickup.openTime": "pickupOpen",
+    "pickup.closeTime": "pickupClose",
+    "delivery.name": "deliveryName",
+    "delivery.street": "deliveryStreet",
+    "delivery.city": "deliveryCity",
+    "delivery.state": "deliveryState",
+    "delivery.zip": "deliveryZip",
+    "delivery.phone": "deliveryPhone",
+    "delivery.openTime": "deliveryOpen",
+    "delivery.closeTime": "deliveryClose"
+  };
+  if (nameMap[path]) {
+    return [{ control: form.elements[nameMap[path]], value }];
+  }
+
+  const row = freightRows()[0];
+  const freightMap = {
+    "freight.quantity": "quantity",
+    "freight.type": "type",
+    "freight.pieces": "pieces",
+    "freight.weight": "weight",
+    "freight.length": "length",
+    "freight.width": "width",
+    "freight.height": "height",
+    "freight.freightClass": "freightClass",
+    "freight.nmfc": "nmfc",
+    "freight.description": "description"
+  };
+  if (freightMap[path]) {
+    return [{ control: freightRowField(row, freightMap[path]), value }];
+  }
+  if (path === "freight.stackable" || path === "freight.hazmat") {
+    return [{ control: freightRowFlag(row, path.split(".").at(-1)), value }];
+  }
+  if (path === "accessorials.liftgate" || path === "accessorials.inside" || path === "accessorials.appointment" || path === "accessorials.residential") {
+    const key = path.split(".").at(-1);
+    return Array.from(form.querySelectorAll(`input[name$='Accessorials'][value='${key}']`)).map((control) => ({ control, value }));
+  }
+  return [];
+}
+
+function controlHasNonEmptyDifferentValue(control, value) {
+  if (!control) {
+    return false;
+  }
+  if (control.type === "checkbox") {
+    return control.checked && control.checked !== Boolean(value);
+  }
+  const current = String(control.value || "").trim();
+  const next = String(value ?? "").trim();
+  return Boolean(current) && current !== next;
+}
+
+function applyQuoteIntakeToForm() {
+  const parsed = state.quoteIntake;
+  const form = document.getElementById("quoteForm");
+  if (!parsed || !form) {
+    return;
+  }
+  ensureFreightRows();
+
+  const freightUnits = parsed.fields?.freight?.weightUnit === "kg" || parsed.fields?.freight?.dimensionUnit === "cm" ? "metric" : parsed.fields?.freight?.weightUnit === "lb" || parsed.fields?.freight?.dimensionUnit === "in" ? "imperial" : "";
+
+  const targets = [];
+  (parsed.parsedFields || []).forEach((item) => {
+    if (item.path === "freight.weightUnit" || item.path === "freight.dimensionUnit" || item.path.endsWith(".facilityCode")) {
+      return;
+    }
+    quoteIntakeControlTarget(form, item.path, item.value).forEach((target) => {
+      if (target.control) {
+        targets.push(target);
+      }
+    });
+  });
+
+  const conflicts = targets.filter((target) => controlHasNonEmptyDifferentValue(target.control, target.value));
+  const unitConflict = Boolean(freightUnits && freightUnits !== state.freightUnits && freightRows().some((row) => ["weight", "length", "width", "height"].some((fieldName) => String(freightRowField(row, fieldName)?.value || "").trim())));
+  const conflictCount = conflicts.length + (unitConflict ? 1 : 0);
+  if (conflictCount && !window.confirm(t("Applying this import will replace {count} non-empty field(s). Continue?", { count: conflictCount }))) {
+    return;
+  }
+
+  if (freightUnits) {
+    setFreightUnits(freightUnits);
+  }
+
+  let applied = 0;
+  targets.forEach((target) => {
+    if (setControlThroughEvents(target.control, target.value)) {
+      applied += 1;
+    }
+  });
+  document.querySelectorAll(".accessorial-dropdown").forEach((details) => syncAccessorialDropdown(details));
+  updateFreightClassSuggestion();
+  clearQuoteFormErrors(form);
+  showToast(t("Smart intake applied {count} field(s).", { count: applied }));
 }
 
 function populateTimeSelects() {

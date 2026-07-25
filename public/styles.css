@@ -1796,6 +1796,99 @@ button.metric {
   padding: 0 16px 4px;
 }
 
+.quote-intake-body {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.quote-intake-paste {
+  display: grid;
+  gap: 8px;
+}
+
+.quote-intake-paste textarea {
+  min-height: 180px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.quote-intake-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.quote-intake-preview {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fbfcfe;
+  padding: 14px;
+}
+
+.quote-intake-preview.hidden {
+  display: none;
+}
+
+.quote-intake-preview-header,
+.quote-intake-preview-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.quote-intake-field-list {
+  display: grid;
+  gap: 8px;
+}
+
+.quote-intake-field {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.9fr) minmax(0, 1.4fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.quote-intake-notes {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.confidence-pill {
+  display: inline-flex;
+  align-items: center;
+  width: max-content;
+  border-radius: 999px;
+  padding: 4px 9px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  background: #eef4ff;
+  color: #264b83;
+}
+
+.confidence-pill.high {
+  background: #e7f7ee;
+  color: #14633d;
+}
+
+.confidence-pill.medium {
+  background: #fff4db;
+  color: #815b00;
+}
+
+.confidence-pill.low {
+  background: #fbe8e8;
+  color: #8a1f1f;
+}
+
 .panel {
   border: 1px solid var(--line);
   border-radius: var(--radius);
