@@ -39,7 +39,7 @@ import {
   accessorialExplanation,
   accessorialLabel
 } from "./accessorial-catalog.js";
-import { parseQuoteIntakeText } from "./quote-intake-parser.js";
+import { buildQuoteIntakeApplicationPlan, parseQuoteIntakeText } from "./quote-intake-parser.js";
 import {
   aggregateReadyQuoteAttentionItems,
   customerQuoteNumber,
@@ -566,6 +566,8 @@ const translations = {
     "Unmatched notes": "未匹配备注",
     "No unmatched notes.": "没有未匹配备注。",
     "No parsed fields yet.": "尚未解析字段。",
+    "Review required / not applied": "需要人工确认 / 未应用",
+    "Converted before applying": "应用前已换算",
     "Yes": "是",
     "No": "否",
     "Pickup facility code": "提货仓库代码",
@@ -9041,14 +9043,20 @@ function renderQuoteIntakePreview() {
   }
 
   const fields = Array.isArray(parsed.parsedFields) ? parsed.parsedFields : [];
+  const plan = buildQuoteIntakeApplicationPlan(parsed, {
+    formUnits: state.freightUnits,
+    availableTimeValues: quoteIntakeAvailableTimeValues()
+  });
+  const unsupportedPaths = new Set(plan.unsupported.map((item) => item.path));
   const fieldHtml = fields.length
     ? fields.map((item) => {
       const label = quoteIntakeFieldLabels[item.path] || item.path;
+      const unsupported = unsupportedPaths.has(item.path);
       return `
         <div class="quote-intake-field">
           <strong>${escapeHtml(t(label))}</strong>
           <span>${escapeHtml(quoteIntakeDisplayValue(item.value))}</span>
-          <span class="confidence-pill ${escapeHtml(item.confidence)}">${escapeHtml(quoteIntakeConfidenceLabel(item.confidence))}</span>
+          <span class="confidence-pill ${escapeHtml(unsupported ? "low" : item.confidence)}">${escapeHtml(unsupported ? t("Review required / not applied") : quoteIntakeConfidenceLabel(item.confidence))}</span>
         </div>
       `;
     }).join("")
@@ -9075,6 +9083,9 @@ function setControlThroughEvents(control, value) {
   if (!control) {
     return false;
   }
+  if (control.tagName === "SELECT") {
+    ensureQuoteIntakeSelectOption(control, value);
+  }
   if (control.type === "checkbox") {
     control.checked = Boolean(value);
   } else {
@@ -9085,65 +9096,99 @@ function setControlThroughEvents(control, value) {
   return true;
 }
 
-function quoteIntakeControlTarget(form, path, value) {
-  const nameMap = {
-    "pickup.name": "pickupName",
-    "pickup.street": "pickupStreet",
-    "pickup.city": "pickupCity",
-    "pickup.state": "pickupState",
-    "pickup.zip": "pickupZip",
-    "pickup.phone": "pickupPhone",
-    "pickup.openTime": "pickupOpen",
-    "pickup.closeTime": "pickupClose",
-    "delivery.name": "deliveryName",
-    "delivery.street": "deliveryStreet",
-    "delivery.city": "deliveryCity",
-    "delivery.state": "deliveryState",
-    "delivery.zip": "deliveryZip",
-    "delivery.phone": "deliveryPhone",
-    "delivery.openTime": "deliveryOpen",
-    "delivery.closeTime": "deliveryClose"
-  };
-  if (nameMap[path]) {
-    return [{ control: form.elements[nameMap[path]], value }];
+function ensureQuoteIntakeSelectOption(control, value) {
+  const text = String(value ?? "");
+  if (!control || control.tagName !== "SELECT" || !text || Array.from(control.options).some((option) => option.value === text)) {
+    return;
   }
-
-  const row = freightRows()[0];
-  const freightMap = {
-    "freight.quantity": "quantity",
-    "freight.type": "type",
-    "freight.pieces": "pieces",
-    "freight.weight": "weight",
-    "freight.length": "length",
-    "freight.width": "width",
-    "freight.height": "height",
-    "freight.freightClass": "freightClass",
-    "freight.nmfc": "nmfc",
-    "freight.description": "description"
-  };
-  if (freightMap[path]) {
-    return [{ control: freightRowField(row, freightMap[path]), value }];
+  if (!/^([01]\d|2[0-3])[0-5]\d$/.test(text)) {
+    return;
   }
-  if (path === "freight.stackable" || path === "freight.hazmat") {
-    return [{ control: freightRowFlag(row, path.split(".").at(-1)), value }];
-  }
-  if (path === "accessorials.liftgate" || path === "accessorials.inside" || path === "accessorials.appointment" || path === "accessorials.residential") {
-    const key = path.split(".").at(-1);
-    return Array.from(form.querySelectorAll(`input[name$='Accessorials'][value='${key}']`)).map((control) => ({ control, value }));
-  }
-  return [];
+  const option = document.createElement("option");
+  option.value = text;
+  option.textContent = `${text.slice(0, 2)}:${text.slice(2)}`;
+  control.appendChild(option);
 }
 
-function controlHasNonEmptyDifferentValue(control, value) {
-  if (!control) {
-    return false;
+function quoteIntakeAvailableTimeValues() {
+  const select = document.querySelector("[data-time-select]");
+  return select ? Array.from(select.options).map((option) => option.value).filter(Boolean) : [];
+}
+
+function quoteIntakeCurrentValues(form) {
+  const values = {};
+  [
+    "pickupName",
+    "pickupStreet",
+    "pickupCity",
+    "pickupState",
+    "pickupZip",
+    "pickupPhone",
+    "pickupOpen",
+    "pickupClose",
+    "deliveryName",
+    "deliveryStreet",
+    "deliveryCity",
+    "deliveryState",
+    "deliveryZip",
+    "deliveryPhone",
+    "deliveryOpen",
+    "deliveryClose"
+  ].forEach((name) => {
+    values[name] = form.elements[name]?.value || "";
+  });
+  const row = freightRows()[0];
+  ["quantity", "type", "pieces", "weight", "length", "width", "height", "freightClass", "nmfc", "description"].forEach((fieldName) => {
+    values[`freight.${fieldName}`] = freightRowField(row, fieldName)?.value || "";
+  });
+  ["stackable", "hazmat"].forEach((flag) => {
+    values[`freight.${flag}`] = Boolean(freightRowFlag(row, flag)?.checked);
+  });
+  ["pickup", "delivery"].forEach((scope) => {
+    form.querySelectorAll(`input[name='${scope}Accessorials']`).forEach((input) => {
+      values[`${scope}Accessorials.${input.value}`] = Boolean(input.checked);
+    });
+  });
+  return values;
+}
+
+function quoteIntakeApplicationPlan(form, parsed) {
+  ensureFreightRows();
+  return buildQuoteIntakeApplicationPlan(parsed, {
+    formUnits: state.freightUnits,
+    currentValues: quoteIntakeCurrentValues(form),
+    availableTimeValues: quoteIntakeAvailableTimeValues()
+  });
+}
+
+function quoteIntakeControlTarget(form, target, value) {
+  if (form.elements[target]) {
+    return { control: form.elements[target], value };
   }
-  if (control.type === "checkbox") {
-    return control.checked && control.checked !== Boolean(value);
+  const row = freightRows()[0];
+  const freightMap = {
+    "freight.quantity": ["field", "quantity"],
+    "freight.type": ["field", "type"],
+    "freight.pieces": ["field", "pieces"],
+    "freight.weight": ["field", "weight"],
+    "freight.length": ["field", "length"],
+    "freight.width": ["field", "width"],
+    "freight.height": ["field", "height"],
+    "freight.freightClass": ["field", "freightClass"],
+    "freight.nmfc": ["field", "nmfc"],
+    "freight.description": ["field", "description"],
+    "freight.stackable": ["flag", "stackable"],
+    "freight.hazmat": ["flag", "hazmat"]
+  };
+  if (freightMap[target]) {
+    const [kind, fieldName] = freightMap[target];
+    return { control: kind === "flag" ? freightRowFlag(row, fieldName) : freightRowField(row, fieldName), value };
   }
-  const current = String(control.value || "").trim();
-  const next = String(value ?? "").trim();
-  return Boolean(current) && current !== next;
+  const accessorial = target.match(/^(pickup|delivery)Accessorials\.(.+)$/);
+  if (accessorial) {
+    return { control: form.querySelector(`input[name='${accessorial[1]}Accessorials'][value='${accessorial[2]}']`), value };
+  }
+  return { control: null, value };
 }
 
 function applyQuoteIntakeToForm() {
@@ -9152,36 +9197,18 @@ function applyQuoteIntakeToForm() {
   if (!parsed || !form) {
     return;
   }
-  ensureFreightRows();
-
-  const freightUnits = parsed.fields?.freight?.weightUnit === "kg" || parsed.fields?.freight?.dimensionUnit === "cm" ? "metric" : parsed.fields?.freight?.weightUnit === "lb" || parsed.fields?.freight?.dimensionUnit === "in" ? "imperial" : "";
-
-  const targets = [];
-  (parsed.parsedFields || []).forEach((item) => {
-    if (item.path === "freight.weightUnit" || item.path === "freight.dimensionUnit" || item.path.endsWith(".facilityCode")) {
-      return;
-    }
-    quoteIntakeControlTarget(form, item.path, item.value).forEach((target) => {
-      if (target.control) {
-        targets.push(target);
-      }
-    });
-  });
-
-  const conflicts = targets.filter((target) => controlHasNonEmptyDifferentValue(target.control, target.value));
-  const unitConflict = Boolean(freightUnits && freightUnits !== state.freightUnits && freightRows().some((row) => ["weight", "length", "width", "height"].some((fieldName) => String(freightRowField(row, fieldName)?.value || "").trim())));
-  const conflictCount = conflicts.length + (unitConflict ? 1 : 0);
-  if (conflictCount && !window.confirm(t("Applying this import will replace {count} non-empty field(s). Continue?", { count: conflictCount }))) {
+  const plan = quoteIntakeApplicationPlan(form, parsed);
+  if (plan.conflictCount && !window.confirm(t("Applying this import will replace {count} non-empty field(s). Continue?", { count: plan.conflictCount }))) {
     return;
   }
 
-  if (freightUnits) {
-    setFreightUnits(freightUnits);
-  }
-
   let applied = 0;
-  targets.forEach((target) => {
-    if (setControlThroughEvents(target.control, target.value)) {
+  plan.targets.forEach((target) => {
+    const controlTarget = quoteIntakeControlTarget(form, target.target, target.value);
+    if (target.addOption) {
+      ensureQuoteIntakeSelectOption(controlTarget.control, target.value);
+    }
+    if (setControlThroughEvents(controlTarget.control, target.value)) {
       applied += 1;
     }
   });

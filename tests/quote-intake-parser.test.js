@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { parseQuoteIntakeText } from "../public/quote-intake-parser.js";
+import { buildQuoteIntakeApplicationPlan, parseQuoteIntakeText } from "../public/quote-intake-parser.js";
 
 const sample = `
 提货：
@@ -32,6 +32,7 @@ assert.equal(parsed.fields.delivery.city, "China Grove");
 assert.equal(parsed.fields.delivery.state, "TX");
 assert.equal(parsed.fields.delivery.zip, "78263");
 assert.equal(parsed.fields.delivery.facilityCode, "USTX01");
+assert.match(parsed.unmatchedText, /仓库代码 USTX01/);
 assert.equal(parsed.fields.freight.quantity, 1);
 assert.equal(parsed.fields.freight.type, "pallet");
 assert.equal(parsed.fields.freight.pieces, 23);
@@ -96,6 +97,76 @@ assert.equal(crate.fields.freight.hazmat, true);
 const noHazmat = parseQuoteIntakeText("1 pallet, 1 piece, 100 lb, 40x40x40 in, no hazmat");
 assert.equal(noHazmat.fields.freight.hazmat, false);
 
+const residual = parseQuoteIntakeText("1 pallet, 1000 lb, need POD");
+assert.equal(residual.fields.freight.quantity, 1);
+assert.equal(residual.fields.freight.weight, 1000);
+assert.match(residual.unmatchedText, /^need POD$/);
+
+const cleanDescription = parseQuoteIntakeText("Toys, not stackable, no liftgate, no inside");
+assert.equal(cleanDescription.fields.freight.description, "Toys");
+assert.equal(cleanDescription.fields.freight.stackable, false);
+assert.equal(cleanDescription.fields.accessorials.liftgate, false);
+assert.equal(cleanDescription.fields.accessorials.inside, false);
+
+const mixedLbCm = parseQuoteIntakeText("1 pallet, 100 lb, 120x100x90 cm");
+const mixedLbCmImperialPlan = buildQuoteIntakeApplicationPlan(mixedLbCm, { formUnits: "imperial" });
+assert.equal(mixedLbCmImperialPlan.targets.find((item) => item.target === "freight.weight").value, "100");
+assert.equal(mixedLbCmImperialPlan.targets.find((item) => item.target === "freight.length").value, "47.24");
+assert.equal(mixedLbCmImperialPlan.targets.find((item) => item.target === "freight.width").value, "39.37");
+assert.equal(mixedLbCmImperialPlan.targets.find((item) => item.target === "freight.height").value, "35.43");
+const mixedLbCmMetricPlan = buildQuoteIntakeApplicationPlan(mixedLbCm, { formUnits: "metric" });
+assert.equal(mixedLbCmMetricPlan.targets.find((item) => item.target === "freight.weight").value, "45.36");
+assert.equal(mixedLbCmMetricPlan.targets.find((item) => item.target === "freight.length").value, "120");
+
+const mixedKgIn = parseQuoteIntakeText("1 pallet, 100 kg, 48x40x72 in");
+const mixedKgInImperialPlan = buildQuoteIntakeApplicationPlan(mixedKgIn, { formUnits: "imperial" });
+assert.equal(mixedKgInImperialPlan.targets.find((item) => item.target === "freight.weight").value, "220.46");
+assert.equal(mixedKgInImperialPlan.targets.find((item) => item.target === "freight.length").value, "48");
+const mixedKgInMetricPlan = buildQuoteIntakeApplicationPlan(mixedKgIn, { formUnits: "metric" });
+assert.equal(mixedKgInMetricPlan.targets.find((item) => item.target === "freight.weight").value, "100");
+assert.equal(mixedKgInMetricPlan.targets.find((item) => item.target === "freight.length").value, "121.92");
+
+const parsedHours = parseQuoteIntakeText(`
+Pickup:
+5700 E Airport Drive
+Ontario, CA 91761
+Hours 08:30-17:30
+`);
+const timePlan = buildQuoteIntakeApplicationPlan(parsedHours, {
+  availableTimeValues: ["0800", "0900", "1700", "1800"]
+});
+const pickupOpenTarget = timePlan.targets.find((item) => item.target === "pickupOpen");
+const pickupCloseTarget = timePlan.targets.find((item) => item.target === "pickupClose");
+assert.equal(pickupOpenTarget.value, "0830");
+assert.equal(pickupOpenTarget.addOption, true);
+assert.equal(pickupCloseTarget.value, "1730");
+assert.equal(pickupCloseTarget.addOption, true);
+
+const reviewOnlyPlan = buildQuoteIntakeApplicationPlan(parsed);
+assert.equal(reviewOnlyPlan.unsupported.some((item) => item.path === "delivery.facilityCode"), true);
+assert.equal(reviewOnlyPlan.targets.some((item) => item.path === "delivery.facilityCode"), false);
+
+const scopedAccessorials = parseQuoteIntakeText("Pickup liftgate required. Delivery no liftgate.");
+assert.equal(scopedAccessorials.fields.accessorials.pickup.liftgate, true);
+assert.equal(scopedAccessorials.fields.accessorials.delivery.liftgate, false);
+const scopedPlan = buildQuoteIntakeApplicationPlan(scopedAccessorials);
+assert.equal(scopedPlan.targets.find((item) => item.target === "pickupAccessorials.liftgate").value, true);
+assert.equal(scopedPlan.targets.find((item) => item.target === "deliveryAccessorials.liftgate").value, false);
+
+const genericAccessorials = parseQuoteIntakeText("No liftgate");
+const genericPlan = buildQuoteIntakeApplicationPlan(genericAccessorials);
+assert.equal(genericPlan.targets.some((item) => item.target === "pickupAccessorials.liftgate"), true);
+assert.equal(genericPlan.targets.some((item) => item.target === "deliveryAccessorials.liftgate"), true);
+
+const conflictPlan = buildQuoteIntakeApplicationPlan(parseQuoteIntakeText("1 pallet, 100 lb, no liftgate"), {
+  currentValues: {
+    "freight.weight": "90",
+    "pickupAccessorials.liftgate": true,
+    "deliveryAccessorials.liftgate": false
+  }
+});
+assert.equal(conflictPlan.conflictCount, 2);
+
 const parserSource = readFileSync(new URL("../public/quote-intake-parser.js", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
 const htmlSource = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
@@ -106,6 +177,7 @@ assert.match(htmlSource, /id="quoteIntakeText"/, "New Quote should expose a larg
 assert.match(htmlSource, /data-quote-intake-parse/, "New Quote should expose an explicit Parse action");
 assert.match(appSource, /data-quote-intake-apply/, "parsed values should require an explicit Apply action");
 assert.match(appSource, /window\.confirm\(t\("Applying this import will replace \{count\} non-empty field\(s\)\. Continue\?"/, "non-empty field overwrites should require confirmation");
+assert.match(appSource, /ensureQuoteIntakeSelectOption\(controlTarget\.control, target\.value\)/, "exact parsed HHMM times should be added before selection when needed");
 assert.match(appSource, /dispatchEvent\(new Event\("input", \{ bubbles: true \}\)\)/, "Apply should use existing form input events");
 assert.match(appSource, /dispatchEvent\(new Event\("change", \{ bubbles: true \}\)\)/, "Apply should use existing form change events");
 
