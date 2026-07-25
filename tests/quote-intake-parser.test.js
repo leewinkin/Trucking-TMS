@@ -158,6 +158,18 @@ const genericPlan = buildQuoteIntakeApplicationPlan(genericAccessorials);
 assert.equal(genericPlan.targets.some((item) => item.target === "pickupAccessorials.liftgate"), true);
 assert.equal(genericPlan.targets.some((item) => item.target === "deliveryAccessorials.liftgate"), true);
 
+const chineseScopedComma = parseQuoteIntakeText("提货需要尾板，送货不需要尾板");
+assert.equal(chineseScopedComma.fields.pickup.name, undefined);
+assert.equal(chineseScopedComma.fields.delivery.name, undefined);
+assert.equal(chineseScopedComma.fields.accessorials.pickup.liftgate, true);
+assert.equal(chineseScopedComma.fields.accessorials.delivery.liftgate, false);
+
+const englishScopedComma = parseQuoteIntakeText("Pickup requires liftgate, delivery does not need liftgate");
+assert.equal(englishScopedComma.fields.pickup.name, undefined);
+assert.equal(englishScopedComma.fields.delivery.name, undefined);
+assert.equal(englishScopedComma.fields.accessorials.pickup.liftgate, true);
+assert.equal(englishScopedComma.fields.accessorials.delivery.liftgate, false);
+
 const conflictPlan = buildQuoteIntakeApplicationPlan(parseQuoteIntakeText("1 pallet, 100 lb, no liftgate"), {
   currentValues: {
     "freight.weight": "90",
@@ -174,6 +186,10 @@ const htmlSource = readFileSync(new URL("../public/index.html", import.meta.url)
 assert.doesNotMatch(parserSource, /\bfetch\s*\(/, "quote intake parser must not call external APIs");
 assert.doesNotMatch(parserSource, /XMLHttpRequest|navigator\.sendBeacon/, "quote intake parser must remain local-only");
 assert.match(htmlSource, /id="quoteIntakeText"/, "New Quote should expose a large paste box");
+assert.match(appSource, /"accessorials\.pickup\.liftgate": "Pickup liftgate"/, "scoped pickup accessorial preview labels should exist");
+assert.match(appSource, /"accessorials\.delivery\.liftgate": "Delivery liftgate"/, "scoped delivery accessorial preview labels should exist");
+assert.match(appSource, /"Pickup liftgate": "提货尾板"/, "scoped pickup accessorial Chinese translation should exist");
+assert.match(appSource, /"Delivery liftgate": "派送尾板"/, "scoped delivery accessorial Chinese translation should exist");
 assert.match(htmlSource, /data-quote-intake-parse/, "New Quote should expose an explicit Parse action");
 assert.match(appSource, /data-quote-intake-apply/, "parsed values should require an explicit Apply action");
 assert.match(appSource, /window\.confirm\(t\("Applying this import will replace \{count\} non-empty field\(s\)\. Continue\?"/, "non-empty field overwrites should require confirmation");

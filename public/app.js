@@ -579,6 +579,14 @@ const translations = {
     "Packaging type": "包装类型",
     "Weight unit": "重量单位",
     "Dimension unit": "尺寸单位",
+    "Pickup liftgate": "提货尾板",
+    "Delivery liftgate": "派送尾板",
+    "Pickup inside": "提货入室搬运",
+    "Delivery inside": "派送入室搬运",
+    "Pickup appointment": "提货预约",
+    "Delivery appointment": "派送预约",
+    "Pickup residential": "提货住宅地址",
+    "Delivery residential": "派送住宅地址",
     "Customer and Mode": "客户与模式",
     "If the selected customer has an address on file, pickup will prefill from it.": "如果所选客户已有地址记录，提货信息会自动带出。",
     "Rates will use the carrier modes assigned to the selected customer.": "费率会使用所选客户已分配的承运商模式。",
@@ -8987,7 +8995,15 @@ const quoteIntakeFieldLabels = {
   "accessorials.liftgate": "Liftgate",
   "accessorials.inside": "Inside",
   "accessorials.appointment": "Appointment",
-  "accessorials.residential": "Residential"
+  "accessorials.residential": "Residential",
+  "accessorials.pickup.liftgate": "Pickup liftgate",
+  "accessorials.delivery.liftgate": "Delivery liftgate",
+  "accessorials.pickup.inside": "Pickup inside",
+  "accessorials.delivery.inside": "Delivery inside",
+  "accessorials.pickup.appointment": "Pickup appointment",
+  "accessorials.delivery.appointment": "Delivery appointment",
+  "accessorials.pickup.residential": "Pickup residential",
+  "accessorials.delivery.residential": "Delivery residential"
 };
 
 function quoteIntakeConfidenceLabel(value) {

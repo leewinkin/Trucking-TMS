@@ -109,13 +109,16 @@ function readableResidual(line, fragments = []) {
 
 function sectionFromLabel(line) {
   const text = compactSpaces(line).replace(/[:：]\s*$/, "");
+  const containsServiceInstruction = /(liftgate|尾板|升降尾板|inside|室内服务|入室|appointment|预约|residential|住宅|需要|不需要|无需|不要|requires?|does not|do not|no\s+)/i;
   const delivery = text.match(/^(?:delivery|deliver to|ship to|destination|consignee|送到|送货到|派送到|送货|派送|收货|目的地)\s*(.*)$/i);
   if (delivery) {
-    return { section: "delivery", name: compactSpaces(delivery[1]) };
+    const name = compactSpaces(delivery[1]);
+    return { section: "delivery", name: containsServiceInstruction.test(name) ? "" : name };
   }
   const pickup = text.match(/^(?:pickup|pick up|ship from|origin|提货|取货|发货|装货)\s*(.*)$/i);
   if (pickup) {
-    return { section: "pickup", name: compactSpaces(pickup[1]) };
+    const name = compactSpaces(pickup[1]);
+    return { section: "pickup", name: containsServiceInstruction.test(name) ? "" : name };
   }
   return null;
 }
@@ -176,7 +179,7 @@ function hasNegation(text, termPattern) {
     return false;
   }
   const before = value.slice(Math.max(0, term.index - 16), term.index);
-  return /(不需要|无需|不要|不含|不是|非|no\s*$|not\s*$|without\s*$|无需\s*$|不\s*$)/i.test(before);
+  return /(不需要|无需|不要|不含|不是|非|no\s*$|not\s*$|does\s+not\s+(?:need\s+)?$|do\s+not\s+(?:need\s+)?$|doesn't\s+(?:need\s+)?$|don't\s+(?:need\s+)?$|without\s*$|无需\s*$|不\s*$)/i.test(before);
 }
 
 function parseBooleanTerm(text, termPattern, positivePattern = /(需要|需|required|require|need|yes|with)/i) {
@@ -297,7 +300,7 @@ function parseFreight(result, lines) {
 function parseAccessorials(result, lines) {
   lines.forEach((line) => {
     const text = cleanText(line);
-    text.split(/[.;]/).map((clause) => compactSpaces(clause)).filter(Boolean).forEach((clause) => {
+    text.split(/[.,;]/).map((clause) => compactSpaces(clause)).filter(Boolean).forEach((clause) => {
       let matched = false;
       const scope = /(pickup|pick up|提货|取货)/i.test(clause)
         ? "pickup"
