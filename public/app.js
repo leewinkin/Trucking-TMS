@@ -9219,6 +9219,9 @@ function applyQuoteIntakeToForm() {
   }
 
   let applied = 0;
+  if (plan.changeFormUnits) {
+    setFreightUnits(plan.formUnits);
+  }
   plan.targets.forEach((target) => {
     const controlTarget = quoteIntakeControlTarget(form, target.target, target.value);
     if (target.addOption) {

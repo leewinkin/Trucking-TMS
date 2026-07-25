@@ -7,6 +7,7 @@ const packagingTerms = [
 ];
 
 const cityStateZipPattern = /^(.+?),?\s+([A-Za-z]{2})\s+(\d{5}(?:-\d{4})?)$/;
+const trailingCityStateZipPattern = /^(.*?)([A-Za-z][A-Za-z\s.'-]+),?\s*([A-Za-z]{2})\s+(\d{5}(?:-\d{4})?)$/;
 const formUnitConfig = {
   imperial: { weightUnit: "lb", dimensionUnit: "in" },
   metric: { weightUnit: "kg", dimensionUnit: "cm" }
@@ -81,6 +82,20 @@ function markMatched(result, line) {
   }
 }
 
+function markLineSkipped(result, line) {
+  const text = compactSpaces(line);
+  if (text) {
+    result.skippedLines.add(text);
+  }
+}
+
+function markStructuredLine(result, line) {
+  const text = compactSpaces(line);
+  if (text) {
+    result.structuredLines.add(text);
+  }
+}
+
 function markMatchedFragment(result, line, fragment) {
   const text = compactSpaces(line);
   const part = compactSpaces(fragment);
@@ -123,9 +138,229 @@ function sectionFromLabel(line) {
   return null;
 }
 
+function splitOneLineUsAddress(value) {
+  const text = compactSpaces(value);
+  const match = text.match(trailingCityStateZipPattern);
+  if (!match) {
+    return null;
+  }
+  const beforeState = compactSpaces(`${match[1]}${match[2]}`).replace(/,\s*$/, "");
+  const state = match[3].toUpperCase();
+  const zip = match[4];
+  const parts = beforeState.split(",").map((part) => compactSpaces(part)).filter(Boolean);
+  const tail = parts.pop() || "";
+  const cityTail = tail.match(/^(.*?)([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)$/);
+  const city = compactSpaces(cityTail ? cityTail[2] : tail);
+  const streetTail = compactSpaces(cityTail ? cityTail[1] : "");
+  const street = [...parts, streetTail].filter(Boolean).join(", ");
+  if (!street || !city || !state || !zip) {
+    return null;
+  }
+  return { street, city, state, zip };
+}
+
+function addAddressFields(result, section, address, source) {
+  addField(result, `${section}.street`, address.street, "high", source);
+  addField(result, `${section}.city`, address.city, "high", source);
+  addField(result, `${section}.state`, address.state, "high", source);
+  addField(result, `${section}.zip`, address.zip, "high", source);
+}
+
+function parseExplicitBoolean(value) {
+  const text = compactSpaces(value).toLowerCase();
+  if (/^(是|有|yes|y|true|required|需要)$/.test(text)) {
+    return true;
+  }
+  if (/^(否|无|no|n|false|不|不是|不需要)$/.test(text)) {
+    return false;
+  }
+  return undefined;
+}
+
+function splitQuestionnaireLine(line) {
+  const match = cleanText(line).match(/^([^:]+):\s*(.*)$/);
+  if (!match) {
+    return null;
+  }
+  return {
+    key: compactSpaces(match[1]).replace(/[()]/g, "").toLowerCase(),
+    rawKey: compactSpaces(match[1]),
+    value: compactSpaces(match[2])
+  };
+}
+
+function questionnaireKeyType(key) {
+  if (/^(提货地址|发货地址)$/.test(key)) return "pickupAddress";
+  if (/^收货地址$/.test(key)) return "deliveryAddress";
+  if (/地址类型|发货地址类型|收货地址类型/.test(key)) return "addressType";
+  if (/货物中文名称\/英文名称|货物名称|品名/.test(key)) return "description";
+  if (/是否是危险品/.test(key)) return "hazmat";
+  if (/危险品(?:的)?un编号|危险品un编号/.test(key)) return "unNumber";
+  if (/危险类别/.test(key)) return "hazardClass";
+  if (/托数/.test(key)) return "palletCount";
+  if (/托的长宽高/.test(key)) return "dimensions";
+  if (/单托(?:的)?重量|单托重量/.test(key)) return "weight";
+  if (/是否需要带尾板/.test(key)) return "liftgate";
+  if (/是否预约派送/.test(key)) return "appointment";
+  return "";
+}
+
+function nextMeaningfulLine(lines, startIndex) {
+  for (let index = startIndex + 1; index < lines.length; index += 1) {
+    if (splitQuestionnaireLine(lines[index])) {
+      return { line: "", index };
+    }
+    const text = compactSpaces(lines[index]);
+    if (text) {
+      return { line: text, index };
+    }
+  }
+  return { line: "", index: lines.length };
+}
+
+function parseStructuredDeliveryAddress(result, lines, index, value) {
+  let consumedUntil = index;
+  let deliveryName = "";
+  let street = "";
+  if (value && !splitOneLineUsAddress(value)) {
+    deliveryName = value;
+    const next = nextMeaningfulLine(lines, index);
+    street = next.line;
+    consumedUntil = next.line ? next.index : index;
+  } else {
+    street = value;
+  }
+  const cityLine = nextMeaningfulLine(lines, consumedUntil);
+  const cityMatch = cityLine.line.match(cityStateZipPattern);
+  if (deliveryName) {
+    addField(result, "delivery.name", deliveryName, "high", lines[index]);
+  }
+  if (cityMatch && street) {
+    addAddressFields(result, "delivery", {
+      street,
+      city: compactSpaces(cityMatch[1]),
+      state: cityMatch[2].toUpperCase(),
+      zip: cityMatch[3]
+    }, lines[index]);
+    markLineSkipped(result, street);
+    markLineSkipped(result, cityLine.line);
+    const countryLine = nextMeaningfulLine(lines, cityLine.index);
+    if (/^(united states|usa|美国)$/i.test(countryLine.line)) {
+      markLineSkipped(result, countryLine.line);
+      return countryLine.index;
+    }
+    return cityLine.index;
+  }
+  const oneLine = splitOneLineUsAddress(value);
+  if (oneLine) {
+    addAddressFields(result, "delivery", oneLine, lines[index]);
+  }
+  return consumedUntil;
+}
+
+function parseStructuredQuestionnaire(result, lines) {
+  let context = "";
+  let skipUntil = -1;
+  lines.forEach((line, index) => {
+    if (index <= skipUntil) {
+      markLineSkipped(result, line);
+      return;
+    }
+    const pair = splitQuestionnaireLine(line);
+    if (!pair) {
+      return;
+    }
+    const type = questionnaireKeyType(pair.key);
+    if (!type) {
+      return;
+    }
+    markMatched(result, line);
+    markStructuredLine(result, line);
+
+    if (type === "pickupAddress") {
+      context = "pickup";
+      const oneLine = splitOneLineUsAddress(pair.value);
+      if (oneLine) {
+        addAddressFields(result, "pickup", oneLine, line);
+      }
+      return;
+    }
+    if (type === "deliveryAddress") {
+      context = "delivery";
+      skipUntil = parseStructuredDeliveryAddress(result, lines, index, pair.value);
+      return;
+    }
+    if (type === "addressType") {
+      return;
+    }
+    if (type === "description") {
+      context = "freight";
+      addField(result, "freight.description", pair.value, "high", line);
+      return;
+    }
+    if (type === "hazmat") {
+      context = "freight";
+      const value = parseExplicitBoolean(pair.value);
+      if (value !== undefined) {
+        addField(result, "freight.hazmat", value, "high", line);
+      }
+      return;
+    }
+    if (type === "unNumber" || type === "hazardClass") {
+      return;
+    }
+    if (type === "palletCount") {
+      context = "freight";
+      const quantity = Number(pair.value.match(/\d+(?:\.\d+)?/)?.[0]);
+      if (Number.isFinite(quantity)) {
+        addField(result, "freight.quantity", quantity, "high", line);
+        addField(result, "freight.type", "pallet", "high", line);
+      }
+      return;
+    }
+    if (type === "dimensions") {
+      context = "freight";
+      const dimensions = pair.value.match(/(\d+(?:\.\d+)?)\s*[*x]\s*(\d+(?:\.\d+)?)\s*[*x]\s*(\d+(?:\.\d+)?)\s*(cm|厘米|in|inch|英寸|寸)?/i);
+      if (dimensions) {
+        addField(result, "freight.length", Number(dimensions[1]), "high", line);
+        addField(result, "freight.width", Number(dimensions[2]), "high", line);
+        addField(result, "freight.height", Number(dimensions[3]), "high", line);
+        addField(result, "freight.dimensionUnit", /cm|厘米/i.test(dimensions[4] || "") ? "cm" : "in", "high", line);
+      }
+      return;
+    }
+    if (type === "weight") {
+      context = "freight";
+      const weight = pair.value.match(/(\d+(?:\.\d+)?)\s*(kg|公斤|千克|lb|lbs?|磅)?/i);
+      if (weight) {
+        addField(result, "freight.weight", Number(weight[1]), "high", line);
+        addField(result, "freight.weightUnit", /kg|公斤|千克/i.test(weight[2] || "") ? "kg" : "lb", "high", line);
+      }
+      return;
+    }
+    if (type === "liftgate") {
+      const scope = context === "delivery" ? "delivery" : "pickup";
+      const value = parseExplicitBoolean(pair.value);
+      if (value !== undefined) {
+        addField(result, `accessorials.${scope}.liftgate`, value, "high", line);
+      }
+      return;
+    }
+    if (type === "appointment") {
+      const value = parseExplicitBoolean(pair.value);
+      if (value !== undefined) {
+        addField(result, "accessorials.delivery.appointment", value, "high", line);
+      }
+    }
+  });
+}
+
 function parseAddressSections(result, lines) {
   let currentSection = "";
   lines.forEach((line, index) => {
+    if (result.structuredLines.has(compactSpaces(line)) || result.skippedLines.has(compactSpaces(line))) {
+      return;
+    }
     const label = sectionFromLabel(line);
     if (label) {
       currentSection = label.section;
@@ -211,6 +446,9 @@ function removeKnownFreightFragments(text) {
 
 function parseFreight(result, lines) {
   lines.forEach((line) => {
+    if (result.structuredLines.has(compactSpaces(line)) || result.skippedLines.has(compactSpaces(line))) {
+      return;
+    }
     const text = cleanText(line);
     const lower = text.toLowerCase();
     let matched = false;
@@ -299,6 +537,9 @@ function parseFreight(result, lines) {
 
 function parseAccessorials(result, lines) {
   lines.forEach((line) => {
+    if (result.structuredLines.has(compactSpaces(line)) || result.skippedLines.has(compactSpaces(line))) {
+      return;
+    }
     const text = cleanText(line);
     text.split(/[.,;]/).map((clause) => compactSpaces(clause)).filter(Boolean).forEach((clause) => {
       let matched = false;
@@ -397,18 +638,25 @@ function addPlanTarget(plan, options) {
 }
 
 export function buildQuoteIntakeApplicationPlan(parsed, options = {}) {
-  const formUnits = normalizeFormUnits(options.formUnits);
+  const currentFormUnits = normalizeFormUnits(options.formUnits);
+  const fields = parsed?.fields || {};
+  const weightUnit = fields.freight?.weightUnit || "";
+  const dimensionUnit = fields.freight?.dimensionUnit || "";
+  const consistentlyMetric = weightUnit === "kg" && dimensionUnit === "cm";
+  const consistentlyImperial = weightUnit === "lb" && dimensionUnit === "in";
+  const formUnits = consistentlyMetric ? "metric" : consistentlyImperial ? "imperial" : currentFormUnits;
   const selectedUnits = formUnitConfig[formUnits];
   const availableTimes = new Set(Array.isArray(options.availableTimeValues) ? options.availableTimeValues : []);
   const plan = {
     formUnits,
+    currentFormUnits,
+    changeFormUnits: formUnits !== currentFormUnits,
     currentValues: options.currentValues || {},
     targets: [],
     unsupported: [],
     warnings: [],
     conflictCount: 0
   };
-  const fields = parsed?.fields || {};
   const scalarMap = {
     "pickup.name": "pickupName",
     "pickup.street": "pickupStreet",
@@ -535,18 +783,24 @@ export function parseQuoteIntakeText(input) {
     confidence: "low",
     notes: [],
     unmatchedText: "",
-    matchedFragments: new Map()
+    matchedFragments: new Map(),
+    structuredLines: new Set(),
+    skippedLines: new Set()
   };
 
+  parseStructuredQuestionnaire(result, lines);
   parseAddressSections(result, lines);
   parseFreight(result, lines);
   parseAccessorials(result, lines);
 
   result.notes = lines
+    .filter((line) => !result.skippedLines.has(compactSpaces(line)))
     .map((line) => readableResidual(line, result.matchedFragments.get(compactSpaces(line)) || []))
     .filter(Boolean);
   result.unmatchedText = result.notes.join("\n");
   result.matchedFragments = Array.from(result.matchedFragments.entries()).map(([line, fragments]) => ({ line, fragments }));
+  result.structuredLines = Array.from(result.structuredLines);
+  result.skippedLines = Array.from(result.skippedLines);
   return buildSummary(result);
 }
 

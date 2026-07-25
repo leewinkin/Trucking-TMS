@@ -176,6 +176,65 @@ assert.equal(serviceLineBeforeAddress.fields.delivery.city, undefined);
 assert.equal(serviceLineBeforeAddress.fields.accessorials.pickup.liftgate, true);
 assert.equal(serviceLineBeforeAddress.fields.accessorials.delivery.liftgate, false);
 
+const structuredQuestionnaire = `
+提货地址：8449 Milliken Avenue, Unit 102, 30dock Rancho Cucamonga,CA 91730
+发货地址类型：商业仓
+是否需要带尾板：是
+货物中文名称/英文名称：电动手推车
+是否是危险品：否
+危险品的UN编号：
+危险类别：
+托数：1
+托的长宽高（CM/in）：175*75*75CM
+单托的重量（KG/lb）：247kg
+收货地址：PGT TRANSPORT, INC.
+10125 NW 116TH WAY STE 1
+MIAMI, FL 33178-1164
+United States
+收货地址类型：办公
+是否需要带尾板：是
+是否预约派送：是
+麻烦帮忙测算一下费用，谢谢
+`;
+const structured = parseQuoteIntakeText(structuredQuestionnaire);
+assert.equal(structured.fields.pickup.street, "8449 Milliken Avenue, Unit 102, 30dock");
+assert.equal(structured.fields.pickup.city, "Rancho Cucamonga");
+assert.equal(structured.fields.pickup.state, "CA");
+assert.equal(structured.fields.pickup.zip, "91730");
+assert.equal(structured.fields.pickup.name, undefined);
+assert.equal(structured.fields.delivery.name, "PGT TRANSPORT, INC.");
+assert.equal(structured.fields.delivery.street, "10125 NW 116TH WAY STE 1");
+assert.equal(structured.fields.delivery.city, "MIAMI");
+assert.equal(structured.fields.delivery.state, "FL");
+assert.equal(structured.fields.delivery.zip, "33178-1164");
+assert.equal(structured.fields.delivery.name === "办公", false);
+assert.equal(structured.fields.freight.description, "电动手推车");
+assert.equal(structured.fields.freight.hazmat, false);
+assert.equal(structured.fields.freight.quantity, 1);
+assert.equal(structured.fields.freight.type, "pallet");
+assert.equal(structured.fields.freight.length, 175);
+assert.equal(structured.fields.freight.width, 75);
+assert.equal(structured.fields.freight.height, 75);
+assert.equal(structured.fields.freight.dimensionUnit, "cm");
+assert.equal(structured.fields.freight.weight, 247);
+assert.equal(structured.fields.freight.weightUnit, "kg");
+assert.equal(structured.fields.accessorials.pickup.liftgate, true);
+assert.equal(structured.fields.accessorials.delivery.liftgate, true);
+assert.equal(structured.fields.accessorials.delivery.appointment, true);
+assert.doesNotMatch(structured.unmatchedText, /商业仓/);
+assert.doesNotMatch(structured.unmatchedText, /办公/);
+assert.doesNotMatch(structured.unmatchedText, /危险品的UN编号/);
+assert.doesNotMatch(structured.unmatchedText, /危险类别/);
+assert.doesNotMatch(structured.unmatchedText, /United States/);
+assert.match(structured.unmatchedText, /麻烦帮忙测算一下费用, 谢谢/);
+const structuredPlan = buildQuoteIntakeApplicationPlan(structured, { formUnits: "imperial" });
+assert.equal(structuredPlan.formUnits, "metric");
+assert.equal(structuredPlan.changeFormUnits, true);
+assert.equal(structuredPlan.targets.find((item) => item.target === "freight.weight").value, "247");
+assert.equal(structuredPlan.targets.find((item) => item.target === "freight.length").value, "175");
+assert.equal(structuredPlan.targets.find((item) => item.target === "freight.width").value, "75");
+assert.equal(structuredPlan.targets.find((item) => item.target === "freight.height").value, "75");
+
 const englishScopedComma = parseQuoteIntakeText("Pickup requires liftgate, delivery does not need liftgate");
 assert.equal(englishScopedComma.fields.pickup.name, undefined);
 assert.equal(englishScopedComma.fields.delivery.name, undefined);
