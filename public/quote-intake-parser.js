@@ -113,12 +113,12 @@ function sectionFromLabel(line) {
   const delivery = text.match(/^(?:delivery|deliver to|ship to|destination|consignee|送到|送货到|派送到|送货|派送|收货|目的地)\s*(.*)$/i);
   if (delivery) {
     const name = compactSpaces(delivery[1]);
-    return { section: "delivery", name: containsServiceInstruction.test(name) ? "" : name };
+    return containsServiceInstruction.test(name) ? null : { section: "delivery", name };
   }
   const pickup = text.match(/^(?:pickup|pick up|ship from|origin|提货|取货|发货|装货)\s*(.*)$/i);
   if (pickup) {
     const name = compactSpaces(pickup[1]);
-    return { section: "pickup", name: containsServiceInstruction.test(name) ? "" : name };
+    return containsServiceInstruction.test(name) ? null : { section: "pickup", name };
   }
   return null;
 }

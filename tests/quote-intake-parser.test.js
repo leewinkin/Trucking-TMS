@@ -164,6 +164,18 @@ assert.equal(chineseScopedComma.fields.delivery.name, undefined);
 assert.equal(chineseScopedComma.fields.accessorials.pickup.liftgate, true);
 assert.equal(chineseScopedComma.fields.accessorials.delivery.liftgate, false);
 
+const serviceLineBeforeAddress = parseQuoteIntakeText(`
+提货需要尾板，送货不需要尾板
+123 Delivery St
+Dallas, TX 75001
+`);
+assert.equal(serviceLineBeforeAddress.fields.pickup.street, undefined);
+assert.equal(serviceLineBeforeAddress.fields.pickup.city, undefined);
+assert.equal(serviceLineBeforeAddress.fields.delivery.street, undefined);
+assert.equal(serviceLineBeforeAddress.fields.delivery.city, undefined);
+assert.equal(serviceLineBeforeAddress.fields.accessorials.pickup.liftgate, true);
+assert.equal(serviceLineBeforeAddress.fields.accessorials.delivery.liftgate, false);
+
 const englishScopedComma = parseQuoteIntakeText("Pickup requires liftgate, delivery does not need liftgate");
 assert.equal(englishScopedComma.fields.pickup.name, undefined);
 assert.equal(englishScopedComma.fields.delivery.name, undefined);
