@@ -114,6 +114,31 @@ const translations = {
     "Customers": "客户",
     "Customer": "客户",
     "Customer Management": "客户管理",
+    "User Management": "用户管理",
+    "Manage internal employee access and temporary passwords.": "管理员工内部账号权限和临时密码。",
+    "+ Add Employee": "+ 添加员工",
+    "Add Employee": "添加员工",
+    "Edit User": "编辑用户",
+    "Reset Password": "重置密码",
+    "Temporary password": "临时密码",
+    "Role": "角色",
+    "Sub-admin": "子管理员",
+    "Staff": "员工",
+    "Admin": "管理员",
+    "Employee": "员工",
+    "Actions": "操作",
+    "Create Employee": "创建员工",
+    "Update User": "更新用户",
+    "New password": "新密码",
+    "User Management is available to Admin and Sub-admin users only.": "用户管理仅限管理员和子管理员使用。",
+    "No internal users found.": "暂无内部用户。",
+    "Employee account created. The user must sign in with the temporary password.": "员工账号已创建。该用户需使用临时密码登录。",
+    "Internal user updated. The affected user must sign in again.": "内部用户已更新。受影响用户需要重新登录。",
+    "Password reset. The affected user must sign in again.": "密码已重置。受影响用户需要重新登录。",
+    "Confirm role change? The affected user must sign in again.": "确认更改角色？受影响用户需要重新登录。",
+    "Confirm disabling this user? The affected user must sign in again.": "确认停用该用户？受影响用户需要重新登录。",
+    "Confirm password reset? The affected user must sign in again.": "确认重置密码？受影响用户需要重新登录。",
+    "You cannot manage this user from your role.": "你的角色无法管理该用户。",
     "Quote Management": "报价管理",
     "Monitor quote activity and carrier results.": "查看报价动态和承运商结果。",
     "Shipment Management": "货件管理",
@@ -1137,6 +1162,7 @@ const state = {
   health: null,
   user: null,
   customers: [],
+  internalUsers: [],
   tariffs: [],
   addressBookEntries: [],
   carrierPreferences: [],
@@ -1237,6 +1263,7 @@ const viewMeta = {
       ? [t("Dashboard"), t("Review your current shipping activity.")]
       : [t("Operations Overview"), t("Monitor quotes, shipments, customers, invoices, and carrier activity.")],
   customers: () => [t("Customer Management"), t("Manage customer accounts and tariff rules.")],
+  users: () => [t("User Management"), t("Manage internal employee access and temporary passwords.")],
   quotes: () => isCustomerUser() ? [t("My Quotes"), t("Track your quotes, shipments, and invoices.")] : [t("Quote Management"), t("Monitor quote activity and carrier results.")],
   quote: () => [t("New Quote"), ""],
   shipments: () => isCustomerUser() ? [t("My Shipments"), t("Review your shipments.")] : [t("Shipment Management"), t("Review local bookings and carrier shipment references.")],
@@ -1326,6 +1353,12 @@ function wireNavigation() {
   }
 
   document.addEventListener("click", (event) => {
+    const modalCloseButton = event.target.closest("[data-modal-close]");
+    if (modalCloseButton) {
+      closeModal();
+      return;
+    }
+
     const trackButton = event.target.closest("[data-track-shipment]");
     if (trackButton) {
       openShipmentTracking(trackButton.dataset.trackShipment);
@@ -1561,6 +1594,24 @@ function wireNavigation() {
       return;
     }
 
+    const addInternalUserButton = event.target.closest("[data-internal-user-add]");
+    if (addInternalUserButton) {
+      openInternalUserAddModal();
+      return;
+    }
+
+    const editInternalUserButton = event.target.closest("[data-internal-user-edit]");
+    if (editInternalUserButton) {
+      openInternalUserEditModal(editInternalUserButton.dataset.internalUserEdit);
+      return;
+    }
+
+    const resetInternalUserButton = event.target.closest("[data-internal-user-reset]");
+    if (resetInternalUserButton) {
+      resetInternalUserPassword(resetInternalUserButton.dataset.internalUserReset);
+      return;
+    }
+
     const applyAllFreightSuggestionsButton = event.target.closest("[data-apply-all-freight-suggestions]");
     if (applyAllFreightSuggestionsButton) {
       applyAllFreightClassSuggestions();
@@ -1747,6 +1798,12 @@ function wireForms() {
     } else if (event.target?.id === "customerBlockedCarrierForm") {
       event.preventDefault();
       saveCustomerBlockedCarrierForm(event.target);
+    } else if (event.target?.id === "internalUserAddForm") {
+      event.preventDefault();
+      createInternalUserFromForm(event.target);
+    } else if (event.target?.id === "internalUserEditForm") {
+      event.preventDefault();
+      updateInternalUserFromForm(event.target);
     }
   });
 
@@ -1991,18 +2048,21 @@ async function refreshAll(options = {}) {
     const addressBookRequest = isStaffUser() && !selectedQuoteCustomerId
       ? Promise.resolve({ entries: [] })
       : api(`/api/address-book${isStaffUser() ? `?customerId=${encodeURIComponent(selectedQuoteCustomerId)}` : ""}`);
-    const [health, customers, tariffs, addressBook, quotes, shipments, invoices] = await Promise.all([
+    const internalUsersRequest = canManageInternalUsers() ? api("/api/internal-users") : Promise.resolve({ users: [] });
+    const [health, customers, tariffs, addressBook, quotes, shipments, invoices, internalUsers] = await Promise.all([
       api("/api/health"),
       api("/api/customers"),
       api("/api/tariffs"),
       addressBookRequest,
       api("/api/quotes"),
       api("/api/shipments"),
-      api("/api/invoices")
+      api("/api/invoices"),
+      internalUsersRequest
     ]);
 
     state.health = health;
     state.customers = customers.customers;
+    state.internalUsers = internalUsers.users || [];
     if (state.customerManagement.selectedCustomerId && !state.customers.some((customer) => customer.id === state.customerManagement.selectedCustomerId)) {
       state.customerManagement.selectedCustomerId = "";
       state.customerManagement.drawerMode = "";
@@ -2029,6 +2089,7 @@ async function refreshAll(options = {}) {
     await refreshCarrierPreferences({ silent: true });
     renderAddressBookControls();
     renderCustomers();
+    renderInternalUsers();
     renderQuotesView();
     renderDashboard();
     renderShipments();
@@ -2150,6 +2211,10 @@ function applyPermissions() {
     element.classList.toggle("hidden", !isCustomer);
   });
   document.getElementById("customersNavButton").classList.toggle("hidden", !isStaff);
+  const usersNavButton = document.getElementById("usersNavButton");
+  if (usersNavButton) {
+    usersNavButton.classList.toggle("hidden", !canManageInternalUsers());
+  }
   const customersMetricButton = document.getElementById("customersMetricButton");
   if (customersMetricButton) {
     customersMetricButton.classList.toggle("hidden", !isStaff);
@@ -2189,7 +2254,8 @@ function applyPermissions() {
     });
     quoteCustomerSelect.dataset.autofillBound = "true";
   }
-  if (!isStaff && document.querySelector(".nav-button.active")?.dataset.view === "customers") {
+  const activeView = document.querySelector(".nav-button.active")?.dataset.view;
+  if ((!isStaff && activeView === "customers") || (!canManageInternalUsers() && activeView === "users")) {
     setView("dashboard");
   }
   const portalSubtitle = document.getElementById("portalSubtitle");
@@ -2211,6 +2277,7 @@ function updateRolePresentation() {
   const labels = {
     dashboard: "Dashboard",
     customers: isCustomer ? "Customers" : "Customer Management",
+    users: "User Management",
     quotes: isCustomer ? "My Quotes" : "Quote Management",
     quote: "New Quote",
     shipments: isCustomer ? "My Shipments" : "Shipment Management",
@@ -2232,6 +2299,10 @@ function updateRolePresentation() {
 
 function isStaffUser() {
   return ["admin", "operations", "staff"].includes(state.user?.role);
+}
+
+function canManageInternalUsers() {
+  return ["admin", "operations"].includes(state.user?.role);
 }
 
 function isCustomerUser() {
@@ -6841,6 +6912,202 @@ function renderCustomers(options = {}) {
   renderCustomerManagementControls(options);
   renderCustomerManagementMetrics();
   renderCustomerManagementList();
+}
+
+function internalUserRoleLabel(role) {
+  return {
+    admin: "Admin",
+    operations: "Sub-admin",
+    staff: "Staff"
+  }[role] || role;
+}
+
+function internalUserStatusLabel(status) {
+  return status === "disabled" ? "account.status.disabled" : "account.status.active";
+}
+
+function internalUserCanManage(user) {
+  if (!canManageInternalUsers() || !user) {
+    return false;
+  }
+  if (state.user?.role === "operations") {
+    return user.role === "staff";
+  }
+  return user.id !== state.user?.id;
+}
+
+function internalUserRoleOptions(selectedRole) {
+  const roles = state.user?.role === "admin" ? ["admin", "operations", "staff"] : ["staff"];
+  return roles.map((role) => `<option value="${escapeHtml(role)}" ${selectedRole === role ? "selected" : ""}>${escapeHtml(t(internalUserRoleLabel(role)))}</option>`).join("");
+}
+
+function renderInternalUsers() {
+  const list = document.getElementById("internalUserList");
+  const workspace = document.getElementById("internalUserManagementWorkspace");
+  if (!list || !workspace) {
+    return;
+  }
+  workspace.classList.toggle("hidden", !canManageInternalUsers());
+  if (!canManageInternalUsers()) {
+    list.innerHTML = `<div class="empty-state">${escapeHtml(t("User Management is available to Admin and Sub-admin users only."))}</div>`;
+    return;
+  }
+  if (!state.internalUsers.length) {
+    list.innerHTML = `<div class="empty-state">${escapeHtml(t("No internal users found."))}</div>`;
+    return;
+  }
+  list.innerHTML = `
+    <div class="table-list internal-user-list">
+      ${state.internalUsers.map((user) => `
+        <article class="customer-management-card" data-internal-user-card="${escapeHtml(user.id)}">
+          <div class="customer-card-main">
+            <div class="customer-management-title-row">
+              <h3>${escapeHtml(user.email)}</h3>
+              <span class="pill">${escapeHtml(t(internalUserRoleLabel(user.role)))}</span>
+            </div>
+            <div class="customer-management-details">
+              ${customerManagementDetail("Role", t(internalUserRoleLabel(user.role)))}
+              ${customerManagementDetail("Status", t(internalUserStatusLabel(user.status)))}
+              ${customerManagementDetail("Created", formatDate(user.createdAt))}
+            </div>
+          </div>
+          <div class="customer-management-card-actions">
+            <button class="secondary-action" type="button" data-internal-user-edit="${escapeHtml(user.id)}" ${internalUserCanManage(user) ? "" : "disabled"}>${escapeHtml(t("Edit"))}</button>
+            <button class="secondary-action" type="button" data-internal-user-reset="${escapeHtml(user.id)}" ${internalUserCanManage(user) ? "" : "disabled"}>${escapeHtml(t("Reset Password"))}</button>
+          </div>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function openInternalUserAddModal() {
+  if (!canManageInternalUsers()) {
+    return;
+  }
+  const fixedStaff = state.user?.role === "operations";
+  openModal(t("Add Employee"), `
+    <form id="internalUserAddForm" class="modal-form">
+      <label>
+        ${escapeHtml(t("Email or username"))}
+        <input name="email" type="email" autocomplete="off" required>
+      </label>
+      <label>
+        ${escapeHtml(t("Temporary password"))}
+        <input name="password" type="password" autocomplete="new-password" required>
+      </label>
+      <label>
+        ${escapeHtml(t("Role"))}
+        <select name="role" ${fixedStaff ? "disabled" : ""}>
+          ${internalUserRoleOptions("staff")}
+        </select>
+      </label>
+      ${fixedStaff ? `<input type="hidden" name="role" value="staff">` : ""}
+      <div class="modal-actions">
+        <button class="secondary-action" type="button" data-modal-close>${escapeHtml(t("Cancel"))}</button>
+        <button class="primary-action" type="submit">${escapeHtml(t("Create Employee"))}</button>
+      </div>
+    </form>
+  `);
+}
+
+function openInternalUserEditModal(id) {
+  const user = state.internalUsers.find((item) => item.id === id) || null;
+  if (!internalUserCanManage(user)) {
+    showToast(t("You cannot manage this user from your role."), true);
+    return;
+  }
+  const roleLocked = state.user?.role === "operations";
+  openModal(t("Edit User"), `
+    <form id="internalUserEditForm" class="modal-form" data-internal-user-id="${escapeHtml(user.id)}" data-original-role="${escapeHtml(user.role)}" data-original-status="${escapeHtml(user.status)}">
+      <p><strong>${escapeHtml(user.email)}</strong></p>
+      <label>
+        ${escapeHtml(t("Role"))}
+        <select name="role" ${roleLocked ? "disabled" : ""}>
+          ${internalUserRoleOptions(user.role)}
+        </select>
+      </label>
+      ${roleLocked ? `<input type="hidden" name="role" value="staff">` : ""}
+      <label>
+        ${escapeHtml(t("Status"))}
+        <select name="status">
+          <option value="active" ${user.status !== "disabled" ? "selected" : ""}>${escapeHtml(t("account.status.active"))}</option>
+          <option value="disabled" ${user.status === "disabled" ? "selected" : ""}>${escapeHtml(t("account.status.disabled"))}</option>
+        </select>
+      </label>
+      <div class="modal-actions">
+        <button class="secondary-action" type="button" data-modal-close>${escapeHtml(t("Cancel"))}</button>
+        <button class="primary-action" type="submit">${escapeHtml(t("Update User"))}</button>
+      </div>
+    </form>
+  `);
+}
+
+async function createInternalUserFromForm(form) {
+  const data = new FormData(form);
+  const response = await api("/api/internal-users", {
+    method: "POST",
+    body: {
+      email: data.get("email"),
+      password: data.get("password"),
+      role: data.get("role") || "staff"
+    }
+  });
+  closeModal({ force: true });
+  showToast(t("Employee account created. The user must sign in with the temporary password."));
+  await refreshInternalUsersList(response.user);
+}
+
+async function updateInternalUserFromForm(form) {
+  const id = form.dataset.internalUserId;
+  const data = new FormData(form);
+  const role = String(data.get("role") || "staff");
+  const status = String(data.get("status") || "active");
+  if (role !== form.dataset.originalRole && !window.confirm(t("Confirm role change? The affected user must sign in again."))) {
+    return;
+  }
+  if (status === "disabled" && status !== form.dataset.originalStatus && !window.confirm(t("Confirm disabling this user? The affected user must sign in again."))) {
+    return;
+  }
+  await api(`/api/internal-users/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: { role, status }
+  });
+  closeModal({ force: true });
+  showToast(t("Internal user updated. The affected user must sign in again."));
+  await refreshInternalUsersList();
+}
+
+async function resetInternalUserPassword(id) {
+  const user = state.internalUsers.find((item) => item.id === id) || null;
+  if (!internalUserCanManage(user)) {
+    showToast(t("You cannot manage this user from your role."), true);
+    return;
+  }
+  const password = window.prompt(t("New password"));
+  if (!password) {
+    return;
+  }
+  if (!window.confirm(t("Confirm password reset? The affected user must sign in again."))) {
+    return;
+  }
+  await api(`/api/internal-users/${encodeURIComponent(id)}/reset-password`, {
+    method: "POST",
+    body: { password }
+  });
+  showToast(t("Password reset. The affected user must sign in again."));
+  await refreshInternalUsersList();
+}
+
+async function refreshInternalUsersList() {
+  if (!canManageInternalUsers()) {
+    state.internalUsers = [];
+    renderInternalUsers();
+    return;
+  }
+  const response = await api("/api/internal-users");
+  state.internalUsers = response.users || [];
+  renderInternalUsers();
 }
 
 function customerManagementCurrentViewModel() {

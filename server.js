@@ -238,6 +238,66 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/internal-users") {
+    requireInternalUserManager(currentUser);
+    const users = await store.listInternalUsers({ requesterRole: currentUser.role });
+    sendJson(res, 200, { users });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/internal-users") {
+    requireInternalUserManager(currentUser);
+    const input = await readJson(req);
+    const role = normalizeInternalRole(input.role || "staff");
+    assertCanCreateInternalRole(currentUser, role);
+    const user = await createInternalUserWithPublicErrors({
+      email: normalizeEmail(input.email),
+      password: requiredString(input.password, "password"),
+      role
+    });
+    sendJson(res, 201, { user });
+    return;
+  }
+
+  const internalUserMatch = url.pathname.match(/^\/api\/internal-users\/([^/]+)$/);
+  if (internalUserMatch && req.method === "PATCH") {
+    requireInternalUserManager(currentUser);
+    const targetId = internalUserMatch[1];
+    const target = await requireManageableInternalTarget(currentUser, targetId);
+    const input = await readJson(req);
+    const update = {};
+    if (Object.prototype.hasOwnProperty.call(input, "role")) {
+      update.role = normalizeInternalRole(input.role);
+    }
+    if (Object.prototype.hasOwnProperty.call(input, "status")) {
+      update.status = normalizeInternalStatus(input.status);
+    }
+    assertCanUpdateInternalUser(currentUser, target, update);
+    const user = await updateInternalUserWithPublicErrors(targetId, update);
+    if (!user) {
+      sendJson(res, 404, { error: "INTERNAL_USER_NOT_FOUND", message: "Internal user was not found." });
+      return;
+    }
+    sendJson(res, 200, { user });
+    return;
+  }
+
+  const internalUserPasswordMatch = url.pathname.match(/^\/api\/internal-users\/([^/]+)\/reset-password$/);
+  if (internalUserPasswordMatch && req.method === "POST") {
+    requireInternalUserManager(currentUser);
+    const targetId = internalUserPasswordMatch[1];
+    const target = await requireManageableInternalTarget(currentUser, targetId);
+    assertCanResetInternalUserPassword(currentUser, target);
+    const input = await readJson(req);
+    const user = await resetInternalUserPasswordWithPublicErrors(targetId, requiredString(input.password, "password"));
+    if (!user) {
+      sendJson(res, 404, { error: "INTERNAL_USER_NOT_FOUND", message: "Internal user was not found." });
+      return;
+    }
+    sendJson(res, 200, { user });
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/customers") {
     const customer = currentUser.role === "customer" ? await store.getCustomer(currentUser.customerId) : null;
     const customers = currentUser.role === "customer" ? (customer ? [customer] : []) : await store.listCustomers();
@@ -3674,8 +3734,121 @@ function requireStaff(user) {
   }
 }
 
+function requireInternalUserManager(user) {
+  if (!["admin", "operations"].includes(user.role)) {
+    throw new PublicError(403, "FORBIDDEN", "You do not have permission to manage internal users.");
+  }
+}
+
 function isInternalUser(user) {
   return ["admin", "operations", "staff"].includes(user?.role);
+}
+
+function normalizeEmail(value) {
+  const email = String(value || "").trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new PublicError(400, "VALIDATION_ERROR", "A valid email is required.");
+  }
+  return email;
+}
+
+function normalizeInternalRole(value) {
+  const role = String(value || "").trim();
+  if (!["admin", "operations", "staff"].includes(role)) {
+    throw new PublicError(400, "VALIDATION_ERROR", "role must be admin, operations, or staff.");
+  }
+  return role;
+}
+
+function normalizeInternalStatus(value) {
+  const status = String(value || "").trim();
+  if (!["active", "disabled"].includes(status)) {
+    throw new PublicError(400, "VALIDATION_ERROR", "status must be active or disabled.");
+  }
+  return status;
+}
+
+function assertCanCreateInternalRole(actor, role) {
+  if (actor.role === "admin") {
+    return;
+  }
+  if (actor.role === "operations" && role === "staff") {
+    return;
+  }
+  throw new PublicError(403, "FORBIDDEN", "You do not have permission to create that internal role.");
+}
+
+async function requireManageableInternalTarget(actor, targetId) {
+  const target = await store.getUserById(targetId);
+  if (!target || target.role === "customer" || target.customerId) {
+    throw new PublicError(404, "INTERNAL_USER_NOT_FOUND", "Internal user was not found.");
+  }
+  if (!["admin", "operations", "staff"].includes(target.role)) {
+    throw new PublicError(404, "INTERNAL_USER_NOT_FOUND", "Internal user was not found.");
+  }
+  if (actor.role === "operations" && target.role !== "staff") {
+    throw new PublicError(403, "FORBIDDEN", "Sub-admins may manage Staff users only.");
+  }
+  return target;
+}
+
+function assertCanUpdateInternalUser(actor, target, update) {
+  const nextRole = Object.prototype.hasOwnProperty.call(update, "role") ? update.role : target.role;
+  const nextStatus = Object.prototype.hasOwnProperty.call(update, "status") ? update.status : target.status;
+  if (actor.id === target.id && (nextRole !== target.role || nextStatus !== target.status)) {
+    throw new PublicError(403, "FORBIDDEN", "You cannot change your own role or status from User Management.");
+  }
+  if (actor.role === "operations") {
+    if (target.role !== "staff" || nextRole !== "staff") {
+      throw new PublicError(403, "FORBIDDEN", "Sub-admins may manage Staff users only.");
+    }
+  }
+}
+
+function assertCanResetInternalUserPassword(actor, target) {
+  if (actor.id === target.id) {
+    throw new PublicError(403, "FORBIDDEN", "You cannot reset your own password from User Management.");
+  }
+  if (actor.role === "operations" && target.role !== "staff") {
+    throw new PublicError(403, "FORBIDDEN", "Sub-admins may reset Staff passwords only.");
+  }
+}
+
+function storeInternalUserError(error) {
+  if (error?.code === "EMAIL_ALREADY_EXISTS" || error?.code === "23505") {
+    return new PublicError(409, "EMAIL_ALREADY_EXISTS", "Email is already in use.");
+  }
+  if (error?.code === "FINAL_ACTIVE_ADMIN") {
+    return new PublicError(400, "FINAL_ACTIVE_ADMIN", "The final active Admin cannot be demoted or disabled.");
+  }
+  if (error?.code === "NOT_INTERNAL_USER") {
+    return new PublicError(404, "INTERNAL_USER_NOT_FOUND", "Internal user was not found.");
+  }
+  return null;
+}
+
+async function createInternalUserWithPublicErrors(input) {
+  try {
+    return await store.createInternalUser(input);
+  } catch (error) {
+    throw storeInternalUserError(error) || error;
+  }
+}
+
+async function updateInternalUserWithPublicErrors(id, input) {
+  try {
+    return await store.updateInternalUser(id, input);
+  } catch (error) {
+    throw storeInternalUserError(error) || error;
+  }
+}
+
+async function resetInternalUserPasswordWithPublicErrors(id, password) {
+  try {
+    return await store.resetInternalUserPassword(id, password);
+  } catch (error) {
+    throw storeInternalUserError(error) || error;
+  }
 }
 
 function publicUser(user) {

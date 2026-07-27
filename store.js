@@ -933,6 +933,144 @@ async function createPostgresStore(dbUrl, { runOrganizationMigrationOnStartup = 
         client.release();
       }
     },
+    async listInternalUsers({ requesterRole } = {}) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const internalOrganization = await ensurePostgresInternalOrganization(client);
+        await syncPostgresInternalMemberships(client, internalOrganization.id);
+        const roles = requesterRole === "operations" ? ["staff"] : ["admin", "operations", "staff"];
+        const { rows } = await client.query(
+          `SELECT DISTINCT ON (u.id) u.id, u.email, u.role, u.customer_id, u.status, u.created_at
+           FROM users u
+           JOIN organization_users ou ON ou.user_id = u.id
+           WHERE ou.organization_id = $1
+             AND u.role = ANY($2::text[])
+             AND u.customer_id IS NULL
+           ORDER BY u.id, u.created_at ASC, u.email ASC`,
+          [internalOrganization.id, roles]
+        );
+        await client.query("COMMIT");
+        return rows.map(mapSafeInternalUserRow);
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+    async createInternalUser(input) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const existing = await client.query("SELECT id FROM users WHERE lower(email) = lower($1) LIMIT 1", [
+          String(input.email || "").trim()
+        ]);
+        if (existing.rowCount > 0) {
+          throw new StoreValidationError("EMAIL_ALREADY_EXISTS", "Email is already in use.");
+        }
+        const internalOrganization = await ensurePostgresInternalOrganization(client);
+        const user = await insertUser(client, {
+          email: input.email,
+          password: input.password,
+          role: input.role,
+          customerId: null,
+          status: "active"
+        });
+        await client.query(
+          `INSERT INTO organization_users (id, organization_id, user_id, role, status, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $6)`,
+          [createId("orguser"), internalOrganization.id, user.id, user.role, user.status, nowIso()]
+        );
+        await client.query("COMMIT");
+        return safeInternalUser(user);
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+    async updateInternalUser(id, input) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const internalOrganization = await ensurePostgresInternalOrganization(client);
+        await syncPostgresInternalMemberships(client, internalOrganization.id);
+        const target = await getPostgresInternalUserForUpdate(client, internalOrganization.id, id);
+        if (!target) {
+          await client.query("ROLLBACK");
+          return null;
+        }
+        if (target.role === "customer" || target.customer_id) {
+          throw new StoreValidationError("NOT_INTERNAL_USER", "Customer portal accounts cannot be managed here.");
+        }
+        const nextRole = Object.prototype.hasOwnProperty.call(input, "role") ? input.role : target.role;
+        const nextStatus = Object.prototype.hasOwnProperty.call(input, "status") ? input.status : target.status;
+        if (target.role === "admin" && (nextRole !== "admin" || nextStatus === "disabled")) {
+          const activeAdmins = await countPostgresActiveAdmins(client);
+          if (activeAdmins <= 1) {
+            throw new StoreValidationError("FINAL_ACTIVE_ADMIN", "The final active Admin cannot be demoted or disabled.");
+          }
+        }
+        const { rows } = await client.query(
+          `UPDATE users
+           SET role = $2,
+               status = $3
+           WHERE id = $1
+           RETURNING id, email, role, customer_id, status, created_at`,
+          [target.id, nextRole, nextStatus]
+        );
+        await client.query(
+          `UPDATE organization_users
+           SET role = $2,
+               status = $3,
+               updated_at = $4
+           WHERE organization_id = $1 AND user_id = $5`,
+          [internalOrganization.id, nextRole, nextStatus, nowIso(), target.id]
+        );
+        if (nextRole !== target.role || nextStatus !== target.status) {
+          await client.query("DELETE FROM sessions WHERE user_id = $1", [target.id]);
+        }
+        await client.query("COMMIT");
+        return mapSafeInternalUserRow(rows[0]);
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+    async resetInternalUserPassword(id, password) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const internalOrganization = await ensurePostgresInternalOrganization(client);
+        await syncPostgresInternalMemberships(client, internalOrganization.id);
+        const target = await getPostgresInternalUserForUpdate(client, internalOrganization.id, id);
+        if (!target || target.role === "customer" || target.customer_id) {
+          await client.query("ROLLBACK");
+          return null;
+        }
+        const record = createPasswordRecord(password);
+        const { rows } = await client.query(
+          `UPDATE users
+           SET password_salt = $2,
+               password_hash = $3
+           WHERE id = $1
+           RETURNING id, email, role, customer_id, status, created_at`,
+          [target.id, record.salt, record.hash]
+        );
+        await client.query("DELETE FROM sessions WHERE user_id = $1", [target.id]);
+        await client.query("COMMIT");
+        return mapSafeInternalUserRow(rows[0]);
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
     async createSession({ userId, tokenHash, expiresAt }) {
       await pool.query(
         `INSERT INTO sessions (id, user_id, token_hash, expires_at, created_at)
@@ -1416,7 +1554,7 @@ async function migratePostgresOrganizations(pool) {
       }
 
       const activeMemberships = await client.query(
-        "SELECT * FROM organization_users WHERE user_id = $1 AND status = 'active' ORDER BY created_at ASC",
+    "SELECT * FROM organization_users WHERE user_id = $1 ORDER BY created_at ASC",
         [user.id]
       );
       if (activeMemberships.rowCount > 1) {
@@ -1592,6 +1730,100 @@ async function getPostgresOrganizationContextForUser(pool, user) {
     memberships.rows.map(mapOrganizationUserRow),
     organizations.rows.map(mapOrganizationRow)
   );
+}
+
+async function ensurePostgresInternalOrganization(client) {
+  const existing = await client.query("SELECT * FROM organizations WHERE type = 'internal' ORDER BY created_at ASC LIMIT 1");
+  if (existing.rows[0]) {
+    return existing.rows[0];
+  }
+  const created = await client.query(
+    `INSERT INTO organizations (id, type, name, status, legacy_customer_id, billing_email, phone, created_at, updated_at)
+     VALUES ($1, 'internal', $2, 'active', NULL, NULL, NULL, $3, $3)
+     ON CONFLICT DO NOTHING
+     RETURNING *`,
+    ["org_internal", internalOrganizationName, nowIso()]
+  );
+  if (created.rows[0]) {
+    return created.rows[0];
+  }
+  const retry = await client.query("SELECT * FROM organizations WHERE type = 'internal' ORDER BY created_at ASC LIMIT 1");
+  return retry.rows[0];
+}
+
+async function syncPostgresInternalMemberships(client, internalOrganizationId) {
+  const users = await client.query(
+    "SELECT * FROM users WHERE role = ANY($1::text[]) AND customer_id IS NULL ORDER BY created_at ASC",
+    [Array.from(internalLegacyRoles)]
+  );
+  for (const user of users.rows) {
+    const memberships = await client.query(
+      "SELECT * FROM organization_users WHERE user_id = $1 AND status = 'active' ORDER BY created_at ASC",
+      [user.id]
+    );
+    let membership = memberships.rows.find((item) => item.organization_id === internalOrganizationId) || null;
+    if (!membership && memberships.rowCount === 0) {
+      const inserted = await client.query(
+        `INSERT INTO organization_users (id, organization_id, user_id, role, status, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $6)
+         RETURNING *`,
+        [
+          createId("orguser"),
+          internalOrganizationId,
+          user.id,
+          user.role,
+          user.status === "disabled" ? "disabled" : "active",
+          nowIso()
+        ]
+      );
+      membership = inserted.rows[0];
+    }
+    if (membership) {
+      await client.query(
+        `UPDATE organization_users
+         SET role = $2,
+             status = $3,
+             updated_at = $4
+         WHERE id = $1
+           AND (role IS DISTINCT FROM $2 OR status IS DISTINCT FROM $3)`,
+        [
+          membership.id,
+          user.role,
+          user.status === "disabled" ? "disabled" : "active",
+          nowIso()
+        ]
+      );
+    }
+  }
+}
+
+async function getPostgresInternalUserForUpdate(client, internalOrganizationId, id) {
+  const { rows } = await client.query(
+    `SELECT u.*
+     FROM users u
+     JOIN organization_users ou ON ou.user_id = u.id
+     WHERE u.id = $1
+       AND ou.organization_id = $2
+     LIMIT 1
+     FOR UPDATE OF u`,
+    [id, internalOrganizationId]
+  );
+  return rows[0] || null;
+}
+
+async function countPostgresActiveAdmins(client) {
+  const { rows } = await client.query(
+    `SELECT COUNT(*)::int AS count
+     FROM users u
+     JOIN organization_users ou ON ou.user_id = u.id
+     JOIN organizations o ON o.id = ou.organization_id
+     WHERE o.type = 'internal'
+       AND u.role = 'admin'
+       AND u.status = 'active'
+       AND u.customer_id IS NULL
+       AND ou.status = 'active'`
+  );
+  return rows[0]?.count || 0;
 }
 
 async function createJsonStore(filePath, { runOrganizationMigrationOnStartup = false } = {}) {
@@ -2211,6 +2443,104 @@ async function createJsonStore(filePath, { runOrganizationMigrationOnStartup = f
       await writeJsonDb(filePath, db);
       return user;
     },
+    async listInternalUsers({ requesterRole } = {}) {
+      const db = await readJsonDb(filePath);
+      const internalOrganization = ensureJsonInternalOrganization(db);
+      syncJsonInternalMemberships(db, internalOrganization.id);
+      await writeJsonDb(filePath, db);
+      const roles = requesterRole === "operations" ? ["staff"] : ["admin", "operations", "staff"];
+      return db.users
+    .filter((user, index, users) =>
+      roles.includes(user.role) &&
+      !user.customerId &&
+      jsonUserBelongsToOrganization(db, user.id, internalOrganization.id) &&
+      users.findIndex((item) => item.id === user.id) === index
+        )
+        .sort((left, right) => String(left.createdAt || "").localeCompare(String(right.createdAt || "")) || String(left.email || "").localeCompare(String(right.email || "")))
+        .map(safeInternalUser);
+    },
+    async createInternalUser(input) {
+      const db = await readJsonDb(filePath);
+      const email = String(input.email || "").trim();
+      if (db.users.some((user) => String(user.email || "").toLowerCase() === email.toLowerCase())) {
+        throw new StoreValidationError("EMAIL_ALREADY_EXISTS", "Email is already in use.");
+      }
+      const internalOrganization = ensureJsonInternalOrganization(db);
+      syncJsonInternalMemberships(db, internalOrganization.id);
+      const user = createUserRecord({
+        email,
+        password: input.password,
+        role: input.role,
+        customerId: null,
+        status: "active"
+      });
+      db.users.push(user);
+      db.organizationUsers.push({
+        id: createId("orguser"),
+        organizationId: internalOrganization.id,
+        userId: user.id,
+        role: user.role,
+        status: user.status,
+        createdAt: nowIso(),
+        updatedAt: nowIso()
+      });
+      await writeJsonDb(filePath, db);
+      return safeInternalUser(user);
+    },
+    async updateInternalUser(id, input) {
+      const db = await readJsonDb(filePath);
+      const internalOrganization = ensureJsonInternalOrganization(db);
+      syncJsonInternalMemberships(db, internalOrganization.id);
+      const target = db.users.find((user) => user.id === id) || null;
+      if (!target || !jsonUserBelongsToOrganization(db, target.id, internalOrganization.id)) {
+        return null;
+      }
+      if (target.role === "customer" || target.customerId) {
+        throw new StoreValidationError("NOT_INTERNAL_USER", "Customer portal accounts cannot be managed here.");
+      }
+      const previousRole = target.role;
+      const previousStatus = target.status;
+      const nextRole = Object.prototype.hasOwnProperty.call(input, "role") ? input.role : target.role;
+      const nextStatus = Object.prototype.hasOwnProperty.call(input, "status") ? input.status : target.status;
+      if (target.role === "admin" && (nextRole !== "admin" || nextStatus === "disabled")) {
+        const activeAdmins = db.users.filter((user) =>
+          user.role === "admin" &&
+          user.status === "active" &&
+          !user.customerId &&
+          jsonUserBelongsToOrganization(db, user.id, internalOrganization.id)
+        ).length;
+        if (activeAdmins <= 1) {
+          throw new StoreValidationError("FINAL_ACTIVE_ADMIN", "The final active Admin cannot be demoted or disabled.");
+        }
+      }
+      target.role = nextRole;
+      target.status = nextStatus;
+      for (const membership of db.organizationUsers.filter((item) => item.organizationId === internalOrganization.id && item.userId === target.id)) {
+        membership.role = nextRole;
+        membership.status = nextStatus;
+        membership.updatedAt = nowIso();
+      }
+      if (nextRole !== previousRole || nextStatus !== previousStatus) {
+        db.sessions = db.sessions.filter((session) => session.userId !== target.id);
+      }
+      await writeJsonDb(filePath, db);
+      return safeInternalUser(target);
+    },
+    async resetInternalUserPassword(id, password) {
+      const db = await readJsonDb(filePath);
+      const internalOrganization = ensureJsonInternalOrganization(db);
+      syncJsonInternalMemberships(db, internalOrganization.id);
+      const target = db.users.find((user) => user.id === id) || null;
+      if (!target || target.role === "customer" || target.customerId || !jsonUserBelongsToOrganization(db, target.id, internalOrganization.id)) {
+        return null;
+      }
+      const record = createPasswordRecord(password);
+      target.passwordSalt = record.salt;
+      target.passwordHash = record.hash;
+      db.sessions = db.sessions.filter((session) => session.userId !== target.id);
+      await writeJsonDb(filePath, db);
+      return safeInternalUser(target);
+    },
     async createSession({ userId, tokenHash, expiresAt }) {
       const db = await readJsonDb(filePath);
       db.sessions.push({
@@ -2657,6 +2987,27 @@ function mapUserRow(row) {
   };
 }
 
+function mapSafeInternalUserRow(row) {
+  return safeInternalUser({
+    id: row.id,
+    email: row.email,
+    role: row.role,
+    customerId: row.customer_id,
+    status: row.status,
+    createdAt: row.created_at
+  });
+}
+
+function safeInternalUser(user) {
+  return {
+    id: user.id,
+    email: user.email,
+    role: user.role,
+    status: user.status,
+    createdAt: user.createdAt || user.created_at || null
+  };
+}
+
 function mapSessionRow(row) {
   return {
     id: row.id,
@@ -2868,6 +3219,57 @@ function normalizeAddressDefaultFlags(usageType, input = {}) {
   };
 }
 
+function ensureJsonInternalOrganization(db) {
+  let organization = db.organizations.find((item) => item.type === "internal") || null;
+  if (!organization) {
+    organization = {
+      id: "org_internal",
+      type: "internal",
+      name: internalOrganizationName,
+      status: "active",
+      legacyCustomerId: null,
+      billingEmail: null,
+      phone: null,
+      createdAt: nowIso(),
+      updatedAt: nowIso()
+    };
+    db.organizations.push(organization);
+  }
+  return organization;
+}
+
+function syncJsonInternalMemberships(db, internalOrganizationId) {
+  for (const user of db.users.filter((item) => internalLegacyRoles.has(item.role) && !item.customerId)) {
+    const memberships = db.organizationUsers.filter((membership) => membership.userId === user.id);
+    let membership = memberships.find((item) => item.organizationId === internalOrganizationId) || null;
+    if (!membership && memberships.length === 0) {
+      membership = {
+        id: createId("orguser"),
+        organizationId: internalOrganizationId,
+        userId: user.id,
+        role: user.role,
+        status: user.status === "disabled" ? "disabled" : "active",
+        createdAt: nowIso(),
+        updatedAt: nowIso()
+      };
+      db.organizationUsers.push(membership);
+    }
+    if (membership) {
+      membership.role = user.role;
+      membership.status = user.status === "disabled" ? "disabled" : "active";
+      membership.updatedAt = nowIso();
+    }
+  }
+}
+
+function jsonUserBelongsToOrganization(db, userId, organizationId) {
+  return db.organizationUsers.some((membership) =>
+    membership.userId === userId &&
+    membership.organizationId === organizationId &&
+    membership.status !== "deleted"
+  );
+}
+
 function clearJsonAddressDefaults(entries, customerId, exceptId, defaults) {
   for (const entry of entries) {
     if (entry.customerId !== customerId || entry.status !== "active" || entry.id === exceptId) {
@@ -2977,6 +3379,13 @@ function createPasswordRecord(password) {
     salt,
     hash: crypto.pbkdf2Sync(String(password), salt, 120000, 32, "sha256").toString("hex")
   };
+}
+
+class StoreValidationError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.code = code;
+  }
 }
 
 async function upsertCustomerPortalUser(client, input) {

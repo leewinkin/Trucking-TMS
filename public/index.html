@@ -62,6 +62,7 @@
         <nav class="nav">
           <button class="nav-button active" data-view="dashboard" data-i18n="Dashboard">Dashboard</button>
           <button class="nav-button" data-view="customers" id="customersNavButton" data-i18n="Customers">Customers</button>
+          <button class="nav-button hidden" data-view="users" id="usersNavButton" data-i18n="User Management">User Management</button>
           <button class="nav-button" data-view="quotes" id="quotesNavButton" data-i18n="My Quotes">My Quotes</button>
           <button class="nav-button" data-view="quote" data-i18n="New Quote">New Quote</button>
           <button class="nav-button" data-view="shipments" data-i18n="Shipments">Shipments</button>
@@ -156,6 +157,19 @@
             <div class="customer-management-filters" id="customerManagementFilters"></div>
             <div class="customer-management-metrics" id="customerManagementMetrics"></div>
             <div id="customerList" class="customer-management-list"></div>
+          </section>
+        </section>
+
+        <section class="view" id="usersView">
+          <section class="customer-management-workspace" id="internalUserManagementWorkspace">
+            <div class="customer-management-header">
+              <div>
+                <h2 data-i18n="User Management">User Management</h2>
+                <p data-i18n="Manage internal employee access and temporary passwords.">Manage internal employee access and temporary passwords.</p>
+              </div>
+              <button class="primary-action" type="button" data-internal-user-add data-i18n="+ Add Employee">+ Add Employee</button>
+            </div>
+            <div id="internalUserList" class="customer-management-list"></div>
           </section>
         </section>
 
