@@ -121,6 +121,7 @@ const translations = {
     "Edit User": "编辑用户",
     "Reset Password": "重置密码",
     "Temporary password": "临时密码",
+    "Confirm temporary password": "确认临时密码",
     "Role": "角色",
     "Sub-admin": "子管理员",
     "Staff": "员工",
@@ -138,6 +139,8 @@ const translations = {
     "Confirm role change? The affected user must sign in again.": "确认更改角色？受影响用户需要重新登录。",
     "Confirm disabling this user? The affected user must sign in again.": "确认停用该用户？受影响用户需要重新登录。",
     "Confirm password reset? The affected user must sign in again.": "确认重置密码？受影响用户需要重新登录。",
+    "Temporary passwords must be 10 to 128 characters.": "临时密码长度必须为 10 到 128 个字符。",
+    "Temporary passwords do not match.": "两次输入的临时密码不一致。",
     "You cannot manage this user from your role.": "你的角色无法管理该用户。",
     "Quote Management": "报价管理",
     "Monitor quote activity and carrier results.": "查看报价动态和承运商结果。",
@@ -1804,6 +1807,9 @@ function wireForms() {
     } else if (event.target?.id === "internalUserEditForm") {
       event.preventDefault();
       updateInternalUserFromForm(event.target);
+    } else if (event.target?.id === "internalUserResetPasswordForm") {
+      event.preventDefault();
+      resetInternalUserPasswordFromForm(event.target);
     }
   });
 
@@ -6994,7 +7000,7 @@ function openInternalUserAddModal() {
       </label>
       <label>
         ${escapeHtml(t("Temporary password"))}
-        <input name="password" type="password" autocomplete="new-password" required>
+        <input name="password" type="password" autocomplete="new-password" minlength="10" maxlength="128" required>
       </label>
       <label>
         ${escapeHtml(t("Role"))}
@@ -7045,11 +7051,16 @@ function openInternalUserEditModal(id) {
 
 async function createInternalUserFromForm(form) {
   const data = new FormData(form);
+  const password = String(data.get("password") || "");
+  if (!validInternalTemporaryPassword(password)) {
+    showToast(t("Temporary passwords must be 10 to 128 characters."), true);
+    return;
+  }
   const response = await api("/api/internal-users", {
     method: "POST",
     body: {
       email: data.get("email"),
-      password: data.get("password"),
+      password,
       role: data.get("role") || "staff"
     }
   });
@@ -7084,17 +7095,52 @@ async function resetInternalUserPassword(id) {
     showToast(t("You cannot manage this user from your role."), true);
     return;
   }
-  const password = window.prompt(t("New password"));
-  if (!password) {
+  openInternalUserResetPasswordModal(user);
+}
+
+function openInternalUserResetPasswordModal(user) {
+  openModal(t("Reset Password"), `
+    <form id="internalUserResetPasswordForm" class="modal-form" data-internal-user-id="${escapeHtml(user.id)}">
+      <p><strong>${escapeHtml(user.email)}</strong></p>
+      <label>
+        ${escapeHtml(t("New temporary password"))}
+        <input name="password" type="password" autocomplete="new-password" minlength="10" maxlength="128" required>
+      </label>
+      <label>
+        ${escapeHtml(t("Confirm temporary password"))}
+        <input name="confirmPassword" type="password" autocomplete="new-password" minlength="10" maxlength="128" required>
+      </label>
+      <div class="modal-actions">
+        <button class="secondary-action" type="button" data-modal-close>${escapeHtml(t("Cancel"))}</button>
+        <button class="primary-action" type="submit">${escapeHtml(t("Reset Password"))}</button>
+      </div>
+    </form>
+  `);
+}
+
+function validInternalTemporaryPassword(password) {
+  return password.length >= 10 && password.length <= 128;
+}
+
+async function resetInternalUserPasswordFromForm(form) {
+  const password = String(new FormData(form).get("password") || "");
+  const confirmPassword = String(new FormData(form).get("confirmPassword") || "");
+  if (!validInternalTemporaryPassword(password)) {
+    showToast(t("Temporary passwords must be 10 to 128 characters."), true);
+    return;
+  }
+  if (password !== confirmPassword) {
+    showToast(t("Temporary passwords do not match."), true);
     return;
   }
   if (!window.confirm(t("Confirm password reset? The affected user must sign in again."))) {
     return;
   }
-  await api(`/api/internal-users/${encodeURIComponent(id)}/reset-password`, {
+  await api(`/api/internal-users/${encodeURIComponent(form.dataset.internalUserId)}/reset-password`, {
     method: "POST",
     body: { password }
   });
+  closeModal({ force: true });
   showToast(t("Password reset. The affected user must sign in again."));
   await refreshInternalUsersList();
 }

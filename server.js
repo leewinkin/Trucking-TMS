@@ -252,7 +252,7 @@ async function handleApi(req, res, url) {
     assertCanCreateInternalRole(currentUser, role);
     const user = await createInternalUserWithPublicErrors({
       email: normalizeEmail(input.email),
-      password: requiredString(input.password, "password"),
+      password: validateInternalTemporaryPassword(input.password),
       role
     });
     sendJson(res, 201, { user });
@@ -289,7 +289,7 @@ async function handleApi(req, res, url) {
     const target = await requireManageableInternalTarget(currentUser, targetId);
     assertCanResetInternalUserPassword(currentUser, target);
     const input = await readJson(req);
-    const user = await resetInternalUserPasswordWithPublicErrors(targetId, requiredString(input.password, "password"));
+    const user = await resetInternalUserPasswordWithPublicErrors(targetId, validateInternalTemporaryPassword(input.password));
     if (!user) {
       sendJson(res, 404, { error: "INTERNAL_USER_NOT_FOUND", message: "Internal user was not found." });
       return;
@@ -3766,6 +3766,14 @@ function normalizeInternalStatus(value) {
     throw new PublicError(400, "VALIDATION_ERROR", "status must be active or disabled.");
   }
   return status;
+}
+
+function validateInternalTemporaryPassword(value) {
+  const password = requiredString(value, "password");
+  if (password.length < 10 || password.length > 128) {
+    throw new PublicError(400, "VALIDATION_ERROR", "password must be between 10 and 128 characters.");
+  }
+  return password;
 }
 
 function assertCanCreateInternalRole(actor, role) {

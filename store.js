@@ -1007,8 +1007,8 @@ async function createPostgresStore(dbUrl, { runOrganizationMigrationOnStartup = 
         }
         const nextRole = Object.prototype.hasOwnProperty.call(input, "role") ? input.role : target.role;
         const nextStatus = Object.prototype.hasOwnProperty.call(input, "status") ? input.status : target.status;
-        if (target.role === "admin" && (nextRole !== "admin" || nextStatus === "disabled")) {
-          const activeAdmins = await countPostgresActiveAdmins(client);
+        if (removesActiveAdmin(target, nextRole, nextStatus)) {
+          const activeAdmins = await lockPostgresActiveInternalAdmins(client, internalOrganization.id);
           if (activeAdmins <= 1) {
             throw new StoreValidationError("FINAL_ACTIVE_ADMIN", "The final active Admin cannot be demoted or disabled.");
           }
@@ -1758,7 +1758,7 @@ async function syncPostgresInternalMemberships(client, internalOrganizationId) {
   );
   for (const user of users.rows) {
     const memberships = await client.query(
-      "SELECT * FROM organization_users WHERE user_id = $1 AND status = 'active' ORDER BY created_at ASC",
+    "SELECT * FROM organization_users WHERE user_id = $1 ORDER BY created_at ASC",
       [user.id]
     );
     let membership = memberships.rows.find((item) => item.organization_id === internalOrganizationId) || null;
@@ -1811,19 +1811,20 @@ async function getPostgresInternalUserForUpdate(client, internalOrganizationId, 
   return rows[0] || null;
 }
 
-async function countPostgresActiveAdmins(client) {
+async function lockPostgresActiveInternalAdmins(client, internalOrganizationId) {
   const { rows } = await client.query(
-    `SELECT COUNT(*)::int AS count
+    `SELECT u.id
      FROM users u
      JOIN organization_users ou ON ou.user_id = u.id
-     JOIN organizations o ON o.id = ou.organization_id
-     WHERE o.type = 'internal'
+     WHERE ou.organization_id = $1
        AND u.role = 'admin'
        AND u.status = 'active'
        AND u.customer_id IS NULL
-       AND ou.status = 'active'`
+       AND ou.status = 'active'
+     FOR UPDATE OF u`,
+    [internalOrganizationId]
   );
-  return rows[0]?.count || 0;
+  return rows.length;
 }
 
 async function createJsonStore(filePath, { runOrganizationMigrationOnStartup = false } = {}) {
@@ -2502,7 +2503,7 @@ async function createJsonStore(filePath, { runOrganizationMigrationOnStartup = f
       const previousStatus = target.status;
       const nextRole = Object.prototype.hasOwnProperty.call(input, "role") ? input.role : target.role;
       const nextStatus = Object.prototype.hasOwnProperty.call(input, "status") ? input.status : target.status;
-      if (target.role === "admin" && (nextRole !== "admin" || nextStatus === "disabled")) {
+      if (removesActiveAdmin(target, nextRole, nextStatus)) {
         const activeAdmins = db.users.filter((user) =>
           user.role === "admin" &&
           user.status === "active" &&
@@ -3268,6 +3269,12 @@ function jsonUserBelongsToOrganization(db, userId, organizationId) {
     membership.organizationId === organizationId &&
     membership.status !== "deleted"
   );
+}
+
+function removesActiveAdmin(target, nextRole, nextStatus) {
+  return target.role === "admin" &&
+    target.status === "active" &&
+    !(nextRole === "admin" && nextStatus === "active");
 }
 
 function clearJsonAddressDefaults(entries, customerId, exceptId, defaults) {

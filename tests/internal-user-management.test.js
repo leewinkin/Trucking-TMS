@@ -26,7 +26,7 @@ try {
 
   const createdStaff = await admin.request("/api/internal-users", {
     method: "POST",
-    body: { email: "new.staff@example.com", password: "Staff123!", role: "staff" }
+    body: { email: "new.staff@example.com", password: "Staff12345!", role: "staff" }
   });
   assert.equal(createdStaff.status, 201);
   assert.equal(createdStaff.body.user.role, "staff");
@@ -34,7 +34,7 @@ try {
 
   const createdSubAdmin = await admin.request("/api/internal-users", {
     method: "POST",
-    body: { email: "new.ops@example.com", password: "Ops123!", role: "operations" }
+    body: { email: "new.ops@example.com", password: "Ops123456!", role: "operations" }
   });
   assert.equal(createdSubAdmin.status, 201);
   assert.equal(createdSubAdmin.body.user.role, "operations");
@@ -48,7 +48,7 @@ try {
 
   const duplicateEmail = await admin.request("/api/internal-users", {
     method: "POST",
-    body: { email: "NEW.OPS@example.com", password: "Ops123!", role: "staff" }
+    body: { email: "NEW.OPS@example.com", password: "Ops123456!", role: "staff" }
   });
   assert.equal(duplicateEmail.status, 409);
 
@@ -63,6 +63,18 @@ try {
     body: { status: "disabled" }
   });
   assert.equal(selfDisable.status, 403);
+  const selfDemote = await admin.request("/api/internal-users/user_admin", {
+    method: "PATCH",
+    body: { role: "staff" }
+  });
+  assert.equal(selfDemote.status, 403);
+
+  const shortCreatePassword = await admin.request("/api/internal-users", {
+    method: "POST",
+    body: { email: "short.staff@example.com", password: "x", role: "staff" }
+  });
+  assert.equal(shortCreatePassword.status, 400);
+  assert.equal(shortCreatePassword.body.error, "VALIDATION_ERROR");
 
   const ops = createClient(port);
   await ops.login("ops@example.com", "Ops123!");
@@ -72,17 +84,17 @@ try {
 
   const opsCreateStaff = await ops.request("/api/internal-users", {
     method: "POST",
-    body: { email: "ops.staff@example.com", password: "Staff123!", role: "staff" }
+    body: { email: "ops.staff@example.com", password: "Staff12345!", role: "staff" }
   });
   assert.equal(opsCreateStaff.status, 201);
   const opsCreateAdmin = await ops.request("/api/internal-users", {
     method: "POST",
-    body: { email: "bad.admin@example.com", password: "Admin123!", role: "admin" }
+    body: { email: "bad.admin@example.com", password: "Admin12345!", role: "admin" }
   });
   assert.equal(opsCreateAdmin.status, 403);
   const opsCreateSubAdmin = await ops.request("/api/internal-users", {
     method: "POST",
-    body: { email: "bad.ops@example.com", password: "Ops123!", role: "operations" }
+    body: { email: "bad.ops@example.com", password: "Ops123456!", role: "operations" }
   });
   assert.equal(opsCreateSubAdmin.status, 403);
   const opsEditAdmin = await ops.request("/api/internal-users/user_admin", {
@@ -105,24 +117,46 @@ try {
   assert.equal(disableStaff.status, 200);
   const invalidatedStaffSession = await activeStaff.request("/api/me");
   assert.equal(invalidatedStaffSession.status, 401);
+  assert.equal((await admin.request("/api/internal-users")).status, 200);
+  assert.equal((await admin.request("/api/internal-users")).status, 200);
+  let dbAfterRepeatedList = JSON.parse(await readFile(dbPath, "utf8"));
+  assert.equal(dbAfterRepeatedList.organizationUsers.filter((membership) => membership.userId === "user_staff" && membership.organizationId === "org_internal").length, 1);
+  assert.equal(dbAfterRepeatedList.organizationUsers.find((membership) => membership.userId === "user_staff" && membership.organizationId === "org_internal").status, "disabled");
+  const reactivateStaff = await admin.request("/api/internal-users/user_staff", {
+    method: "PATCH",
+    body: { status: "active" }
+  });
+  assert.equal(reactivateStaff.status, 200);
+  dbAfterRepeatedList = JSON.parse(await readFile(dbPath, "utf8"));
+  const reactivatedMemberships = dbAfterRepeatedList.organizationUsers.filter((membership) => membership.userId === "user_staff" && membership.organizationId === "org_internal");
+  assert.equal(reactivatedMemberships.length, 1);
+  assert.equal(reactivatedMemberships.filter((membership) => membership.status === "active").length, 1);
+  assert.equal(reactivatedMemberships[0].role, dbAfterRepeatedList.users.find((user) => user.id === "user_staff").role);
+  assert.equal(reactivatedMemberships[0].status, dbAfterRepeatedList.users.find((user) => user.id === "user_staff").status);
 
   const resetTarget = await admin.request("/api/internal-users", {
     method: "POST",
-    body: { email: "reset.staff@example.com", password: "Old123!", role: "staff" }
+    body: { email: "reset.staff@example.com", password: "OldPassword123!", role: "staff" }
   });
   assert.equal(resetTarget.status, 201);
   const resetStaffClient = createClient(port);
-  await resetStaffClient.login("reset.staff@example.com", "Old123!");
+  await resetStaffClient.login("reset.staff@example.com", "OldPassword123!");
+  const shortReset = await ops.request(`/api/internal-users/${resetTarget.body.user.id}/reset-password`, {
+    method: "POST",
+    body: { password: "x" }
+  });
+  assert.equal(shortReset.status, 400);
+  assert.equal(shortReset.body.error, "VALIDATION_ERROR");
   const reset = await ops.request(`/api/internal-users/${resetTarget.body.user.id}/reset-password`, {
     method: "POST",
-    body: { password: "New123!" }
+    body: { password: "NewPassword123!" }
   });
   assert.equal(reset.status, 200);
   const resetOldSession = await resetStaffClient.request("/api/me");
   assert.equal(resetOldSession.status, 401);
 
   const staff = createClient(port);
-  await staff.login("ops.staff@example.com", "Staff123!");
+  await staff.login("ops.staff@example.com", "Staff12345!");
   assert.equal((await staff.request("/api/internal-users")).status, 403);
   assert.equal((await staff.request("/api/internal-users", { method: "POST", body: { email: "x@example.com", password: "x", role: "staff" } })).status, 403);
   assert.equal((await staff.request(`/api/internal-users/${opsCreateStaff.body.user.id}`, { method: "PATCH", body: { status: "disabled" } })).status, 403);
@@ -147,14 +181,54 @@ try {
     () => store.updateInternalUser("user_admin", { role: "staff" }),
     /final active Admin/i
   );
+  await assert.rejects(
+    () => store.updateInternalUser("user_admin", { status: "disabled" }),
+    /final active Admin/i
+  );
+
+  const multiAdminDbPath = path.join(tempDir, "multi-admin-db.json");
+  const multiAdminDb = seedDb();
+  multiAdminDb.users.push(userRecord("user_admin2", "admin2@example.com", "AdminTwo123!", "admin", null, "active"));
+  multiAdminDb.organizationUsers.push(membership("orguser_admin2", "org_internal", "user_admin2", "admin", "active"));
+  await writeFile(multiAdminDbPath, JSON.stringify(multiAdminDb, null, 2));
+  const multiAdminStore = await createAppStore({ dataFile: multiAdminDbPath, dbUrl: "" });
+  const demotedSecondAdmin = await multiAdminStore.updateInternalUser("user_admin2", { role: "staff", status: "active" });
+  assert.equal(demotedSecondAdmin.role, "staff");
+  await assert.rejects(
+    () => multiAdminStore.updateInternalUser("user_admin", { role: "staff" }),
+    /final active Admin/i
+  );
+
+  const disabledAdminDbPath = path.join(tempDir, "disabled-admin-db.json");
+  const disabledAdminDb = seedDb();
+  disabledAdminDb.users.push(userRecord("user_disabled_admin", "disabled-admin@example.com", "DisabledAdmin123!", "admin", null, "disabled"));
+  disabledAdminDb.organizationUsers.push(membership("orguser_disabled_admin", "org_internal", "user_disabled_admin", "admin", "disabled"));
+  await writeFile(disabledAdminDbPath, JSON.stringify(disabledAdminDb, null, 2));
+  const disabledAdminStore = await createAppStore({ dataFile: disabledAdminDbPath, dbUrl: "" });
+  const changedDisabledAdmin = await disabledAdminStore.updateInternalUser("user_disabled_admin", { role: "staff", status: "disabled" });
+  assert.equal(changedDisabledAdmin.role, "staff");
+  const reactivatedAdminDbPath = path.join(tempDir, "reactivated-admin-db.json");
+  await writeFile(reactivatedAdminDbPath, JSON.stringify(disabledAdminDb, null, 2));
+  const reactivatedAdminStore = await createAppStore({ dataFile: reactivatedAdminDbPath, dbUrl: "" });
+  const reactivatedAdmin = await reactivatedAdminStore.updateInternalUser("user_disabled_admin", { role: "admin", status: "active" });
+  assert.equal(reactivatedAdmin.role, "admin");
+  assert.equal(reactivatedAdmin.status, "active");
 
   const appSource = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
   const htmlSource = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  const storeSource = readFileSync(new URL("../store.js", import.meta.url), "utf8");
   assert.match(htmlSource, /data-view="users"[\s\S]*data-i18n="User Management"/, "User Management nav should exist");
   assert.match(appSource, /function canManageInternalUsers\(\)[\s\S]*admin[\s\S]*operations/, "Admin and Sub-admin visibility guard should exist");
   assert.match(appSource, /usersNavButton[\s\S]*canManageInternalUsers\(\)/, "User Management nav should be role-aware");
   assert.match(appSource, /state\.user\?\.role === "admin" \? \["admin", "operations", "staff"\] : \["staff"\]/, "Sub-admin role choices should be fixed to Staff");
+  assert.doesNotMatch(appSource.slice(appSource.indexOf("async function resetInternalUserPassword"), appSource.indexOf("async function refreshInternalUsersList")), /window\.prompt/, "password reset should not use window.prompt");
+  assert.match(appSource, /id="internalUserResetPasswordForm"[\s\S]*type="password"[\s\S]*name="confirmPassword"[\s\S]*type="password"/, "password reset control should use password inputs");
+  assert.match(appSource, /minlength="10" maxlength="128"/, "internal temporary password controls should enforce length attributes");
   assert.doesNotMatch(appSource, /portal[\s\S]{0,120}admin[\s\S]{0,120}operations/, "Customer portal form should not expose internal roles");
+  const syncPostgresSlice = storeSource.slice(storeSource.indexOf("async function syncPostgresInternalMemberships"), storeSource.indexOf("async function getPostgresInternalUserForUpdate"));
+  assert.match(syncPostgresSlice, /SELECT \* FROM organization_users WHERE user_id = \$1 ORDER BY created_at ASC/, "PostgreSQL internal sync should inspect disabled and active memberships");
+  assert.doesNotMatch(syncPostgresSlice, /status = 'active'/, "PostgreSQL internal sync must not insert because an existing membership is disabled");
+  assert.match(storeSource, /FOR UPDATE OF u/, "PostgreSQL final active Admin checks should lock active Admin user rows");
 
   console.log("internal user management tests passed");
 } finally {
