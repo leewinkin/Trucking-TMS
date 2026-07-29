@@ -15,7 +15,10 @@ import {
   carrierShipmentImportSources,
   carrierShipmentMatchingStatuses,
   carrierShipmentProviders,
-  normalizeCarrierShipmentValue
+  mergeCarrierShipmentForProviderSync,
+  normalizeCarrierShipmentIdentifier,
+  normalizeCarrierShipmentValue,
+  sanitizeCarrierShipmentPayload
 } from "./server/carriers/carrier-shipment-normalizer.js";
 
 const __dirname = process.cwd();
@@ -776,6 +779,12 @@ async function createPostgresStore(dbUrl, { runOrganizationMigrationOnStartup = 
             summary.skipped += 1;
             continue;
           }
+          const existingResult = await client.query(
+            "SELECT * FROM carrier_shipments WHERE provider = $1 AND external_shipment_id = $2 FOR UPDATE",
+            [record.provider, record.externalShipmentId]
+          );
+          const existing = existingResult.rows[0] ? mapCarrierShipmentRow(existingResult.rows[0]) : null;
+          const merged = mergeCarrierShipmentForProviderSync(existing, record);
           const result = await client.query(
             `INSERT INTO carrier_shipments
              (id, provider, import_source, booking_channel, booking_channel_evidence, linked_shipment_id, customer_id, matching_status, external_shipment_id, entity_id, transaction_id, confirmation_number, reference_number, pro_number, bol_number, origin, destination, carrier_name, service, status, carrier_cost, raw_provider_record, imported_at, last_provider_update, updated_at)
@@ -805,30 +814,30 @@ async function createPostgresStore(dbUrl, { runOrganizationMigrationOnStartup = 
                updated_at = EXCLUDED.updated_at
              RETURNING (xmax = 0) AS inserted`,
             [
-              record.id || createId("cship"),
-              record.provider,
-              record.importSource,
-              record.bookingChannel,
-              JSON.stringify(record.bookingChannelEvidence || {}),
-              record.linkedShipmentId || null,
-              record.customerId || null,
-              record.matchingStatus,
-              record.externalShipmentId,
-              record.entityId || null,
-              record.transactionId || null,
-              record.confirmationNumber || "",
-              record.referenceNumber || "",
-              record.proNumber || "",
-              record.bolNumber || "",
-              JSON.stringify(record.origin || {}),
-              JSON.stringify(record.destination || {}),
-              record.carrierName || "",
-              record.service || "",
-              record.status || "",
-              record.carrierCost || 0,
-              JSON.stringify(record.rawProviderRecord || {}),
-              record.importedAt || nowIso(),
-              record.lastProviderUpdate || null,
+              merged.id || createId("cship"),
+              merged.provider,
+              merged.importSource,
+              merged.bookingChannel,
+              JSON.stringify(merged.bookingChannelEvidence || {}),
+              merged.linkedShipmentId || null,
+              merged.customerId || null,
+              merged.matchingStatus,
+              merged.externalShipmentId,
+              merged.entityId || null,
+              merged.transactionId || null,
+              merged.confirmationNumber || "",
+              merged.referenceNumber || "",
+              merged.proNumber || "",
+              merged.bolNumber || "",
+              JSON.stringify(merged.origin || {}),
+              JSON.stringify(merged.destination || {}),
+              merged.carrierName || "",
+              merged.service || "",
+              merged.status || "",
+              merged.carrierCost || 0,
+              JSON.stringify(merged.rawProviderRecord || {}),
+              merged.importedAt || nowIso(),
+              merged.lastProviderUpdate || null,
               nowIso()
             ]
           );
@@ -1624,6 +1633,15 @@ async function ensureSchema(pool) {
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_carrier_shipments_provider_external ON carrier_shipments(provider, external_shipment_id)",
     "CREATE INDEX IF NOT EXISTS idx_carrier_shipments_provider ON carrier_shipments(provider)",
     "CREATE INDEX IF NOT EXISTS idx_carrier_shipments_linked_shipment_id ON carrier_shipments(linked_shipment_id)",
+    "CREATE INDEX IF NOT EXISTS idx_carrier_shipments_entity_id ON carrier_shipments(entity_id)",
+    "CREATE INDEX IF NOT EXISTS idx_carrier_shipments_transaction_id ON carrier_shipments(transaction_id)",
+    "CREATE INDEX IF NOT EXISTS idx_carrier_shipments_confirmation_number ON carrier_shipments(confirmation_number)",
+    "CREATE INDEX IF NOT EXISTS idx_carrier_shipments_reference_number ON carrier_shipments(reference_number)",
+    "CREATE INDEX IF NOT EXISTS idx_carrier_shipments_pro_number ON carrier_shipments(pro_number)",
+    "CREATE INDEX IF NOT EXISTS idx_carrier_shipments_bol_number ON carrier_shipments(bol_number)",
+    "CREATE INDEX IF NOT EXISTS idx_carrier_shipments_customer_id ON carrier_shipments(customer_id)",
+    "CREATE INDEX IF NOT EXISTS idx_carrier_shipments_matching_status ON carrier_shipments(matching_status)",
+    "CREATE INDEX IF NOT EXISTS idx_carrier_shipments_last_provider_update ON carrier_shipments(last_provider_update)",
     "CREATE INDEX IF NOT EXISTS idx_tracking_events_shipment_id ON tracking_events(shipment_id)",
     "CREATE INDEX IF NOT EXISTS idx_carrier_documents_shipment_id ON carrier_documents(shipment_id)",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_carrier_documents_provider_key ON carrier_documents(provider, external_document_key)",
@@ -2664,9 +2682,10 @@ async function createJsonStore(filePath, { runOrganizationMigrationOnStartup = f
           continue;
         }
         const existing = db.carrierShipments.find((item) => item.provider === record.provider && item.externalShipmentId === record.externalShipmentId);
+        const merged = mergeCarrierShipmentForProviderSync(existing ? normalizeCarrierShipmentRecord(existing) : null, record);
         if (existing) {
           Object.assign(existing, {
-            ...record,
+            ...merged,
             id: existing.id,
             importedAt: existing.importedAt,
             updatedAt: nowIso()
@@ -2674,9 +2693,9 @@ async function createJsonStore(filePath, { runOrganizationMigrationOnStartup = f
           summary.updated += 1;
         } else {
           db.carrierShipments.push({
-            ...record,
-            id: record.id || createId("cship"),
-            importedAt: record.importedAt || nowIso(),
+            ...merged,
+            id: merged.id || createId("cship"),
+            importedAt: merged.importedAt || nowIso(),
             updatedAt: nowIso()
           });
           summary.created += 1;
@@ -3761,9 +3780,9 @@ function normalizeCarrierShipmentRecord(shipment) {
     linkedShipmentId: shipment?.linkedShipmentId || shipment?.linked_shipment_id || null,
     customerId: shipment?.customerId || shipment?.customer_id || null,
     matchingStatus,
-    externalShipmentId: String(shipment?.externalShipmentId || shipment?.external_shipment_id || "").trim(),
-    entityId: String(shipment?.entityId || shipment?.entity_id || "").trim(),
-    transactionId: String(shipment?.transactionId || shipment?.transaction_id || "").trim(),
+    externalShipmentId: normalizeCarrierShipmentIdentifier(shipment?.externalShipmentId || shipment?.external_shipment_id),
+    entityId: normalizeCarrierShipmentIdentifier(shipment?.entityId || shipment?.entity_id),
+    transactionId: normalizeCarrierShipmentIdentifier(shipment?.transactionId || shipment?.transaction_id),
     confirmationNumber: String(shipment?.confirmationNumber || shipment?.confirmation_number || "").trim(),
     referenceNumber: String(shipment?.referenceNumber || shipment?.reference_number || "").trim(),
     proNumber: String(shipment?.proNumber || shipment?.pro_number || "").trim(),
@@ -3774,7 +3793,7 @@ function normalizeCarrierShipmentRecord(shipment) {
     service: String(shipment?.service || "").trim(),
     status: String(shipment?.status || "").trim(),
     carrierCost: Number(shipment?.carrierCost ?? shipment?.carrier_cost ?? 0) || 0,
-    rawProviderRecord,
+    rawProviderRecord: sanitizeCarrierShipmentPayload(rawProviderRecord),
     importedAt: shipment?.importedAt || shipment?.imported_at || nowIso(),
     lastProviderUpdate: shipment?.lastProviderUpdate || shipment?.last_provider_update || null,
     updatedAt: shipment?.updatedAt || shipment?.updated_at || nowIso()

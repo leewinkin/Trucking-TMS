@@ -1,4 +1,4 @@
-import { carrierShipmentUnsupported } from "./carrier-shipment-normalizer.js";
+import { carrierShipmentUnsupported, normalizeImportedCarrierShipment } from "./carrier-shipment-normalizer.js";
 
 export function speedshipHistoricalShipmentsCapability() {
   return carrierShipmentUnsupported(
@@ -7,7 +7,14 @@ export function speedshipHistoricalShipmentsCapability() {
   );
 }
 
-export async function fetchSpeedshipHistoricalShipments() {
+export async function fetchSpeedshipHistoricalShipments(options = {}) {
+  if (Array.isArray(options.fixtureRecords)) {
+    return {
+      provider: "speedship",
+      shipments: options.fixtureRecords.map((record) => normalizeImportedCarrierShipment("speedship", record)),
+      capability: { provider: "speedship", status: "successful" }
+    };
+  }
   return {
     provider: "speedship",
     shipments: [],

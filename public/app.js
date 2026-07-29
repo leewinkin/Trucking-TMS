@@ -882,6 +882,13 @@ const translations = {
     "last provider update": "平台最后更新",
     "Not linked": "未关联",
     "Link to Local Shipment": "关联本地货件",
+    "Choose the exact local shipment to link. This does not change pricing or customer visibility.": "请选择准确的本地货件进行关联。此操作不会更改价格或客户可见性。",
+    "Search shipments": "搜索货件",
+    "Search by confirmation, customer, lane, PO, provider, or status": "按确认号、客户、路线、PO、平台或状态搜索",
+    "No matching shipments.": "没有匹配的货件。",
+    "Confirm Link": "确认关联",
+    "Link this imported carrier shipment to {confirmationNumber}?": "确认将该导入承运商货件关联到 {confirmationNumber}？",
+    "Unlink this imported carrier shipment from the local shipment?": "确认取消该导入承运商货件与本地货件的关联？",
     "Confirm Provider Portal Booking": "确认承运商门户预约",
     "Set Source Unknown": "设为来源未知",
     "Unlink": "取消关联",
@@ -1276,6 +1283,10 @@ const state = {
     provider: "all",
     bookingChannel: "all"
   },
+  carrierShipmentLink: {
+    carrierShipmentId: "",
+    search: ""
+  },
   staffFilterRanges: {
     quotes: "all",
     shipments: "all",
@@ -1540,6 +1551,12 @@ function wireNavigation() {
     const carrierShipmentActionButton = event.target.closest("[data-carrier-shipment-action]");
     if (carrierShipmentActionButton) {
       handleCarrierShipmentAction(carrierShipmentActionButton.dataset.carrierShipmentId, carrierShipmentActionButton.dataset.carrierShipmentAction);
+      return;
+    }
+
+    const carrierShipmentLinkButton = event.target.closest("[data-carrier-shipment-link-confirm]");
+    if (carrierShipmentLinkButton) {
+      confirmCarrierShipmentLink(carrierShipmentLinkButton.dataset.carrierShipmentLinkConfirm);
       return;
     }
 
@@ -1861,6 +1878,12 @@ function wireForms() {
     if (carrierShipmentFilter) {
       state.carrierShipmentFilters[carrierShipmentFilter.dataset.carrierShipmentFilter] = carrierShipmentFilter.value || "all";
       renderShipments();
+      return;
+    }
+    const carrierShipmentLinkSearch = event.target.closest("[data-carrier-shipment-link-search]");
+    if (carrierShipmentLinkSearch) {
+      state.carrierShipmentLink.search = carrierShipmentLinkSearch.value || "";
+      paintCarrierShipmentLinkModal();
       return;
     }
     const customerManagementFilter = event.target.closest("[data-customer-management-filter]");
@@ -2778,9 +2801,11 @@ async function handleCarrierShipmentAction(id, action) {
   }
   const body = {};
   if (action === "link") {
-    const linkedShipmentId = window.prompt(t("Enter local shipment ID to link."));
-    if (!linkedShipmentId) return;
-    body.linkedShipmentId = linkedShipmentId.trim();
+    openCarrierShipmentLinkModal(id);
+    return;
+  }
+  if (action === "unlink" && !window.confirm(t("Unlink this imported carrier shipment from the local shipment?"))) {
+    return;
   }
   if (action === "confirm-provider-portal") {
     body.reason = window.prompt(t("Optional reason for provider portal confirmation.")) || "";
@@ -2791,6 +2816,101 @@ async function handleCarrierShipmentAction(id, action) {
       body
     });
     showToast(t("Carrier shipment updated."));
+    await refreshAll();
+  } catch (error) {
+    showToast(error.message || t("Carrier shipment could not be updated."), true);
+  }
+}
+
+function openCarrierShipmentLinkModal(id) {
+  state.carrierShipmentLink = { carrierShipmentId: id, search: "" };
+  openModal(t("Link to Local Shipment"), carrierShipmentLinkModalHtml());
+}
+
+function paintCarrierShipmentLinkModal() {
+  if (!state.modal || state.modal.title !== t("Link to Local Shipment")) {
+    return;
+  }
+  paintModal(t("Link to Local Shipment"), carrierShipmentLinkModalHtml());
+  const input = document.querySelector("[data-carrier-shipment-link-search]");
+  if (input) {
+    input.focus();
+    const length = input.value.length;
+    input.setSelectionRange(length, length);
+  }
+}
+
+function carrierShipmentLinkModalHtml() {
+  const carrierShipment = state.carrierShipments.find((item) => item.id === state.carrierShipmentLink.carrierShipmentId);
+  const search = String(state.carrierShipmentLink.search || "").trim().toLowerCase();
+  const shipments = state.shipments.filter((shipment) => {
+    if (!search) return true;
+    return [
+      shipment.confirmationNumber,
+      shipment.customerName,
+      shipment.referenceNumber,
+      shipment.carrier,
+      shipment.provider,
+      shipment.status,
+      shipment.pickup?.address?.city,
+      shipment.delivery?.address?.city
+    ].some((value) => String(value || "").toLowerCase().includes(search));
+  });
+  return `
+    <div class="carrier-shipment-link-modal">
+      <p class="helper-text">${escapeHtml(t("Choose the exact local shipment to link. This does not change pricing or customer visibility."))}</p>
+      <div class="quote-status notice-state">
+        <strong>${escapeHtml(carrierShipment?.externalShipmentId || t("Imported carrier shipment"))}</strong>
+        <p>${escapeHtml(carrierShipment ? formatCarrierShipmentLane(carrierShipment) : "")}</p>
+      </div>
+      <label>
+        ${t("Search shipments")}
+        <input type="search" data-carrier-shipment-link-search value="${escapeHtml(state.carrierShipmentLink.search || "")}" placeholder="${escapeHtml(t("Search by confirmation, customer, lane, PO, provider, or status"))}">
+      </label>
+      <div class="carrier-shipment-link-list">
+        ${shipments.length
+          ? shipments.map(carrierShipmentLinkOptionHtml).join("")
+          : `<div class="empty-state">${escapeHtml(t("No matching shipments."))}</div>`}
+      </div>
+    </div>
+  `;
+}
+
+function carrierShipmentLinkOptionHtml(shipment) {
+  return `
+    <article class="row-item">
+      <div>
+        <strong>${escapeHtml(shipment.confirmationNumber || shipment.id)}</strong>
+        <small>${escapeHtml(shipment.customerName || t("Not available"))} · ${escapeHtml(shipment.pickup?.address?.city || "")}, ${escapeHtml(shipment.pickup?.address?.state || "")} to ${escapeHtml(shipment.delivery?.address?.city || "")}, ${escapeHtml(shipment.delivery?.address?.state || "")}</small>
+        <div class="meta-line">
+          ${shipment.referenceNumber ? `<span class="pill">${t("PO")} ${escapeHtml(shipment.referenceNumber)}</span>` : ""}
+          <span class="pill">${escapeHtml(shipment.carrier || shipment.provider || t("Provider"))}</span>
+          <span class="pill">${escapeHtml(shipment.status || t("Unknown status"))}</span>
+        </div>
+      </div>
+      <div class="row-actions">
+        <button class="secondary-action" type="button" data-carrier-shipment-link-confirm="${escapeHtml(shipment.id)}">${t("Confirm Link")}</button>
+      </div>
+    </article>
+  `;
+}
+
+async function confirmCarrierShipmentLink(linkedShipmentId) {
+  const carrierShipmentId = state.carrierShipmentLink.carrierShipmentId;
+  const shipment = state.shipments.find((item) => item.id === linkedShipmentId);
+  if (!carrierShipmentId || !shipment) {
+    return;
+  }
+  if (!window.confirm(t("Link this imported carrier shipment to {confirmationNumber}?", { confirmationNumber: shipment.confirmationNumber || shipment.id }))) {
+    return;
+  }
+  try {
+    await api(`/api/carrier-shipments/${encodeURIComponent(carrierShipmentId)}/link`, {
+      method: "POST",
+      body: { linkedShipmentId }
+    });
+    showToast(t("Carrier shipment updated."));
+    closeModal();
     await refreshAll();
   } catch (error) {
     showToast(error.message || t("Carrier shipment could not be updated."), true);

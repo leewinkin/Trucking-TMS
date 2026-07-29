@@ -27,7 +27,9 @@ import { fetchMothershipHistoricalShipments } from "./server/carriers/mothership
 import { fetchPriority1HistoricalShipments } from "./server/carriers/priority1-shipments.js";
 import { fetchSpeedshipHistoricalShipments } from "./server/carriers/speedship-shipments.js";
 import {
+  applyAutomaticShipmentMatch,
   carrierShipmentProviders,
+  classifyCarrierShipmentBookingChannel,
   summarizeCarrierShipmentSync
 } from "./server/carriers/carrier-shipment-normalizer.js";
 import { buildAllowedDocumentHosts, fetchSecureDocument, validateDocumentDownloadUrl } from "./server/document-download-security.js";
@@ -1114,9 +1116,15 @@ async function syncCarrierShipmentProvider(provider, input = {}) {
     if (response.capability?.status === "unsupported") {
       return response.capability;
     }
-    const shipments = Array.isArray(response.shipments) ? response.shipments : [];
+    const localShipments = await store.listShipments();
+    const shipments = (Array.isArray(response.shipments) ? response.shipments : [])
+      .map((shipment) => applyAutomaticShipmentMatch(shipment, localShipments));
     const upsertSummary = shipments.length ? await store.upsertCarrierShipments(shipments) : { created: 0, updated: 0, skipped: 0 };
-    return summarizeCarrierShipmentSync(provider, shipments, upsertSummary);
+    const summary = summarizeCarrierShipmentSync(provider, shipments, upsertSummary);
+    if (input.syncDocuments) {
+      summary.documents = await syncImportedCarrierShipmentDocuments(provider, shipments);
+    }
+    return summary;
   } catch (error) {
     return {
       provider,
@@ -1154,6 +1162,86 @@ function normalizeCarrierShipmentProviders(value) {
       .map((provider) => String(provider || "").trim().toLowerCase())
       .filter((provider) => carrierShipmentProviders.has(provider))
   ));
+}
+
+async function syncImportedCarrierShipmentDocuments(provider, carrierShipments = []) {
+  const summary = { provider, fetched: 0, created: 0, updated: 0, skipped: 0, unmatched: 0, failed: 0 };
+  for (const carrierShipment of carrierShipments) {
+    try {
+      const result = await syncImportedCarrierShipmentDocumentRecord(provider, carrierShipment);
+      summary.fetched += result.fetched || 0;
+      summary.created += result.created || 0;
+      summary.updated += result.updated || 0;
+      summary.skipped += result.skipped || 0;
+      summary.unmatched += result.unmatched || 0;
+      summary.failed += result.failed || 0;
+    } catch (error) {
+      summary.failed += 1;
+      await store.markCarrierDocumentSyncError({
+        provider,
+        externalDocumentKey: `${provider}:${carrierShipment.externalShipmentId || carrierShipment.entityId || carrierShipment.transactionId || carrierShipment.id}:sync-error`,
+        shipmentId: carrierShipment.linkedShipmentId || null,
+        customerId: carrierShipment.customerId || null,
+        message: error.message
+      });
+    }
+  }
+  return summary;
+}
+
+async function syncImportedCarrierShipmentDocumentRecord(provider, carrierShipment) {
+  if (provider === "mothership") return await syncMothershipImportedShipmentDocuments(carrierShipment);
+  if (provider === "priority1") return await syncPriority1ImportedShipmentDocuments(carrierShipment);
+  if (provider === "speedship") return await syncSpeedshipImportedShipmentDocuments(carrierShipment);
+  return { ...emptySyncSummary(provider), skipped: 1, message: "provider unsupported" };
+}
+
+async function syncMothershipImportedShipmentDocuments(carrierShipment) {
+  if (!process.env.MOTHERSHIP_API_TOKEN) return { ...emptySyncSummary("mothership"), skipped: 1, message: "Mothership token missing" };
+  const reference = String(carrierShipment.entityId || carrierShipment.externalShipmentId || "").trim();
+  if (!realProviderReference(reference)) return { ...emptySyncSummary("mothership"), skipped: 1, message: "provider reference missing" };
+  const payload = await requestMothershipShipmentDocuments(reference);
+  const documents = normalizeImportedShipmentDocuments(
+    normalizeMothershipDocuments(payload, importedShipmentDocumentContext(carrierShipment)),
+    carrierShipment
+  );
+  const result = await store.upsertCarrierDocuments(documents);
+  return { ...emptySyncSummary("mothership"), fetched: documents.length, ...result, unmatched: carrierShipment.linkedShipmentId ? 0 : documents.length };
+}
+
+async function syncPriority1ImportedShipmentDocuments() {
+  return priority1DocumentCapabilitySummary(`Priority1 ${priority1ShipmentImagesPath} request schema unavailable.`);
+}
+
+async function syncSpeedshipImportedShipmentDocuments(carrierShipment) {
+  const productTransactionId = String(carrierShipment.transactionId || carrierShipment.externalShipmentId || "").trim();
+  if (!realProviderReference(productTransactionId)) return { ...emptySyncSummary("speedship"), skipped: 1, message: "provider reference missing" };
+  const payload = await requestSpeedshipShipmentDocuments(productTransactionId);
+  const documents = normalizeImportedShipmentDocuments(
+    normalizeSpeedshipDocuments(payload, importedShipmentDocumentContext(carrierShipment), productTransactionId),
+    carrierShipment
+  );
+  const result = await store.upsertCarrierDocuments(documents);
+  return { ...emptySyncSummary("speedship"), fetched: documents.length, ...result, unmatched: carrierShipment.linkedShipmentId ? 0 : documents.length };
+}
+
+function importedShipmentDocumentContext(carrierShipment) {
+  return {
+    id: carrierShipment.linkedShipmentId || null,
+    customerId: carrierShipment.customerId || null,
+    carrierShipmentId: carrierShipment.externalShipmentId || null,
+    carrierEntityId: carrierShipment.entityId || null
+  };
+}
+
+function normalizeImportedShipmentDocuments(documents, carrierShipment) {
+  const linked = Boolean(carrierShipment.linkedShipmentId && carrierShipment.customerId);
+  return documents.map((document) => ({
+    ...document,
+    shipmentId: linked ? carrierShipment.linkedShipmentId : null,
+    customerId: linked ? carrierShipment.customerId : null,
+    customerVisible: linked && ["bol", "pod"].includes(document.documentType)
+  }));
 }
 
 async function handleCarrierShipmentAction(res, id, action, currentUser, input = {}) {
@@ -1212,21 +1300,17 @@ async function handleCarrierShipmentAction(res, id, action, currentUser, input =
     const updated = await store.updateCarrierShipment(id, {
       linkedShipmentId: null,
       customerId: null,
-      matchingStatus: "unmatched",
-      bookingChannelEvidence: manualEvidence
+      matchingStatus: "manual",
+      bookingChannelEvidence: {
+        ...manualEvidence,
+        source: "manual_admin_unlink"
+      }
     });
     sendJson(res, 200, { carrierShipment: await internalCarrierShipment(updated) });
     return;
   }
   if (action === "sync-documents") {
-    if (!carrierShipment.linkedShipmentId) {
-      sendJson(res, 400, { error: "SHIPMENT_NOT_LINKED", message: "Link this provider shipment to a local shipment before syncing documents." });
-      return;
-    }
-    const synced = await syncCarrierDocuments({
-      shipmentId: carrierShipment.linkedShipmentId,
-      providers: [carrierShipment.provider]
-    });
+    const synced = await syncImportedCarrierShipmentDocuments(carrierShipment.provider, [carrierShipment]);
     sendJson(res, 200, { synced });
     return;
   }
