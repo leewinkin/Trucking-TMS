@@ -22,7 +22,8 @@ import {
 } from "./public/quote-time-validation.js";
 import { normalizeMothershipDocuments, normalizeMothershipInvoiceDocument } from "./server/carriers/mothership-documents.js";
 import { normalizeSpeedshipDocuments, speedshipCapabilitySummary } from "./server/carriers/speedship-documents.js";
-import { normalizePriority1InvoiceRecords, priority1DocumentCapabilitySummary, priority1InvoiceDocument } from "./server/carriers/priority1-documents.js";
+import { normalizePriority1InvoiceRecords, priority1DocumentCapabilitySummary, priority1InvoiceDocument, priority1InvoiceRows, priority1NextPageToken } from "./server/carriers/priority1-documents.js";
+import { buildAllowedDocumentHosts, fetchSecureDocument } from "./server/document-download-security.js";
 
 const __dirname = process.cwd();
 const port = Number(process.env.PORT || 3000);
@@ -58,6 +59,12 @@ const priority1QuotePath = process.env.PRIORITY1_API_QUOTE_PATH || "";
 const priority1SuggestedClassPath = process.env.PRIORITY1_API_SUGGESTED_CLASS_PATH || "/v2/ltl/quotes/suggestedclass";
 const priority1ShipmentImagesPath = process.env.PRIORITY1_API_SHIPMENT_IMAGES_PATH || "/v2/ltl/shipments/images";
 const priority1CustomerInvoicesPath = process.env.PRIORITY1_API_CUSTOMER_INVOICES_PATH || "/v2/admin/customerinvoices";
+const carrierDocumentAllowedHosts = buildAllowedDocumentHosts(
+  mothershipBaseUrl,
+  speedshipBaseUrl,
+  priority1BaseUrl,
+  process.env.CARRIER_DOCUMENT_ALLOWED_HOSTS || ""
+);
 const fedexFreightBaseUrl = process.env.FEDEX_FREIGHT_BASE_URL || "https://apis-sandbox.fedex.com";
 const fedexFreightAuthUrl = process.env.FEDEX_FREIGHT_AUTH_URL || `${fedexFreightBaseUrl.replace(/\/$/, "")}/oauth/token`;
 const fedexFreightClientId = process.env.FEDEX_FREIGHT_CLIENT_ID || "";
@@ -989,9 +996,16 @@ async function getMothershipShipmentDocuments(res, entityId, currentUser) {
 
 async function syncCarrierDocuments(input = {}) {
   const providers = normalizeDocumentSyncProviders(input.providers);
-  const shipments = input.shipmentId
-    ? (await store.getShipment(input.shipmentId) ? [await store.getShipment(input.shipmentId)] : [])
-    : await store.listShipments();
+  let shipments;
+  if (input.shipmentId) {
+    const shipment = await store.getShipment(input.shipmentId);
+    if (!shipment) {
+      throw new PublicError(404, "SHIPMENT_NOT_FOUND", "Shipment was not found.");
+    }
+    shipments = [shipment];
+  } else {
+    shipments = await store.listShipments();
+  }
   const summary = Object.fromEntries(providers.map((provider) => [provider, emptySyncSummary(provider)]));
   for (const provider of providers) {
     if (provider === "priority1") {
@@ -1001,18 +1015,18 @@ async function syncCarrierDocuments(input = {}) {
       );
       continue;
     }
-    for (const shipment of shipments.filter((item) => carrierDocumentProvider(item.carrier) === provider)) {
-      const providerSummary = await syncCarrierDocumentsForShipment(provider, shipment);
-      summary[provider] = mergeSyncSummary(summary[provider], providerSummary);
+    const providerShipments = shipments.filter((item) => carrierDocumentProvider(item.carrier) === provider);
+    for (const chunk of chunkArray(providerShipments, 4)) {
+      const results = await Promise.all(chunk.map((shipment) => syncCarrierDocumentsForShipment(provider, shipment)));
+      for (const providerSummary of results) {
+        summary[provider] = mergeSyncSummary(summary[provider], providerSummary);
+      }
     }
   }
   return summary;
 }
 
 async function syncCarrierDocumentsForShipment(provider, shipment) {
-  if (shipment.status !== "booked_with_carrier") {
-    return { ...emptySyncSummary(provider), skipped: 1, message: "not booked with carrier" };
-  }
   try {
     if (provider === "mothership") {
       if (!process.env.MOTHERSHIP_API_TOKEN) return { ...emptySyncSummary(provider), skipped: 1, message: "Mothership token missing" };
@@ -1060,37 +1074,28 @@ async function downloadCarrierDocument(res, id, currentUser) {
     requireManager(currentUser);
   }
   const url = document.providerReference?.url || document.providerReference?.downloadUrl || "";
-  if (!url || !/^https?:\/\//i.test(url)) {
+  if (!url) {
     sendJson(res, 400, { error: "DOCUMENT_DOWNLOAD_UNAVAILABLE", message: "Document download is not available for this provider record." });
     return;
   }
-  const response = await fetch(url, { signal: AbortSignal.timeout(30000) });
-  if (!response.ok) {
-    sendJson(res, 502, { error: "DOCUMENT_DOWNLOAD_FAILED", message: "Could not fetch carrier document." });
+  const result = await fetchSecureDocument(url, { allowedHosts: carrierDocumentAllowedHosts });
+  if (!result.ok) {
+    sendJson(res, result.status || 502, { error: result.error.code, message: result.error.message });
     return;
   }
-  const maxBytes = 25 * 1024 * 1024;
-  const contentLength = Number(response.headers.get("content-length") || 0);
-  if (contentLength > maxBytes) {
-    sendJson(res, 502, { error: "DOCUMENT_TOO_LARGE", message: "Carrier document is too large to proxy." });
-    return;
-  }
-  const arrayBuffer = await response.arrayBuffer();
-  if (arrayBuffer.byteLength > maxBytes) {
-    sendJson(res, 502, { error: "DOCUMENT_TOO_LARGE", message: "Carrier document is too large to proxy." });
-    return;
-  }
-  const contentType = document.contentType || response.headers.get("content-type") || "application/octet-stream";
   res.writeHead(200, {
-    "Content-Type": contentType,
+    "Content-Type": result.contentType,
+    "X-Content-Type-Options": "nosniff",
     "Content-Disposition": `attachment; filename="${safeFilename(document.filename || `${document.documentType || "document"}.pdf`)}"`
   });
-  res.end(Buffer.from(arrayBuffer));
+  res.end(result.body);
 }
 
 function normalizeDocumentSyncProviders(value) {
   const requested = Array.isArray(value) && value.length ? value : ["mothership", "priority1", "speedship"];
-  return requested.map((provider) => String(provider || "").trim().toLowerCase()).filter((provider) => ["mothership", "priority1", "speedship"].includes(provider));
+  return Array.from(new Set(
+    requested.map((provider) => String(provider || "").trim().toLowerCase()).filter((provider) => ["mothership", "priority1", "speedship"].includes(provider))
+  ));
 }
 
 function emptySyncSummary(provider) {
@@ -1850,7 +1855,7 @@ async function syncMothershipInvoicesToStore() {
 }
 
 async function syncCarrierInvoices(res, input = {}) {
-  const requested = Array.isArray(input.providers) && input.providers.length ? input.providers : ["mothership"];
+  const requested = normalizeDocumentSyncProviders(input.providers || ["mothership"]);
   if (requested.length === 1 && requested.includes("mothership")) {
     await syncMothershipInvoices(res);
     return;
@@ -1907,20 +1912,34 @@ async function syncPriority1Invoices() {
 }
 
 async function requestPriority1CustomerInvoices() {
-  const response = await fetch(`${priority1BaseUrl.replace(/\/$/, "")}${priority1CustomerInvoicesPath}`, {
-    method: "GET",
-    headers: {
-      Authorization: priority1ApiKey.startsWith("Bearer ") ? priority1ApiKey : `Bearer ${priority1ApiKey}`,
-      Accept: "application/json"
-    },
-    signal: AbortSignal.timeout(35000)
-  });
-  const text = await response.text();
-  const payload = text ? JSON.parse(text) : {};
-  if (!response.ok) {
-    throw new PublicError(response.status, payload.message || payload.title || "PRIORITY1_ERROR", payload.detail || payload.message || "Priority1 invoice request failed.");
+  const rows = [];
+  let cursor = "";
+  for (let page = 0; page < 25; page += 1) {
+    const url = new URL(`${priority1BaseUrl.replace(/\/$/, "")}${priority1CustomerInvoicesPath}`);
+    if (cursor) {
+      url.searchParams.set("cursor", cursor);
+    }
+    const response = await fetch(url.href, {
+      method: "GET",
+      headers: {
+        Authorization: priority1ApiKey.startsWith("Bearer ") ? priority1ApiKey : `Bearer ${priority1ApiKey}`,
+        Accept: "application/json"
+      },
+      signal: AbortSignal.timeout(35000)
+    });
+    const text = await response.text();
+    const payload = text ? JSON.parse(text) : {};
+    if (!response.ok) {
+      throw new PublicError(response.status, payload.message || payload.title || "PRIORITY1_ERROR", payload.detail || payload.message || "Priority1 invoice request failed.");
+    }
+    rows.push(...priority1InvoiceRows(payload));
+    const next = priority1NextPageToken(payload);
+    if (!next || next === cursor) {
+      break;
+    }
+    cursor = next;
   }
-  return payload;
+  return { invoices: rows };
 }
 
 async function requestSpeedship(route, options) {

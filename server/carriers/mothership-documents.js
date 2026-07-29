@@ -1,4 +1,4 @@
-import { collectUrlDocuments, documentCustomerVisible, normalizeDocumentType, sanitizeProviderReference, stableDocumentKey } from "./document-normalizer.js";
+import { collectUrlDocuments, documentCustomerVisible, normalizeDocumentType, readNestedString, sanitizeProviderReference, stableDocumentKey, stableUrlReference } from "./document-normalizer.js";
 
 export function normalizeMothershipDocuments(payload, shipment = {}) {
   return collectUrlDocuments(payload, "mothership", "other").map((record) => {
@@ -35,16 +35,40 @@ export function mothershipMissingReferenceSummary(shipment) {
 export function normalizeMothershipInvoiceDocument(invoice) {
   const key = invoice?.externalInvoiceId || invoice?.invoiceNumber || "";
   if (!key) return null;
+  const source = invoice?.rawCarrierResponse || {};
+  const documentId = readNestedString(source, [
+    ["documentId"],
+    ["documentID"],
+    ["invoiceDocumentId"],
+    ["invoice_document_id"],
+    ["pdfDocumentId"],
+    ["document", "id"],
+    ["invoice", "documentId"]
+  ]);
+  const documentUrl = readNestedString(source, [
+    ["documentUrl"],
+    ["document_url"],
+    ["invoiceUrl"],
+    ["invoice_url"],
+    ["pdfUrl"],
+    ["pdf_url"],
+    ["document", "url"],
+    ["invoice", "documentUrl"]
+  ]);
+  const stableKey = documentId || (documentUrl ? stableUrlReference(documentUrl) : key);
+  const available = Boolean(documentUrl);
   return {
     provider: "mothership",
     shipmentId: invoice.shipmentId || null,
     customerId: invoice.customerId || null,
-    externalDocumentKey: stableDocumentKey("mothership", ["invoice", key]),
+    externalDocumentKey: stableDocumentKey("mothership", ["invoice", stableKey]),
     documentType: "invoice",
     label: "Carrier Invoice",
     customerVisible: false,
-    status: "available",
+    status: available ? "available" : "pending",
     providerReference: sanitizeProviderReference({
+      documentId,
+      url: documentUrl,
       invoiceId: invoice.externalInvoiceId,
       invoiceNumber: invoice.invoiceNumber,
       carrierShipmentId: invoice.carrierShipmentId,

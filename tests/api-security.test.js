@@ -17,6 +17,20 @@ try {
   await customer.login("customer@local.test", "Customer123!");
   const admin = createClient(port);
   await admin.login("admin@local.test", "Admin123!");
+  const createdOps = await admin.request("/api/internal-users", {
+    method: "POST",
+    body: { email: "ops.api@example.com", password: "OpsApi12345!", role: "operations" }
+  });
+  assert.equal(createdOps.status, 201);
+  const createdStaff = await admin.request("/api/internal-users", {
+    method: "POST",
+    body: { email: "staff.api@example.com", password: "StaffApi12345!", role: "staff" }
+  });
+  assert.equal(createdStaff.status, 201);
+  const operations = createClient(port);
+  await operations.login("ops.api@example.com", "OpsApi12345!");
+  const staff = createClient(port);
+  await staff.login("staff.api@example.com", "StaffApi12345!");
 
   const ownAddresses = await customer.request("/api/address-book");
   assert.equal(ownAddresses.status, 200);
@@ -105,6 +119,10 @@ try {
   assert.equal(customerInvoices.status, 403, "customer users must not access invoice APIs");
   const adminInvoices = await admin.request("/api/invoices");
   assert.equal(adminInvoices.status, 200, "admin users should retain invoice management access");
+  const opsInvoices = await operations.request("/api/invoices");
+  assert.equal(opsInvoices.status, 200, "sub-admin/operations users should retain invoice management access");
+  const staffInvoices = await staff.request("/api/invoices");
+  assert.equal(staffInvoices.status, 403, "staff users must not access invoice APIs");
 
   const customerShipments = await customer.request("/api/shipments");
   assert.equal(customerShipments.status, 200);
@@ -130,6 +148,10 @@ try {
   assert.equal(customerDocuments.body.documents.some((document) => document.documentType === "invoice"), false);
   const otherCustomerDocuments = await customer.request("/api/shipments/ship_b/documents");
   assert.equal(otherCustomerDocuments.status, 403);
+  const customerInvoiceDownload = await customer.request("/api/carrier-documents/doc_invoice_a/download");
+  assert.equal(customerInvoiceDownload.status, 403, "customer cannot download carrier invoice documents");
+  const otherCustomerBolDownload = await customer.request("/api/carrier-documents/doc_bol_b/download");
+  assert.equal(otherCustomerBolDownload.status, 403, "customer cannot download another customer's BOL/POD");
   const customerCarrierDocumentList = await customer.request("/api/carrier-documents");
   assert.equal(customerCarrierDocumentList.status, 403);
 
@@ -138,6 +160,12 @@ try {
   assert.equal(adminDocuments.body.documents.length, 4);
   assert.equal(Object.hasOwn(adminDocuments.body.documents[0], "providerReference"), true);
   assert.equal(Object.hasOwn(adminDocuments.body.documents[0], "rawMetadata"), true);
+  const missingDocumentSync = await admin.request("/api/carrier-documents/sync", {
+    method: "POST",
+    body: { shipmentId: "missing_ship", providers: ["mothership", "mothership", "priority1"] }
+  });
+  assert.equal(missingDocumentSync.status, 404);
+  assert.equal(missingDocumentSync.body.error, "SHIPMENT_NOT_FOUND");
 
   const booked = await customer.request("/api/shipments", {
     method: "POST",

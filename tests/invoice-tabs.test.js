@@ -6,15 +6,18 @@ const app = await readFile(new URL("../public/app.js", import.meta.url), "utf8")
 const invoiceFunctions = [
   extractFunction("renderInvoices"),
   extractFunction("invoiceGroupHtml"),
+  extractFunction("invoiceGroups"),
+  extractFunction("invoiceGroupKey"),
   extractFunction("resolveInvoiceTab")
 ].join("\n\n");
 
 const allInvoices = [
-  invoice("ms_1", "mothership", "open", true),
-  invoice("ms_2", "mothership", "draft", true),
-  invoice("local_1", "local", "open", true),
-  invoice("local_2", "manual", "draft", true),
-  invoice("local_3", "priority1", "paid", true),
+  invoice("ms_1", "mothership", "open", true, "ship_ms"),
+  invoice("ms_2", "mothership", "draft", true, "ship_ms_2"),
+  invoice("p1_1", "priority1", "paid", true, "ship_p1"),
+  invoice("ss_1", "speedship", "open", true, "ship_ss"),
+  invoice("local_1", "local", "open", true, "ship_local"),
+  invoice("unmatched_p1", "priority1", "open", true, null),
   invoice("old_ms", "mothership", "open", false),
   invoice("old_local", "local", "open", false)
 ];
@@ -23,8 +26,11 @@ let rendered = renderStaffInvoices({
   invoices: allInvoices.filter((item) => item.inRange),
   invoiceTab: "mothership"
 });
-assert.match(rendered.html, /Imported from Mothership[\s\S]*?<span class="tab-count">2<\/span>/, "Mothership tab count should reflect filtered Mothership invoices");
-assert.match(rendered.html, /Other invoices[\s\S]*?<span class="tab-count">3<\/span>/, "Other invoices tab count should reflect filtered non-Mothership invoices");
+assert.match(rendered.html, /Mothership[\s\S]*?<span class="tab-count">2<\/span>/, "Mothership tab count should reflect filtered Mothership invoices");
+assert.match(rendered.html, /Priority1[\s\S]*?<span class="tab-count">1<\/span>/, "Priority1 tab count should not be grouped as Local");
+assert.match(rendered.html, /SpeedShip[\s\S]*?<span class="tab-count">1<\/span>/, "SpeedShip tab count should be visible");
+assert.match(rendered.html, /Local[\s\S]*?<span class="tab-count">1<\/span>/, "Local tab count should include local invoices only");
+assert.match(rendered.html, /Unmatched[\s\S]*?<span class="tab-count">1<\/span>/, "Unmatched tab count should include external invoices without shipmentId");
 assert.equal(rendered.error, null, "staff invoice rendering should not throw a ReferenceError");
 
 rendered = renderStaffInvoices({
@@ -32,8 +38,8 @@ rendered = renderStaffInvoices({
   invoiceTab: "mothership",
   activeRange: "current"
 });
-assert.match(rendered.html, /Imported from Mothership[\s\S]*?<span class="tab-count">2<\/span>/, "Mothership tab count should use date-filtered invoices");
-assert.match(rendered.html, /Other invoices[\s\S]*?<span class="tab-count">3<\/span>/, "Other invoices tab count should use date-filtered invoices");
+assert.match(rendered.html, /Mothership[\s\S]*?<span class="tab-count">2<\/span>/, "Mothership tab count should use date-filtered invoices");
+assert.match(rendered.html, /Priority1[\s\S]*?<span class="tab-count">1<\/span>/, "Priority1 tab count should use date-filtered invoices");
 
 rendered = renderStaffInvoices({
   invoices: allInvoices,
@@ -41,7 +47,7 @@ rendered = renderStaffInvoices({
   activeRange: "current"
 });
 assert.match(rendered.html, /invoice-tab active" type="button" data-invoice-tab="local"/, "switching to the Other invoices tab should remain supported");
-assert.match(rendered.html, /Other invoices[\s\S]*?<span class="pill">3<\/span>/, "Other invoices panel should render the filtered non-Mothership rows");
+assert.match(rendered.html, /Local[\s\S]*?<span class="pill">1<\/span>/, "Local panel should render only local invoices");
 
 rendered = renderStaffInvoices({
   invoices: allInvoices,
@@ -49,8 +55,8 @@ rendered = renderStaffInvoices({
   activeFilter: "open",
   activeRange: "current"
 });
-assert.match(rendered.html, /Imported from Mothership[\s\S]*?<span class="tab-count">1<\/span>/, "Mothership tab count should use status-filtered invoices");
-assert.match(rendered.html, /Other invoices[\s\S]*?<span class="tab-count">1<\/span>/, "Other invoices tab count should use status-filtered invoices");
+assert.match(rendered.html, /Mothership[\s\S]*?<span class="tab-count">1<\/span>/, "Mothership tab count should use status-filtered invoices");
+assert.match(rendered.html, /Priority1[\s\S]*?<span class="tab-count">0<\/span>/, "Priority1 tab count should use status-filtered invoices");
 
 rendered = renderCustomerInvoices({
   invoices: [invoice("customer_open", "local", "open", true)]
@@ -60,10 +66,9 @@ assert.equal(rendered.html, "", "customer invoice rendering should not expose in
 assert.doesNotMatch(rendered.html, /invoice-tabs-shell|data-invoice-tab/, "customer invoice rendering should not show staff invoice tabs");
 
 assert.doesNotMatch(app, /\$\{otherInvoices\.length\}/, "renderInvoices should not reference an undefined otherInvoices tab count");
-assert.match(app, /resolveInvoiceTab\(mothershipInvoices, visibleOtherInvoices\)/, "resolveInvoiceTab should use the same filtered other-invoice collection");
-assert.match(app, /const visibleInvoices = activeTab === "mothership" \? mothershipInvoices : visibleOtherInvoices;/, "visibleInvoices should use the same filtered other-invoice collection");
-assert.match(app, /const hiddenInvoices = activeTab === "mothership" \? visibleOtherInvoices : mothershipInvoices;/, "hiddenInvoices should use the same filtered other-invoice collection");
-assert.match(app, /Other invoices[\s\S]*\$\{visibleOtherInvoices\.length\}/, "Other invoices tab count should use the same filtered other-invoice collection");
+assert.match(app, /body: \{ providers: \["mothership", "priority1", "speedship"\] \}/, "Sync All Invoices should explicitly request all carrier providers");
+const renderInvoicesSource = app.slice(app.indexOf("function renderInvoices"), app.indexOf("function invoiceGroupHtml"));
+assert.doesNotMatch(renderInvoicesSource, /Imported from Mothership|Other invoices|visibleOtherInvoices/, "legacy two-tab invoice labels should not remain in render logic");
 
 console.log("invoice tab tests passed");
 
@@ -122,8 +127,8 @@ function renderInvoicesWithContext({ isCustomer, state }) {
   }
 }
 
-function invoice(id, source, status, inRange) {
-  return { id, source, status, inRange };
+function invoice(id, source, status, inRange, shipmentId = "") {
+  return { id, source, status, inRange, shipmentId };
 }
 
 function extractFunction(name) {

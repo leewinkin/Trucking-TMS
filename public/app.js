@@ -671,6 +671,27 @@ const translations = {
     "Submit a quote to see available rates.": "提交报价后即可查看可用运价。",
     "Mothership invoice sync": "Mothership 账单同步",
     "Pull existing carrier invoices into the admin invoice list.": "将现有承运商账单拉取到管理员账单列表中。",
+    "Carrier invoice management": "承运商账单管理",
+    "Pull carrier invoices into the internal invoice list.": "将承运商账单同步到内部账单列表。",
+    "Sync All Invoices": "同步全部账单",
+    "Carrier invoice sync complete.": "承运商账单同步完成。",
+    "Could not sync carrier invoices.": "无法同步承运商账单。",
+    "Unsupported": "暂不支持",
+    "Unmatched": "未匹配",
+    "Matched": "已匹配",
+    "Document available": "文件可下载",
+    "Document pending": "文件待同步",
+    "Last synchronized": "最后同步",
+    "Provider": "服务商",
+    "Linked shipment": "关联货件",
+    "Carrier shipment ID / PRO / BOL": "承运商货件号 / PRO / BOL",
+    "Sync summary": "同步结果",
+    "Mothership carrier invoices.": "Mothership 承运商账单。",
+    "Priority1 carrier invoices.": "Priority1 承运商账单。",
+    "SpeedShip carrier invoices.": "SpeedShip 承运商账单。",
+    "No Priority1 invoices imported yet.": "尚未导入 Priority1 账单。",
+    "No SpeedShip invoices imported yet.": "尚未导入 SpeedShip 账单。",
+    "No unmatched carrier invoices.": "暂无未匹配承运商账单。",
     "Ready for sync": "准备同步",
     "Sync from Mothership": "从 Mothership 同步",
     "Details": "详情",
@@ -1175,6 +1196,7 @@ const state = {
   quotes: [],
   shipments: [],
   invoices: [],
+  carrierDocuments: [],
   currentQuote: null,
   quoteLoading: false,
   quoteResultsLimit: 12,
@@ -1324,36 +1346,34 @@ function wireNavigation() {
   document.getElementById("refreshButton").addEventListener("click", refreshAll);
   document.getElementById("logoutButton").addEventListener("click", logout);
 
-  const mothershipInvoiceSyncButton = document.getElementById("mothershipInvoiceSyncButton");
-  if (mothershipInvoiceSyncButton) {
-    mothershipInvoiceSyncButton.addEventListener("click", async () => {
-      const status = document.getElementById("mothershipInvoiceSyncStatus");
-      mothershipInvoiceSyncButton.disabled = true;
-      mothershipInvoiceSyncButton.textContent = t("Syncing...");
+  const carrierInvoiceSyncButton = document.getElementById("carrierInvoiceSyncButton");
+  if (carrierInvoiceSyncButton) {
+    carrierInvoiceSyncButton.addEventListener("click", async () => {
+      const status = document.getElementById("carrierInvoiceSyncStatus");
+      carrierInvoiceSyncButton.disabled = true;
+      carrierInvoiceSyncButton.textContent = t("Syncing...");
       if (status) {
         status.textContent = t("Sync in progress");
       }
 
       try {
         const response = await api("/api/invoices/sync", {
-          method: "POST"
+          method: "POST",
+          body: { providers: ["mothership", "priority1", "speedship"] }
         });
         if (status) {
-          status.textContent = t("Synced {count} invoices", { count: response.synced.created + response.synced.updated });
+          status.textContent = carrierInvoiceSyncSummaryText(response.synced);
         }
-        showToast(t("Mothership sync complete: {created} created, {updated} updated.", {
-          created: response.synced.created,
-          updated: response.synced.updated
-        }));
+        showToast(t("Carrier invoice sync complete."));
         await refreshAll();
       } catch (error) {
         if (status) {
           status.textContent = t("Sync failed");
         }
-        showToast(error.message || t("Could not sync Mothership invoices."), true);
+        showToast(error.message || t("Could not sync carrier invoices."), true);
       } finally {
-        mothershipInvoiceSyncButton.disabled = false;
-        mothershipInvoiceSyncButton.textContent = t("Sync from Mothership");
+        carrierInvoiceSyncButton.disabled = false;
+        carrierInvoiceSyncButton.textContent = t("Sync All Invoices");
       }
     });
   }
@@ -2065,7 +2085,8 @@ async function refreshAll(options = {}) {
       : api(`/api/address-book${isStaffUser() ? `?customerId=${encodeURIComponent(selectedQuoteCustomerId)}` : ""}`);
     const internalUsersRequest = canManageInternalUsers() ? api("/api/internal-users") : Promise.resolve({ users: [] });
     const invoicesRequest = canManageCarrierInvoices() ? api("/api/invoices") : Promise.resolve({ invoices: [] });
-    const [health, customers, tariffs, addressBook, quotes, shipments, invoices, internalUsers] = await Promise.all([
+    const carrierDocumentsRequest = canManageCarrierInvoices() ? api("/api/carrier-documents") : Promise.resolve({ documents: [] });
+    const [health, customers, tariffs, addressBook, quotes, shipments, invoices, internalUsers, carrierDocuments] = await Promise.all([
       api("/api/health"),
       api("/api/customers"),
       api("/api/tariffs"),
@@ -2073,7 +2094,8 @@ async function refreshAll(options = {}) {
       api("/api/quotes"),
       api("/api/shipments"),
       invoicesRequest,
-      internalUsersRequest
+      internalUsersRequest,
+      carrierDocumentsRequest
     ]);
 
     state.health = health;
@@ -2090,6 +2112,7 @@ async function refreshAll(options = {}) {
     state.quotes = quotes.quotes;
     state.shipments = shipments.shipments;
     state.invoices = invoices.invoices;
+    state.carrierDocuments = carrierDocuments.documents || [];
     state.lastSuccessfulRefreshAt = new Date().toISOString();
     if (state.modal?.type === "customerManagement") {
       if (state.customerManagement.drawerMode === "view") {
@@ -2648,6 +2671,15 @@ async function syncCarrierDocuments(shipmentId = "") {
   } catch (error) {
     showToast(error.message || t("Documents could not be loaded."), true);
   }
+}
+
+function carrierInvoiceSyncSummaryText(summary = {}) {
+  const parts = ["mothership", "priority1", "speedship"].map((provider) => {
+    const item = summary?.[provider] || {};
+    const status = item.failed ? "failed" : item.message ? "unsupported" : "successful";
+    return `${provider}: ${status}; fetched ${item.fetched || 0}, created ${item.created || 0}, updated ${item.updated || 0}, skipped ${item.skipped || 0}, unmatched ${item.unmatched || 0}, failed ${item.failed || 0}${item.message ? ` (${item.message})` : ""}`;
+  });
+  return `${t("Sync summary")}: ${parts.join(" | ")}`;
 }
 
 async function openCarrierShipmentDocuments(entityId, kind = "bol") {
@@ -4653,11 +4685,13 @@ function shipmentCarrierLabel(shipment) {
 function invoiceRow(invoice, options = {}) {
   const showActions = options.showActions !== false;
   const customerView = isCustomerUser();
-  const sourceLabel = invoice.source === "mothership" ? t("Mothership") : t("Local");
+  const sourceLabel = invoiceProviderLabel(invoice);
   const referenceOnly = isImportedInvoiceReference(invoice);
   const podTarget = resolveInvoiceDocumentTarget(invoice);
   const shipment = podTarget.localShipment;
   const customerStatusLabel = invoiceStatusLabel(invoice);
+  const documentStatus = invoiceDocumentAvailability(invoice);
+  const matched = Boolean(invoice.shipmentId || shipment);
   const subLabel = customerView
     ? [invoice.customerName, invoice.referenceNumber ? `PO ${invoice.referenceNumber}` : ""].filter(Boolean).map(escapeHtml).join(" · ")
     : podTarget.displayLabel
@@ -4676,7 +4710,20 @@ function invoiceRow(invoice, options = {}) {
           ${!customerView && referenceOnly ? `<span class="pill">${t("Reference only")}</span>` : ""}
           ${invoice.referenceNumber ? `<span class="pill">PO ${escapeHtml(invoice.referenceNumber)}</span>` : ""}
           <span class="pill">${formatDate(invoice.createdAt)}</span>
+          ${!customerView ? `<span class="pill">${escapeHtml(t(matched ? "Matched" : "Unmatched"))}</span>` : ""}
+          ${!customerView ? `<span class="pill">${escapeHtml(t(documentStatus.label))}</span>` : ""}
         </div>
+        ${!customerView ? `
+          <div class="meta-line">
+            <span class="pill">${escapeHtml(t("Provider"))}: ${escapeHtml(sourceLabel)}</span>
+            <span class="pill">${escapeHtml(t("Customer"))}: ${escapeHtml(invoice.customerName || t("Not available"))}</span>
+            <span class="pill">${escapeHtml(t("Linked shipment"))}: ${escapeHtml(shipment?.confirmationNumber || invoice.shipmentId || t("Unmatched"))}</span>
+            <span class="pill">${escapeHtml(t("Carrier shipment ID / PRO / BOL"))}: ${escapeHtml(invoice.carrierShipmentId || podTarget.carrierShipmentId || t("Not available"))}</span>
+            <span class="pill">${escapeHtml(t("Issued"))}: ${escapeHtml(formatDate(invoice.issuedAt || invoice.createdAt))}</span>
+            <span class="pill">${escapeHtml(t("Due"))}: ${escapeHtml(formatDate(invoice.dueAt) || t("Not set"))}</span>
+            <span class="pill">${escapeHtml(t("Last synchronized"))}: ${escapeHtml(formatDateTime(invoice.syncedAt) || t("Not available"))}</span>
+          </div>
+        ` : ""}
       </div>
       <div class="price-block">
         ${referenceOnly ? `<small>${t("Waiting for detail fields")}</small>` : ""}
@@ -4684,12 +4731,43 @@ function invoiceRow(invoice, options = {}) {
         ${showActions ? `
           <div class="row-actions">
             <button class="secondary-action" type="button" data-view-invoice="${escapeHtml(invoice.id)}">${referenceOnly ? t("View Payload") : t("View Invoice")}</button>
-            ${invoiceCarrierDocumentActions(podTarget.entityId)}
+            ${invoiceDocumentAction(documentStatus)}
           </div>
         ` : ""}
       </div>
     </article>
   `;
+}
+
+function invoiceProviderLabel(invoice) {
+  const source = String(invoice?.source || "local").trim().toLowerCase();
+  if (source === "mothership") return t("Mothership");
+  if (source === "priority1") return t("Priority1");
+  if (source === "speedship") return t("SpeedShip");
+  return t("Local");
+}
+
+function invoiceDocumentAvailability(invoice) {
+  const source = String(invoice?.source || "").toLowerCase();
+  const invoiceDocument = state.carrierDocuments.find((document) =>
+    document.documentType === "invoice" &&
+    (
+      (invoice.shipmentId && document.shipmentId === invoice.shipmentId && String(document.provider || "").toLowerCase() === source) ||
+      document.providerReference?.invoiceId === invoice.externalInvoiceId ||
+      document.providerReference?.invoiceNumber === invoice.invoiceNumber
+    )
+  );
+  if (invoiceDocument?.status === "available" && invoiceDocument.url) {
+    return { label: "Document available", url: invoiceDocument.url };
+  }
+  return { label: "Document pending", url: "" };
+}
+
+function invoiceDocumentAction(documentStatus) {
+  if (documentStatus.url) {
+    return `<a class="secondary-action document-link" href="${escapeHtml(documentStatus.url)}" target="_blank" rel="noopener noreferrer">${t("Open document")}</a>`;
+  }
+  return `<button class="secondary-action" type="button" disabled>${escapeHtml(t(documentStatus.label))}</button>`;
 }
 
 function invoiceStatusLabel(invoice) {
@@ -6049,9 +6127,10 @@ function filterShipmentDocumentsByKind(documents, kind) {
 }
 
 function invoiceDetailsHtml(invoice, shipment) {
-  const sourceLabel = invoice.source === "mothership" ? t("Mothership") : t("Local");
+  const sourceLabel = invoiceProviderLabel(invoice);
   const referenceOnly = isImportedInvoiceReference(invoice);
   const podTarget = resolveInvoiceDocumentTarget(invoice);
+  const documentStatus = invoiceDocumentAvailability(invoice);
   return `
     <div class="detail-grid">
       ${detailSection(
@@ -6075,13 +6154,13 @@ function invoiceDetailsHtml(invoice, shipment) {
             <div class="modal-actions">
               <button class="secondary-action" type="button" data-view-shipment="${escapeHtml(shipment.id)}">${t("View Shipment")}</button>
               <button class="secondary-action" type="button" data-track-shipment="${escapeHtml(shipment.id)}">${t("Track Shipment")}</button>
-              ${invoiceCarrierDocumentActions(podTarget.entityId)}
+              ${invoiceDocumentAction(documentStatus)}
             </div>
           ` : `
             <div class="modal-actions">
-              ${invoiceCarrierDocumentActions(podTarget.entityId)}
+              ${invoiceDocumentAction(documentStatus)}
             </div>
-            ${podTarget.entityId ? "" : `<p class="audit-message">${t("POD is only available when Mothership returns a carrier entity ID for this invoice.")}</p>`}
+            ${documentStatus.url ? "" : `<p class="audit-message">${t("Document pending")}</p>`}
           `}
         `
       )}
@@ -8879,34 +8958,29 @@ function renderInvoices() {
     adminInvoiceMatchesFilter(invoice, activeFilter) &&
     adminRecordMatchesDateRange(invoice, activeRange)
   );
-  const mothershipInvoices = staffInvoices.filter((invoice) => invoice?.source === "mothership");
-  const visibleOtherInvoices = staffInvoices.filter((invoice) => invoice?.source !== "mothership");
-  const activeTab = resolveInvoiceTab(mothershipInvoices, visibleOtherInvoices);
-  const visibleInvoices = activeTab === "mothership" ? mothershipInvoices : visibleOtherInvoices;
-  const hiddenInvoices = activeTab === "mothership" ? visibleOtherInvoices : mothershipInvoices;
-  const activeLabel = activeTab === "mothership" ? t("Imported from Mothership") : t("Other invoices");
+  const groups = invoiceGroups(staffInvoices);
+  const activeTab = resolveInvoiceTab(groups);
+  const activeGroup = groups.find((group) => group.key === activeTab) || groups[0];
+  const hiddenCount = groups.filter((group) => group.key !== activeTab).reduce((sum, group) => sum + group.invoices.length, 0);
 
   list.innerHTML = `
     ${staffFilterBarHtml("invoices", filters, activeFilter, activeRange)}
     <div class="invoice-tabs-shell">
       <div class="invoice-tabs" role="tablist" aria-label="${t("Invoice groups")}" data-i18n-aria-label="Invoice groups">
-        <button class="invoice-tab ${activeTab === "mothership" ? "active" : ""}" type="button" data-invoice-tab="mothership" role="tab" aria-selected="${activeTab === "mothership"}">
-          ${t("Imported from Mothership")} <span class="tab-count">${mothershipInvoices.length}</span>
-        </button>
-        <button class="invoice-tab ${activeTab === "local" ? "active" : ""}" type="button" data-invoice-tab="local" role="tab" aria-selected="${activeTab === "local"}">
-          ${t("Other invoices")} <span class="tab-count">${visibleOtherInvoices.length}</span>
-        </button>
+        ${groups.map((group) => `
+          <button class="invoice-tab ${activeTab === group.key ? "active" : ""}" type="button" data-invoice-tab="${escapeHtml(group.key)}" role="tab" aria-selected="${activeTab === group.key}">
+            ${escapeHtml(t(group.label))} <span class="tab-count">${group.invoices.length}</span>
+          </button>
+        `).join("")}
       </div>
       <div class="invoice-tab-panel">
         ${invoiceGroupHtml(
-          activeLabel,
-          activeTab === "mothership"
-            ? t("Invoices hydrated from the carrier invoice sync.")
-            : t("Invoices created locally from booked shipments."),
-          visibleInvoices,
-          activeTab === "mothership" ? t("No Mothership invoices imported yet.") : t("No local invoices yet.")
+          t(activeGroup.label),
+          t(activeGroup.description),
+          activeGroup.invoices,
+          t(activeGroup.emptyLabel)
         )}
-        ${hiddenInvoices.length ? `<div class="invoice-tab-hint">${escapeHtml(hiddenInvoices.length)} ${t("invoice hidden in the other tab.")}</div>` : ""}
+        ${hiddenCount ? `<div class="invoice-tab-hint">${escapeHtml(hiddenCount)} ${t("invoice hidden in the other tab.")}</div>` : ""}
       </div>
     </div>
   `;
@@ -8929,34 +9003,44 @@ function invoiceGroupHtml(title, description, invoices, emptyLabel) {
   `;
 }
 
-function resolveInvoiceTab(mothershipInvoices, otherInvoices) {
-  const hasMothership = mothershipInvoices.length > 0;
-  const hasOther = otherInvoices.length > 0;
+function invoiceGroups(invoices) {
+  const groups = [
+    { key: "mothership", label: "Mothership", description: "Mothership carrier invoices.", emptyLabel: "No Mothership invoices imported yet.", invoices: [] },
+    { key: "priority1", label: "Priority1", description: "Priority1 carrier invoices.", emptyLabel: "No Priority1 invoices imported yet.", invoices: [] },
+    { key: "speedship", label: "SpeedShip", description: "SpeedShip carrier invoices.", emptyLabel: "No SpeedShip invoices imported yet.", invoices: [] },
+    { key: "local", label: "Local", description: "Invoices created locally from booked shipments.", emptyLabel: "No local invoices yet.", invoices: [] },
+    { key: "unmatched", label: "Unmatched", description: "External carrier invoices that are not linked to a shipment.", emptyLabel: "No unmatched carrier invoices.", invoices: [] }
+  ];
+  const byKey = Object.fromEntries(groups.map((group) => [group.key, group]));
+  invoices.forEach((invoice) => {
+    const key = invoiceGroupKey(invoice);
+    byKey[key].invoices.push(invoice);
+  });
+  return groups;
+}
 
-  if (state.invoiceTab === "mothership" && hasMothership) {
-    return "mothership";
+function invoiceGroupKey(invoice) {
+  const source = String(invoice?.source || "local").trim().toLowerCase();
+  if (source !== "local" && !invoice?.shipmentId) return "unmatched";
+  if (source === "mothership") return "mothership";
+  if (source === "priority1") return "priority1";
+  if (source === "speedship") return "speedship";
+  return "local";
+}
+
+function resolveInvoiceTab(groups) {
+  const validKeys = groups.map((group) => group.key);
+  if (validKeys.includes(state.invoiceTab)) {
+    return state.invoiceTab;
   }
-
-  if (state.invoiceTab === "local" && hasOther) {
-    return "local";
-  }
-
-  if (hasMothership) {
-    state.invoiceTab = "mothership";
-    return "mothership";
-  }
-
-  if (hasOther) {
-    state.invoiceTab = "local";
-    return "local";
-  }
-
   state.invoiceTab = "mothership";
-  return "mothership";
+  return state.invoiceTab;
 }
 
 function setInvoiceTab(tab) {
-  const normalized = String(tab || "").trim().toLowerCase() === "local" ? "local" : "mothership";
+  const normalized = ["mothership", "priority1", "speedship", "local", "unmatched"].includes(String(tab || "").trim().toLowerCase())
+    ? String(tab || "").trim().toLowerCase()
+    : "mothership";
   if (state.invoiceTab === normalized) {
     return;
   }

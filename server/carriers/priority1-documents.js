@@ -1,4 +1,4 @@
-import { sanitizeProviderReference, stableDocumentKey } from "./document-normalizer.js";
+import { readNestedString, sanitizeProviderReference, stableDocumentKey, stableUrlReference } from "./document-normalizer.js";
 
 export function priority1DocumentCapabilitySummary(reason = "Priority1 shipment image request schema unavailable.") {
   return {
@@ -14,25 +14,14 @@ export function priority1DocumentCapabilitySummary(reason = "Priority1 shipment 
 }
 
 export function normalizePriority1InvoiceRecords(payload, shipments = []) {
-  const rows = Array.isArray(payload?.data)
-    ? payload.data
-    : Array.isArray(payload?.customerInvoices)
-      ? payload.customerInvoices
-      : Array.isArray(payload?.invoices)
-        ? payload.invoices
-        : Array.isArray(payload)
-          ? payload
-          : [];
+  const rows = priority1InvoiceRows(payload);
   return rows.map((row) => {
-    const invoiceNumber = String(row.invoiceNumber || row.customerInvoiceNumber || row.id || "").trim();
-    const bolNumber = String(row.bolNumber || row.bol || row.BOL || "").trim();
-    const proNumber = String(row.proNumber || row.pro || row.PRO || "").trim();
-    const referenceNumber = String(row.referenceNumber || row.purchaseOrderNumber || row.poNumber || "").trim();
-    const shipment = shipments.find((item) =>
-      [item.carrierShipmentId, item.confirmationNumber, item.referenceNumber].filter(Boolean).some((value) =>
-        [proNumber, bolNumber, referenceNumber].includes(String(value).trim())
-      )
-    ) || null;
+    const invoiceNumber = readNestedString(row, [["invoiceNumber"], ["customerInvoiceNumber"], ["id"]]);
+    const bolNumber = readNestedString(row, [["bolNumber"], ["bol"], ["BOL"]]);
+    const proNumber = readNestedString(row, [["proNumber"], ["pro"], ["PRO"]]);
+    const providerShipmentId = readNestedString(row, [["providerShipmentId"], ["shipmentId"], ["shipment", "id"]]);
+    const referenceNumber = readNestedString(row, [["referenceNumber"], ["purchaseOrderNumber"], ["poNumber"]]);
+    const shipment = matchPriority1Shipment({ providerShipmentId, proNumber, bolNumber, referenceNumber }, shipments);
     return {
       shipmentId: shipment?.id || null,
       customerId: shipment?.customerId || null,
@@ -47,7 +36,7 @@ export function normalizePriority1InvoiceRecords(payload, shipments = []) {
       source: "priority1",
       externalInvoiceId: stableDocumentKey("priority1", ["invoice", invoiceNumber || bolNumber || proNumber || referenceNumber]),
       carrierName: "Priority1",
-      carrierShipmentId: proNumber || bolNumber || null,
+      carrierShipmentId: providerShipmentId || proNumber || bolNumber || null,
       carrierEntityId: null,
       rawCarrierResponse: row,
       syncedAt: new Date().toISOString()
@@ -55,18 +44,72 @@ export function normalizePriority1InvoiceRecords(payload, shipments = []) {
   });
 }
 
+export function priority1InvoiceRows(payload) {
+  return Array.isArray(payload?.data)
+    ? payload.data
+    : Array.isArray(payload?.customerInvoices)
+      ? payload.customerInvoices
+      : Array.isArray(payload?.invoices)
+        ? payload.invoices
+        : Array.isArray(payload)
+          ? payload
+          : [];
+}
+
+export function priority1NextPageToken(payload) {
+  return readNestedString(payload, [
+    ["nextPage"],
+    ["nextPageToken"],
+    ["nextCursor"],
+    ["cursor", "next"],
+    ["pagination", "nextPage"],
+    ["pagination", "nextCursor"],
+    ["meta", "nextCursor"]
+  ]);
+}
+
+function matchPriority1Shipment({ providerShipmentId, proNumber, bolNumber, referenceNumber }, shipments) {
+  return shipments.find((item) =>
+    exact(item.providerShipmentId || item.carrierShipmentId, providerShipmentId) ||
+    exact(item.proNumber || item.pro || item.carrierProNumber, proNumber) ||
+    exact(item.bolNumber || item.bol || item.carrierBolNumber, bolNumber) ||
+    exact(item.referenceNumber, referenceNumber)
+  ) || null;
+}
+
+function exact(left, right) {
+  return Boolean(left && right && String(left).trim() === String(right).trim());
+}
+
 export function priority1InvoiceDocument(invoice) {
   if (!invoice?.externalInvoiceId) return null;
+  const source = invoice.rawCarrierResponse || {};
+  const documentId = readNestedString(source, [
+    ["documentId"],
+    ["invoiceDocumentId"],
+    ["document", "id"],
+    ["invoice", "documentId"]
+  ]);
+  const documentUrl = readNestedString(source, [
+    ["documentUrl"],
+    ["invoiceDocumentUrl"],
+    ["invoiceUrl"],
+    ["document", "url"],
+    ["invoice", "documentUrl"]
+  ]);
+  const stableKey = documentId || (documentUrl ? stableUrlReference(documentUrl) : invoice.externalInvoiceId);
   return {
     provider: "priority1",
     shipmentId: invoice.shipmentId || null,
     customerId: invoice.customerId || null,
-    externalDocumentKey: stableDocumentKey("priority1", ["invoice", invoice.externalInvoiceId]),
+    externalDocumentKey: stableDocumentKey("priority1", ["invoice", stableKey]),
     documentType: "invoice",
     label: "Carrier Invoice",
     customerVisible: false,
-    status: "available",
+    status: documentUrl ? "available" : "pending",
     providerReference: sanitizeProviderReference({
+      documentId,
+      url: documentUrl,
       invoiceId: invoice.externalInvoiceId,
       invoiceNumber: invoice.invoiceNumber,
       carrierShipmentId: invoice.carrierShipmentId

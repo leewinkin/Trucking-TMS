@@ -628,10 +628,6 @@ async function createPostgresStore(dbUrl, { runOrganizationMigrationOnStartup = 
             summary.skipped += 1;
             continue;
           }
-          const existing = await client.query(
-            "SELECT id FROM carrier_documents WHERE provider = $1 AND external_document_key = $2 LIMIT 1",
-            [document.provider, document.externalDocumentKey]
-          );
           const values = [
             document.id || createId("cdoc"),
             document.shipmentId || null,
@@ -645,38 +641,36 @@ async function createPostgresStore(dbUrl, { runOrganizationMigrationOnStartup = 
             Boolean(document.customerVisible) && ["bol", "pod"].includes(normalizeCarrierDocumentType(document.documentType)),
             document.status || "available",
             JSON.stringify(document.providerReference || {}),
-            JSON.stringify(document.rawMetadata || {}),
+            JSON.stringify(redactCarrierDocumentMetadata(document.rawMetadata || {})),
             document.fetchedAt || null,
             nowIso()
           ];
-          if (existing.rowCount > 0) {
-            await client.query(
-              `UPDATE carrier_documents
-               SET shipment_id = COALESCE($2, shipment_id),
-                   customer_id = COALESCE($3, customer_id),
-                   document_type = $6,
-                   label = $7,
-                   filename = $8,
-                   content_type = $9,
-                   customer_visible = $10,
-                   status = $11,
-                   provider_reference = $12::jsonb,
-                   raw_metadata = $13::jsonb,
-                   fetched_at = $14,
-                   updated_at = $15
-               WHERE provider = $4 AND external_document_key = $5`,
-              values
-            );
-            summary.updated += 1;
-            continue;
-          }
-          await client.query(
+          const result = await client.query(
             `INSERT INTO carrier_documents
              (id, shipment_id, customer_id, provider, external_document_key, document_type, label, filename, content_type, customer_visible, status, provider_reference, raw_metadata, fetched_at, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13::jsonb, $14, $15, $15)`,
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13::jsonb, $14, $15, $15)
+             ON CONFLICT (provider, external_document_key)
+             DO UPDATE SET
+               shipment_id = COALESCE(EXCLUDED.shipment_id, carrier_documents.shipment_id),
+               customer_id = COALESCE(EXCLUDED.customer_id, carrier_documents.customer_id),
+               document_type = EXCLUDED.document_type,
+               label = EXCLUDED.label,
+               filename = EXCLUDED.filename,
+               content_type = EXCLUDED.content_type,
+               customer_visible = EXCLUDED.customer_visible,
+               status = EXCLUDED.status,
+               provider_reference = EXCLUDED.provider_reference,
+               raw_metadata = EXCLUDED.raw_metadata,
+               fetched_at = EXCLUDED.fetched_at,
+               updated_at = EXCLUDED.updated_at
+             RETURNING (xmax = 0) AS inserted`,
             values
           );
-          summary.created += 1;
+          if (result.rows[0]?.inserted) {
+            summary.created += 1;
+          } else {
+            summary.updated += 1;
+          }
         }
         await client.query("COMMIT");
         return summary;
@@ -3425,11 +3419,29 @@ function normalizeCarrierDocumentRecord(document) {
     customerVisible: Boolean(document?.customerVisible || document?.customer_visible) && ["bol", "pod"].includes(documentType),
     status: String(document?.status || "available").trim() || "available",
     providerReference: document?.providerReference || document?.provider_reference || {},
-    rawMetadata: document?.rawMetadata || document?.raw_metadata || {},
+    rawMetadata: redactCarrierDocumentMetadata(document?.rawMetadata || document?.raw_metadata || {}),
     fetchedAt: document?.fetchedAt || document?.fetched_at || null,
     createdAt: document?.createdAt || document?.created_at || nowIso(),
     updatedAt: document?.updatedAt || document?.updated_at || nowIso()
   };
+}
+
+function redactCarrierDocumentMetadata(value, depth = 0) {
+  if (!value || depth > 8) return value;
+  if (Array.isArray(value)) {
+    return value.map((item) => redactCarrierDocumentMetadata(item, depth + 1));
+  }
+  if (typeof value !== "object") {
+    if (typeof value === "string" && /^https?:\/\//i.test(value)) {
+      return value.split("?")[0].split("#")[0];
+    }
+    return value;
+  }
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => !/^(authorization|token|access_token|api_key|signature|sig|x-amz-signature|x-amz-credential|x-amz-security-token|cookie|set-cookie)$/i.test(String(key || "")))
+      .map(([key, child]) => [key, redactCarrierDocumentMetadata(child, depth + 1)])
+  );
 }
 
 function carrierDocumentMatchesFilters(document, filters = {}) {

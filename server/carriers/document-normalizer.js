@@ -16,11 +16,55 @@ export function stableDocumentKey(provider, parts) {
   return [provider, ...parts.map((part) => String(part || "").trim()).filter(Boolean)].join(":");
 }
 
+export function stableUrlReference(value) {
+  try {
+    const parsed = new URL(String(value || ""));
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.href;
+  } catch {
+    return String(value || "").split("?")[0].split("#")[0].trim();
+  }
+}
+
+export function urlHasSensitiveQuery(value) {
+  try {
+    const parsed = new URL(String(value || ""));
+    return Array.from(parsed.searchParams.keys()).some(isSensitiveKey);
+  } catch {
+    return /[?&](authorization|token|access_token|api_key|signature|sig|x-amz-signature|x-amz-credential|x-amz-security-token)=/i.test(String(value || ""));
+  }
+}
+
 export function sanitizeProviderReference(reference = {}) {
   return Object.fromEntries(
     Object.entries(reference)
       .filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== "")
-      .map(([key, value]) => [key, String(value).trim()])
+      .filter(([key]) => !isSensitiveKey(key))
+      .map(([key, value]) => {
+        if (["url", "downloadUrl", "documentUrl"].includes(String(key))) {
+          return [key, stableUrlReference(value)];
+        }
+        return [key, String(value).trim()];
+      })
+  );
+}
+
+export function redactSensitiveMetadata(value, depth = 0) {
+  if (!value || depth > 8) return value;
+  if (Array.isArray(value)) {
+    return value.map((item) => redactSensitiveMetadata(item, depth + 1));
+  }
+  if (typeof value !== "object") {
+    if (typeof value === "string" && /^https?:\/\//i.test(value)) {
+      return stableUrlReference(value);
+    }
+    return value;
+  }
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => !isSensitiveKey(key))
+      .map(([key, child]) => [key, redactSensitiveMetadata(child, depth + 1)])
   );
 }
 
@@ -52,12 +96,14 @@ export function collectUrlDocuments(payload, provider, fallbackType = "other") {
       if (/^https?:\/\//i.test(url) && !seen.has(url)) {
         seen.add(url);
         const type = normalizeDocumentType(fallbackType);
+        const safeUrl = stableUrlReference(url);
         records.push({
           provider,
-          externalDocumentKey: stableDocumentKey(provider, [type, url]),
+          externalDocumentKey: stableDocumentKey(provider, [type, safeUrl]),
           documentType: type,
           label: type === "bol" ? "Bill of Lading" : type === "pod" ? "Proof of Delivery" : "Document",
-          providerReference: { url },
+          providerReference: { url: safeUrl },
+          status: urlHasSensitiveQuery(url) ? "pending" : "available",
           rawMetadata: {},
           fetchedAt: new Date().toISOString()
         });
@@ -69,7 +115,8 @@ export function collectUrlDocuments(payload, provider, fallbackType = "other") {
     if (url && /^https?:\/\//i.test(url) && !seen.has(url)) {
       seen.add(url);
       const type = normalizeDocumentType(value.type || value.documentType || value.name || value.label || fallbackType);
-      const id = readNestedString(value, [["id"], ["documentId"], ["documentID"], ["key"], ["type"]]) || url;
+      const safeUrl = stableUrlReference(url);
+      const id = readNestedString(value, [["id"], ["documentId"], ["documentID"], ["key"], ["type"]]) || safeUrl;
       records.push({
         provider,
         externalDocumentKey: stableDocumentKey(provider, [type, id]),
@@ -77,8 +124,9 @@ export function collectUrlDocuments(payload, provider, fallbackType = "other") {
         label: type === "bol" ? "Bill of Lading" : type === "pod" ? "Proof of Delivery" : String(value.label || value.name || "Document").trim(),
         filename: value.filename || value.fileName || null,
         contentType: value.contentType || value.mimeType || null,
+        status: urlHasSensitiveQuery(url) && !readNestedString(value, [["id"], ["documentId"], ["documentID"], ["key"]]) ? "pending" : "available",
         providerReference: sanitizeProviderReference({ id, url }),
-        rawMetadata: value,
+        rawMetadata: redactSensitiveMetadata(value),
         fetchedAt: new Date().toISOString()
       });
     }
@@ -88,4 +136,8 @@ export function collectUrlDocuments(payload, provider, fallbackType = "other") {
   };
   visit(payload);
   return records;
+}
+
+function isSensitiveKey(key) {
+  return /^(authorization|token|access_token|api_key|signature|sig|x-amz-signature|x-amz-credential|x-amz-security-token|cookie|set-cookie)$/i.test(String(key || ""));
 }
