@@ -20,6 +20,9 @@ import {
   pickupTimeErrorCodes,
   validatePickupReadyWindow
 } from "./public/quote-time-validation.js";
+import { normalizeMothershipDocuments, normalizeMothershipInvoiceDocument } from "./server/carriers/mothership-documents.js";
+import { normalizeSpeedshipDocuments, speedshipCapabilitySummary } from "./server/carriers/speedship-documents.js";
+import { normalizePriority1InvoiceRecords, priority1DocumentCapabilitySummary, priority1InvoiceDocument } from "./server/carriers/priority1-documents.js";
 
 const __dirname = process.cwd();
 const port = Number(process.env.PORT || 3000);
@@ -53,6 +56,8 @@ const priority1BaseUrl = process.env.PRIORITY1_API_BASE_URL || "";
 const priority1ApiKey = process.env.PRIORITY1_API_KEY || "";
 const priority1QuotePath = process.env.PRIORITY1_API_QUOTE_PATH || "";
 const priority1SuggestedClassPath = process.env.PRIORITY1_API_SUGGESTED_CLASS_PATH || "/v2/ltl/quotes/suggestedclass";
+const priority1ShipmentImagesPath = process.env.PRIORITY1_API_SHIPMENT_IMAGES_PATH || "/v2/ltl/shipments/images";
+const priority1CustomerInvoicesPath = process.env.PRIORITY1_API_CUSTOMER_INVOICES_PATH || "/v2/admin/customerinvoices";
 const fedexFreightBaseUrl = process.env.FEDEX_FREIGHT_BASE_URL || "https://apis-sandbox.fedex.com";
 const fedexFreightAuthUrl = process.env.FEDEX_FREIGHT_AUTH_URL || `${fedexFreightBaseUrl.replace(/\/$/, "")}/oauth/token`;
 const fedexFreightClientId = process.env.FEDEX_FREIGHT_CLIENT_ID || "";
@@ -488,9 +493,38 @@ async function handleApi(req, res, url) {
         shipments:
           currentUser.role === "customer"
             ? shipments.filter((shipment) => shipment.customerId === currentUser.customerId)
+              .map(customerShipment)
             : shipments
       }
     );
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/carrier-documents") {
+    requireManager(currentUser);
+    const filters = {
+      provider: url.searchParams.get("provider") || "",
+      type: url.searchParams.get("type") || "",
+      status: url.searchParams.get("status") || "",
+      matched: url.searchParams.get("matched") || "",
+      shipmentId: url.searchParams.get("shipmentId") || ""
+    };
+    const documents = await store.listCarrierDocuments(filters);
+    sendJson(res, 200, { documents: documents.map(internalCarrierDocument) });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/carrier-documents/sync") {
+    requireManager(currentUser);
+    const input = await readJson(req);
+    const summary = await syncCarrierDocuments(input || {});
+    sendJson(res, 200, { synced: summary });
+    return;
+  }
+
+  const carrierDocumentDownloadMatch = url.pathname.match(/^\/api\/carrier-documents\/([^/]+)\/download$/);
+  if (req.method === "GET" && carrierDocumentDownloadMatch) {
+    await downloadCarrierDocument(res, carrierDocumentDownloadMatch[1], currentUser);
     return;
   }
 
@@ -511,7 +545,7 @@ async function handleApi(req, res, url) {
       sendJson(res, 403, { error: "FORBIDDEN", message: "You can only view your own shipments." });
       return;
     }
-    sendJson(res, 200, { shipment });
+    sendJson(res, 200, { shipment: currentUser.role === "customer" ? customerShipment(shipment) : shipment });
     return;
   }
 
@@ -528,23 +562,16 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === "GET" && url.pathname === "/api/invoices") {
+    requireManager(currentUser);
     const invoices = await store.listInvoices();
-    sendJson(
-      res,
-      200,
-      {
-        invoices:
-          currentUser.role === "customer"
-            ? invoices.filter((invoice) => invoice.customerId === currentUser.customerId)
-            : invoices
-      }
-    );
+    sendJson(res, 200, { invoices });
     return;
   }
 
   if (req.method === "POST" && url.pathname === "/api/invoices/sync") {
-    requireStaff(currentUser);
-    await syncMothershipInvoices(res);
+    requireManager(currentUser);
+    const input = await readJson(req);
+    await syncCarrierInvoices(res, input || {});
     return;
   }
 
@@ -862,7 +889,7 @@ async function createShipment(req, res, currentUser) {
   };
 
   const result = await store.createShipment({ quoteId: quote.id, shipment, invoice });
-  sendJson(res, 201, result);
+  sendJson(res, 201, currentUser.role === "customer" ? { shipment: customerShipment(result.shipment) } : result);
 }
 
 async function getTracking(res, shipmentId, currentUser) {
@@ -886,23 +913,20 @@ async function getTracking(res, shipmentId, currentUser) {
     const tracking = await requestMothershipTracking(shipment.carrierShipmentId);
     const events = normalizeTrackingEvents(tracking);
     await store.replaceTrackingEvents(shipment.id, events, tracking);
-    sendJson(res, 200, { shipmentId: shipment.id, carrierShipmentId: shipment.carrierShipmentId, events });
+    sendJson(res, 200, currentUser.role === "customer" ? { shipmentId: shipment.id, events } : { shipmentId: shipment.id, carrierShipmentId: shipment.carrierShipmentId, events });
     return;
   }
 
   const storedEvents = await store.getTrackingEvents(shipment.id);
   if (storedEvents.length > 0) {
-    sendJson(res, 200, {
-      shipmentId: shipment.id,
-      carrierShipmentId: shipment.carrierShipmentId,
-      events: storedEvents
-    });
+    sendJson(res, 200, currentUser.role === "customer"
+      ? { shipmentId: shipment.id, events: storedEvents }
+      : { shipmentId: shipment.id, carrierShipmentId: shipment.carrierShipmentId, events: storedEvents });
     return;
   }
 
-  sendJson(res, 200, {
+  const fallbackTracking = {
     shipmentId: shipment.id,
-    carrierShipmentId: shipment.carrierShipmentId,
     events: [
       {
         status: shipment.status,
@@ -911,7 +935,8 @@ async function getTracking(res, shipmentId, currentUser) {
         description: "Local prototype booking created."
       }
     ]
-  });
+  };
+  sendJson(res, 200, currentUser.role === "customer" ? fallbackTracking : { ...fallbackTracking, carrierShipmentId: shipment.carrierShipmentId });
 }
 
 async function getShipmentDocuments(res, shipmentId, currentUser) {
@@ -927,65 +952,21 @@ async function getShipmentDocuments(res, shipmentId, currentUser) {
     return;
   }
 
-  const quote = await store.getQuote(shipment.quoteId);
-  let carrierDocuments = null;
-
-  if (shipment.status !== "booked_with_carrier") {
-    sendJson(res, 200, {
-      shipmentId: shipment.id,
-      carrierShipmentId: shipment.carrierShipmentId,
-      documents: [],
-      message:
-        shipment.carrier === "speedship"
-          ? "SpeedShip BOL is only available after a carrier booking. This shipment was booked locally."
-          : "Carrier documents are only available after a carrier booking."
-    });
-    return;
-  }
-
-  if (shipment.carrier === "mothership") {
-    if (!process.env.MOTHERSHIP_API_TOKEN) {
-      sendJson(res, 400, {
-        error: "MOTHERSHIP_TOKEN_MISSING",
-        message: "Add MOTHERSHIP_API_TOKEN to .env.local before downloading Mothership documents."
-      });
-      return;
-    }
-
-    carrierDocuments = await requestMothershipShipmentDocuments(shipment.carrierShipmentId);
-  } else if (shipment.carrier === "speedship") {
-    const productTransactionId = getSpeedshipProductTransactionId(shipment, quote);
-    if (!productTransactionId) {
-      sendJson(res, 400, {
-        error: "SPEEDSHIP_DOCUMENT_REFERENCE_MISSING",
-        message: "SpeedShip document download needs a product transaction ID."
-      });
-      return;
-    }
-
-    carrierDocuments = await requestSpeedshipShipmentDocuments(productTransactionId);
-  } else {
-    sendJson(res, 200, {
-      shipmentId: shipment.id,
-      carrierShipmentId: shipment.carrierShipmentId,
-      documents: [],
-      message: "This shipment was booked locally, so no carrier document is available."
-    });
-    return;
-  }
-
-  const documents = normalizeShipmentDocuments(carrierDocuments, shipment.carrier);
+  const filters = currentUser.role === "customer"
+    ? { customerVisible: true, customerId: currentUser.customerId }
+    : {};
+  const documents = (await store.listDocumentsForShipment(shipment.id, filters))
+    .filter((document) => currentUser.role !== "customer" || ["bol", "pod"].includes(document.documentType))
+    .map((document) => currentUser.role === "customer" ? customerCarrierDocument(document) : internalCarrierDocument(document));
   sendJson(res, 200, {
     shipmentId: shipment.id,
-    carrierShipmentId: shipment.carrierShipmentId,
     documents,
-    message: documents.length > 0 ? null : "No carrier documents were returned for this shipment.",
-    rawCarrierResponse: carrierDocuments
+    message: documents.length > 0 ? null : "No carrier documents were returned for this shipment."
   });
 }
 
 async function getMothershipShipmentDocuments(res, entityId, currentUser) {
-  requireStaff(currentUser);
+  requireManager(currentUser);
 
   if (!process.env.MOTHERSHIP_API_TOKEN) {
     sendJson(res, 400, {
@@ -1004,6 +985,146 @@ async function getMothershipShipmentDocuments(res, entityId, currentUser) {
     message: documents.length > 0 ? null : "No carrier documents were returned for this shipment.",
     rawCarrierResponse: carrierDocuments
   });
+}
+
+async function syncCarrierDocuments(input = {}) {
+  const providers = normalizeDocumentSyncProviders(input.providers);
+  const shipments = input.shipmentId
+    ? (await store.getShipment(input.shipmentId) ? [await store.getShipment(input.shipmentId)] : [])
+    : await store.listShipments();
+  const summary = Object.fromEntries(providers.map((provider) => [provider, emptySyncSummary(provider)]));
+  for (const provider of providers) {
+    if (provider === "priority1") {
+      summary[provider] = mergeSyncSummary(
+        summary[provider],
+        priority1DocumentCapabilitySummary(`Priority1 ${priority1ShipmentImagesPath} request schema unavailable.`)
+      );
+      continue;
+    }
+    for (const shipment of shipments.filter((item) => carrierDocumentProvider(item.carrier) === provider)) {
+      const providerSummary = await syncCarrierDocumentsForShipment(provider, shipment);
+      summary[provider] = mergeSyncSummary(summary[provider], providerSummary);
+    }
+  }
+  return summary;
+}
+
+async function syncCarrierDocumentsForShipment(provider, shipment) {
+  if (shipment.status !== "booked_with_carrier") {
+    return { ...emptySyncSummary(provider), skipped: 1, message: "not booked with carrier" };
+  }
+  try {
+    if (provider === "mothership") {
+      if (!process.env.MOTHERSHIP_API_TOKEN) return { ...emptySyncSummary(provider), skipped: 1, message: "Mothership token missing" };
+      const reference = String(shipment.carrierEntityId || shipment.carrierShipmentId || "").trim();
+      if (!realProviderReference(reference)) return { ...emptySyncSummary(provider), skipped: 1, message: "provider reference missing" };
+      const payload = await requestMothershipShipmentDocuments(reference);
+      const documents = normalizeMothershipDocuments(payload, shipment);
+      const result = await store.upsertCarrierDocuments(documents);
+      return { ...emptySyncSummary(provider), fetched: documents.length, ...result };
+    }
+    if (provider === "speedship") {
+      const quote = await store.getQuote(shipment.quoteId);
+      const productTransactionId = getSpeedshipProductTransactionId(shipment, quote);
+      if (!realProviderReference(productTransactionId)) return { ...emptySyncSummary(provider), skipped: 1, message: "provider reference missing" };
+      const payload = await requestSpeedshipShipmentDocuments(productTransactionId);
+      const documents = normalizeSpeedshipDocuments(payload, shipment, productTransactionId);
+      const result = await store.upsertCarrierDocuments(documents);
+      return { ...emptySyncSummary(provider), fetched: documents.length, ...result };
+    }
+    return { ...emptySyncSummary(provider), skipped: 1, message: "provider unsupported" };
+  } catch (error) {
+    await store.markCarrierDocumentSyncError({
+      provider,
+      shipmentId: shipment.id,
+      customerId: shipment.customerId,
+      message: error.message
+    });
+    return { ...emptySyncSummary(provider), failed: 1, message: "sync failed" };
+  }
+}
+
+async function downloadCarrierDocument(res, id, currentUser) {
+  const document = await store.getCarrierDocument(id);
+  if (!document || document.status !== "available") {
+    sendJson(res, 404, { error: "DOCUMENT_NOT_FOUND", message: "Carrier document was not found." });
+    return;
+  }
+  if (currentUser.role === "customer") {
+    const shipment = document.shipmentId ? await store.getShipment(document.shipmentId) : null;
+    if (!shipment || shipment.customerId !== currentUser.customerId || !document.customerVisible || !["bol", "pod"].includes(document.documentType)) {
+      sendJson(res, 403, { error: "FORBIDDEN", message: "You cannot access this document." });
+      return;
+    }
+  } else {
+    requireManager(currentUser);
+  }
+  const url = document.providerReference?.url || document.providerReference?.downloadUrl || "";
+  if (!url || !/^https?:\/\//i.test(url)) {
+    sendJson(res, 400, { error: "DOCUMENT_DOWNLOAD_UNAVAILABLE", message: "Document download is not available for this provider record." });
+    return;
+  }
+  const response = await fetch(url, { signal: AbortSignal.timeout(30000) });
+  if (!response.ok) {
+    sendJson(res, 502, { error: "DOCUMENT_DOWNLOAD_FAILED", message: "Could not fetch carrier document." });
+    return;
+  }
+  const maxBytes = 25 * 1024 * 1024;
+  const contentLength = Number(response.headers.get("content-length") || 0);
+  if (contentLength > maxBytes) {
+    sendJson(res, 502, { error: "DOCUMENT_TOO_LARGE", message: "Carrier document is too large to proxy." });
+    return;
+  }
+  const arrayBuffer = await response.arrayBuffer();
+  if (arrayBuffer.byteLength > maxBytes) {
+    sendJson(res, 502, { error: "DOCUMENT_TOO_LARGE", message: "Carrier document is too large to proxy." });
+    return;
+  }
+  const contentType = document.contentType || response.headers.get("content-type") || "application/octet-stream";
+  res.writeHead(200, {
+    "Content-Type": contentType,
+    "Content-Disposition": `attachment; filename="${safeFilename(document.filename || `${document.documentType || "document"}.pdf`)}"`
+  });
+  res.end(Buffer.from(arrayBuffer));
+}
+
+function normalizeDocumentSyncProviders(value) {
+  const requested = Array.isArray(value) && value.length ? value : ["mothership", "priority1", "speedship"];
+  return requested.map((provider) => String(provider || "").trim().toLowerCase()).filter((provider) => ["mothership", "priority1", "speedship"].includes(provider));
+}
+
+function emptySyncSummary(provider) {
+  return { provider, fetched: 0, created: 0, updated: 0, skipped: 0, unmatched: 0, failed: 0 };
+}
+
+function mergeSyncSummary(left, right) {
+  return {
+    provider: left.provider || right.provider,
+    fetched: (left.fetched || 0) + (right.fetched || 0),
+    created: (left.created || 0) + (right.created || 0),
+    updated: (left.updated || 0) + (right.updated || 0),
+    skipped: (left.skipped || 0) + (right.skipped || 0),
+    unmatched: (left.unmatched || 0) + (right.unmatched || 0),
+    failed: (left.failed || 0) + (right.failed || 0),
+    message: right.message || left.message || undefined
+  };
+}
+
+function carrierDocumentProvider(carrier) {
+  const value = String(carrier || "").toLowerCase();
+  if (value.includes("mothership")) return "mothership";
+  if (value.includes("speedship")) return "speedship";
+  if (value.includes("priority1")) return "priority1";
+  return value;
+}
+
+function realProviderReference(value) {
+  const text = String(value || "").trim();
+  return Boolean(text) && !/^LOCAL-/i.test(text) && !/^demo/i.test(text);
+}
+
+function safeFilename(value) {
+  return String(value || "document.pdf").replace(/[^A-Za-z0-9._-]+/g, "_");
 }
 
 function buildMothershipQuoteRequest(input) {
@@ -1647,6 +1768,11 @@ async function syncMothershipInvoices(res) {
     return;
   }
 
+  const result = await syncMothershipInvoicesToStore();
+  sendJson(res, 200, result);
+}
+
+async function syncMothershipInvoicesToStore() {
   const modifiedSince = "2000-01-01T00:00:00.000Z";
   const syncedAt = nowIso();
   const referenceRecords = [];
@@ -1710,14 +1836,91 @@ async function syncMothershipInvoices(res) {
   }
 
   const summary = await store.upsertExternalInvoices(hydratedInvoices);
-  sendJson(res, 200, {
+  const invoiceDocuments = hydratedInvoices.map(normalizeMothershipInvoiceDocument).filter(Boolean);
+  const documentSummary = invoiceDocuments.length ? await store.upsertCarrierDocuments(invoiceDocuments) : { created: 0, updated: 0, skipped: 0 };
+  return {
     synced: summary,
+    documents: documentSummary,
     totalFetched: referenceRecords.length,
     hydrated: detailSummary.hydrated,
     detailFailed: detailSummary.failed,
     modifiedSince,
     syncedAt
+  };
+}
+
+async function syncCarrierInvoices(res, input = {}) {
+  const requested = Array.isArray(input.providers) && input.providers.length ? input.providers : ["mothership"];
+  if (requested.length === 1 && requested.includes("mothership")) {
+    await syncMothershipInvoices(res);
+    return;
+  }
+  const summary = {};
+  if (requested.includes("mothership")) {
+    if (!process.env.MOTHERSHIP_API_TOKEN) {
+      summary.mothership = { ...emptySyncSummary("mothership"), skipped: 1, message: "Mothership token missing" };
+    } else {
+      const result = await syncMothershipInvoicesToStore();
+      summary.mothership = {
+        provider: "mothership",
+        fetched: result.totalFetched,
+        created: (result.synced?.created || 0) + (result.documents?.created || 0),
+        updated: (result.synced?.updated || 0) + (result.documents?.updated || 0),
+        skipped: result.synced?.skipped || 0,
+        unmatched: 0,
+        failed: result.detailFailed || 0
+      };
+    }
+  }
+  if (requested.includes("priority1")) {
+    summary.priority1 = await syncPriority1Invoices();
+  }
+  if (requested.includes("speedship")) {
+    summary.speedship = speedshipCapabilitySummary("SpeedShip invoice API contract unavailable.");
+  }
+  sendJson(res, 200, { synced: summary });
+}
+
+async function syncPriority1Invoices() {
+  if (!isPriority1Configured()) {
+    return { ...emptySyncSummary("priority1"), skipped: 1, message: "Priority1 API is not configured." };
+  }
+  try {
+    const payload = await requestPriority1CustomerInvoices();
+    const shipments = await store.listShipments();
+    const invoices = normalizePriority1InvoiceRecords(payload, shipments);
+    const invoiceSummary = await store.upsertExternalInvoices(invoices);
+    const documents = invoices.map(priority1InvoiceDocument).filter(Boolean);
+    const documentSummary = documents.length ? await store.upsertCarrierDocuments(documents) : { created: 0, updated: 0, skipped: 0 };
+    return {
+      provider: "priority1",
+      fetched: invoices.length,
+      created: invoiceSummary.created + documentSummary.created,
+      updated: invoiceSummary.updated + documentSummary.updated,
+      skipped: invoiceSummary.skipped + documentSummary.skipped,
+      unmatched: invoices.filter((invoice) => !invoice.shipmentId).length,
+      failed: 0
+    };
+  } catch {
+    return { ...emptySyncSummary("priority1"), failed: 1, message: "Priority1 invoice sync failed." };
+  }
+}
+
+async function requestPriority1CustomerInvoices() {
+  const response = await fetch(`${priority1BaseUrl.replace(/\/$/, "")}${priority1CustomerInvoicesPath}`, {
+    method: "GET",
+    headers: {
+      Authorization: priority1ApiKey.startsWith("Bearer ") ? priority1ApiKey : `Bearer ${priority1ApiKey}`,
+      Accept: "application/json"
+    },
+    signal: AbortSignal.timeout(35000)
   });
+  const text = await response.text();
+  const payload = text ? JSON.parse(text) : {};
+  if (!response.ok) {
+    throw new PublicError(response.status, payload.message || payload.title || "PRIORITY1_ERROR", payload.detail || payload.message || "Priority1 invoice request failed.");
+  }
+  return payload;
 }
 
 async function requestSpeedship(route, options) {
@@ -3734,6 +3937,12 @@ function requireStaff(user) {
   }
 }
 
+function requireManager(user) {
+  if (!["admin", "operations"].includes(user.role)) {
+    throw new PublicError(403, "FORBIDDEN", "You do not have permission to perform that action.");
+  }
+}
+
 function requireInternalUserManager(user) {
   if (!["admin", "operations"].includes(user.role)) {
     throw new PublicError(403, "FORBIDDEN", "You do not have permission to manage internal users.");
@@ -3895,6 +4104,48 @@ function sanitizeQuoteForCustomer(quote, customer = null) {
     },
     status: quote.status,
     createdAt: quote.createdAt
+  };
+}
+
+function customerShipment(shipment) {
+  return {
+    id: shipment.id,
+    customerId: shipment.customerId,
+    customerName: shipment.customerName,
+    quoteId: shipment.quoteId,
+    confirmationNumber: shipment.confirmationNumber,
+    referenceNumber: shipment.referenceNumber,
+    pickup: shipment.pickup,
+    delivery: shipment.delivery,
+    freight: shipment.freight,
+    sellPrice: shipment.sellPrice,
+    carrierName: shipment.carrierName || safeCustomerCarrierName({ carrierName: shipment.carrierName, carrierSource: shipment.carrier }),
+    service: shipment.service,
+    status: shipment.status,
+    pickupDate: shipment.pickupDate,
+    createdAt: shipment.createdAt
+  };
+}
+
+function customerCarrierDocument(document) {
+  return {
+    id: document.id,
+    shipmentId: document.shipmentId,
+    documentType: document.documentType,
+    type: document.documentType,
+    label: document.label || (document.documentType === "bol" ? "Bill of Lading" : "Proof of Delivery"),
+    filename: document.filename || null,
+    contentType: document.contentType || null,
+    status: document.status,
+    url: `/api/carrier-documents/${encodeURIComponent(document.id)}/download`,
+    fetchedAt: document.fetchedAt || null
+  };
+}
+
+function internalCarrierDocument(document) {
+  return {
+    ...document,
+    url: document.status === "available" ? `/api/carrier-documents/${encodeURIComponent(document.id)}/download` : null
   };
 }
 

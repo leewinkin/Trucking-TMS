@@ -55,7 +55,8 @@ assert.match(rendered.html, /Other invoices[\s\S]*?<span class="tab-count">1<\/s
 rendered = renderCustomerInvoices({
   invoices: [invoice("customer_open", "local", "open", true)]
 });
-assert.equal(rendered.error, null, "customer invoice rendering should remain unchanged");
+assert.equal(rendered.error, null, "customer invoice rendering should not throw");
+assert.equal(rendered.html, "", "customer invoice rendering should not expose invoice UI");
 assert.doesNotMatch(rendered.html, /invoice-tabs-shell|data-invoice-tab/, "customer invoice rendering should not show staff invoice tabs");
 
 assert.doesNotMatch(app, /\$\{otherInvoices\.length\}/, "renderInvoices should not reference an undefined otherInvoices tab count");
@@ -98,6 +99,7 @@ function renderInvoicesWithContext({ isCustomer, state }) {
     state,
     document: { getElementById: (id) => (id === "invoiceList" ? list : null) },
     isCustomerUser: () => isCustomer,
+    canManageCarrierInvoices: () => !isCustomer,
     customerInvoiceMatchesFilter: (invoice, filter) => filter === "all" || invoice.status === filter,
     adminInvoiceMatchesFilter: (invoice, filter) => filter === "all" || invoice.status === filter,
     adminRecordMatchesDateRange: (invoice, range) => range === "all" || invoice.inRange,

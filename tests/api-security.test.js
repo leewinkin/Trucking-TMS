@@ -97,9 +97,56 @@ try {
 
   const customerQuotes = await customer.request("/api/quotes");
   assert.equal(customerQuotes.status, 200);
-  assert.equal(customerQuotes.body.quotes.length, 1);
+  assert.equal(customerQuotes.body.quotes.length, 2);
   assert.equal(Object.hasOwn(customerQuotes.body.quotes[0], "carrierExclusionAudit"), false);
   assert.equal(Object.hasOwn(customerQuotes.body.quotes[0], "carrierAudit"), false);
+
+  const customerInvoices = await customer.request("/api/invoices");
+  assert.equal(customerInvoices.status, 403, "customer users must not access invoice APIs");
+  const adminInvoices = await admin.request("/api/invoices");
+  assert.equal(adminInvoices.status, 200, "admin users should retain invoice management access");
+
+  const customerShipments = await customer.request("/api/shipments");
+  assert.equal(customerShipments.status, 200);
+  assert.equal(customerShipments.body.shipments.length, 1);
+  assert.equal(Object.hasOwn(customerShipments.body.shipments[0], "carrierCost"), false);
+  assert.equal(Object.hasOwn(customerShipments.body.shipments[0], "margin"), false);
+  assert.equal(Object.hasOwn(customerShipments.body.shipments[0], "provider"), false);
+  assert.equal(Object.hasOwn(customerShipments.body.shipments[0], "carrierShipment"), false);
+  assert.equal(Object.hasOwn(customerShipments.body.shipments[0], "rawCarrierResponse"), false);
+
+  const ownShipment = await customer.request("/api/shipments/ship_a");
+  assert.equal(ownShipment.status, 200);
+  assert.equal(Object.hasOwn(ownShipment.body.shipment, "carrierCost"), false);
+  assert.equal(Object.hasOwn(ownShipment.body.shipment, "carrierShipmentId"), false);
+  const otherShipment = await customer.request("/api/shipments/ship_b");
+  assert.equal(otherShipment.status, 403);
+
+  const customerDocuments = await customer.request("/api/shipments/ship_a/documents");
+  assert.equal(customerDocuments.status, 200);
+  assert.deepEqual(customerDocuments.body.documents.map((document) => document.documentType), ["bol", "pod"]);
+  assert.equal(customerDocuments.body.documents.some((document) => Object.hasOwn(document, "providerReference")), false);
+  assert.equal(customerDocuments.body.documents.some((document) => Object.hasOwn(document, "rawMetadata")), false);
+  assert.equal(customerDocuments.body.documents.some((document) => document.documentType === "invoice"), false);
+  const otherCustomerDocuments = await customer.request("/api/shipments/ship_b/documents");
+  assert.equal(otherCustomerDocuments.status, 403);
+  const customerCarrierDocumentList = await customer.request("/api/carrier-documents");
+  assert.equal(customerCarrierDocumentList.status, 403);
+
+  const adminDocuments = await admin.request("/api/carrier-documents");
+  assert.equal(adminDocuments.status, 200);
+  assert.equal(adminDocuments.body.documents.length, 4);
+  assert.equal(Object.hasOwn(adminDocuments.body.documents[0], "providerReference"), true);
+  assert.equal(Object.hasOwn(adminDocuments.body.documents[0], "rawMetadata"), true);
+
+  const booked = await customer.request("/api/shipments", {
+    method: "POST",
+    body: { quoteId: "quote_bookable", rateId: "rate_bookable", bookWithCarrier: false }
+  });
+  assert.equal(booked.status, 201);
+  assert.equal(Object.hasOwn(booked.body, "invoice"), false);
+  assert.equal(Object.hasOwn(booked.body.shipment, "carrierCost"), false);
+  assert.equal(Object.hasOwn(booked.body.shipment, "carrierShipment"), false);
 
   const blockedBooking = await customer.request("/api/shipments", {
     method: "POST",
@@ -266,10 +313,65 @@ function seedDb() {
         carrierExclusionAudit: [{ carrierName: "XPO Logistics", reason: "Blocked" }],
         customerOrganizationId: "org_a",
         createdAt: now
+      },
+      {
+        id: "quote_bookable",
+        customerId: "cust_a",
+        customerName: "Customer A",
+        carrierMode: "demo",
+        carrierModes: ["demo"],
+        carrier: "demo",
+        carrierQuoteId: "quote_bookable",
+        referenceNumber: "REF-BOOK",
+        pickup: lane("Austin", "TX"),
+        delivery: lane("Dallas", "TX"),
+        freight: [],
+        pickupReadyDate: { date: "2026-07-30", time: "1000" },
+        tariffRule: {},
+        rates: [
+          {
+            id: "rate_bookable",
+            carrierSource: "demo",
+            providerScac: "SAIA",
+            carrierName: "SAIA",
+            service: "Standard",
+            carrierCost: 100,
+            sellPrice: 125,
+            margin: 25
+          }
+        ],
+        status: "quoted",
+        carrierMessage: "",
+        carrierAudit: [{ provider: "demo", status: "ok" }],
+        rawCarrierResponse: {},
+        rateAvailability: { status: "complete", messageCode: null },
+        carrierExclusionAudit: [],
+        customerOrganizationId: "org_a",
+        createdAt: now
       }
     ],
-    shipments: [],
-    invoices: [],
+    shipments: [
+      shipment("ship_a", "cust_a", "org_a", "Customer A"),
+      shipment("ship_b", "cust_b", "org_b", "Customer B")
+    ],
+    invoices: [
+      {
+        id: "inv_a",
+        shipmentId: "ship_a",
+        customerId: "cust_a",
+        customerName: "Customer A",
+        invoiceNumber: "INV-A",
+        amount: 125,
+        status: "draft",
+        createdAt: now
+      }
+    ],
+    carrierDocuments: [
+      carrierDocument("doc_bol_a", "ship_a", "cust_a", "mothership", "bol", true),
+      carrierDocument("doc_pod_a", "ship_a", "cust_a", "mothership", "pod", true),
+      carrierDocument("doc_invoice_a", "ship_a", "cust_a", "mothership", "invoice", false),
+      carrierDocument("doc_bol_b", "ship_b", "cust_b", "mothership", "bol", true)
+    ],
     trackingEvents: []
   };
 }
@@ -336,6 +438,69 @@ function preference(id, customerId, customerOrganizationId, carrierKey, carrierN
     reason: "Customer blocked",
     status: "active",
     createdByUserId: "user_admin",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function shipment(id, customerId, customerOrganizationId, customerName) {
+  return {
+    id,
+    customerId,
+    customerOrganizationId,
+    customerName,
+    quoteId: "",
+    carrier: "mothership",
+    carrierShipmentId: `carrier-${id}`,
+    carrierEntityId: `entity-${id}`,
+    confirmationNumber: `CN-${id}`,
+    referenceNumber: `REF-${id}`,
+    pickup: lane("Austin", "TX"),
+    delivery: lane("Dallas", "TX"),
+    freight: [],
+    carrierCost: 100,
+    sellPrice: 125,
+    margin: 25,
+    provider: "mothership",
+    carrierName: "TForce Freight",
+    service: "Standard",
+    status: "booked_with_carrier",
+    pickupDate: { date: "2026-07-30", time: "1000" },
+    carrierShipment: { request: { secret: "hidden" }, response: { raw: true } },
+    rawCarrierResponse: { secret: "hidden" },
+    createdAt: new Date().toISOString()
+  };
+}
+
+function lane(city, state) {
+  return {
+    name: "Dock",
+    address: {
+      street: "100 Test St",
+      city,
+      state,
+      zip: "78701",
+      country: "US"
+    }
+  };
+}
+
+function carrierDocument(id, shipmentId, customerId, provider, type, customerVisible) {
+  return {
+    id,
+    shipmentId,
+    customerId,
+    provider,
+    externalDocumentKey: `${provider}:${shipmentId}:${type}`,
+    documentType: type,
+    label: type.toUpperCase(),
+    filename: `${type}.pdf`,
+    contentType: "application/pdf",
+    customerVisible,
+    status: "available",
+    providerReference: { url: "https://carrier.example.test/document.pdf", providerDocumentId: id },
+    rawMetadata: { raw: true, upstreamMessage: "internal only" },
+    fetchedAt: new Date().toISOString(),
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };

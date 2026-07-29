@@ -214,7 +214,7 @@ assert.match(app, /data-track-result="\$\{escapeHtml\(shipment\.id\)\}"/, "parti
 assert.match(app, /replacingOpenModal/, "modal transitions should preserve the original focus return target");
 assert.match(app, /showToast\(t\("Filter: \{filter\}"/, "KPI clicks should visibly indicate intended filter without employee modals");
 assert.match(app, /state\.customerFilters\.quotes = filter === "readyQuotes" \? "ready" : "all";\n\s+setView\("quotes"\);/, "Ready quote KPI and View all quotes should navigate to the customer Quotes view");
-assert.match(app, /state\.customerFilters\.invoices = "open";\n\s+setView\("invoices"\);/, "Open invoice KPI should navigate to filtered customer Invoices");
+assert.doesNotMatch(app.slice(app.indexOf("function navigateCustomerDashboardFilter"), app.indexOf("function navigateStaffDashboardFilter")), /state\.customerFilters\.invoices|setView\("invoices"\)/, "customer dashboard filters should not navigate to invoices");
 assert.match(app, /state\.customerFilters\.shipments = "active";/, "Active shipment KPI should set the customer shipment filter");
 assert.match(app, /state\.customerFilters\.shipments = "deliveredThisMonth";/, "Delivered KPI should set the delivered-this-month shipment filter");
 assert.match(renderCustomerDashboardSlice, /aggregateReadyQuoteAttentionItems\(model\.attentionItems\)/, "customer dashboard should aggregate same-route ready quote attention rows");
@@ -246,7 +246,7 @@ assert.match(renderCustomerDashboardSlice, /View Saved Addresses/, "saved-addres
 assert.match(renderCustomerDashboardSlice, /Contact Support/, "support action should move to compact customer auxiliary actions");
 assert.match(app, /customerFilterBarHtml\("quotes"/, "Quotes view should render a filter bar");
 assert.match(app, /customerFilterBarHtml\("shipments"/, "Shipments view should render customer filters");
-assert.match(app, /customerFilterBarHtml\("invoices"/, "Invoices view should render customer filters");
+assert.doesNotMatch(app.slice(app.indexOf("function renderInvoices"), app.indexOf("function invoiceGroupHtml")), /customerFilterBarHtml\("invoices"/, "customer invoice filters should not render");
 assert.match(app, /data-customer-filter="all">\$\{t\("Clear Filter"\)\}/, "filtered customer views should offer Clear Filter");
 assert.match(documentErrorSlice, /Documents could not be loaded\./, "document load failures should use a distinct customer-safe message");
 assert.match(documentErrorSlice, /Try Again/, "document load failures should offer retry");
@@ -254,7 +254,7 @@ assert.match(documentErrorSlice, /data-customer-documents/, "document retry shou
 assert.doesNotMatch(documentErrorSlice, /Unavailable|error\.message|message \|\|/, "document request failures should not look like loaded missing documents or expose raw errors");
 assert.match(html, /id="portalSubtitle"/, "portal subtitle should support customer branding");
 assert.match(styles, /customer-kpi-grid/, "responsive customer KPI layout classes should exist");
-assert.match(styles, /repeat\(4, minmax\(0, 1fr\)\)/, "desktop KPI layout should have four balanced columns");
+assert.match(styles, /customer-kpi-grid[\s\S]*repeat\(3, minmax\(0, 1fr\)\)/, "desktop KPI layout should have three customer-safe columns");
 assert.match(styles, /repeat\(2, minmax\(0, 1fr\)\)/, "tablet KPI layout should have two columns");
 assert.match(styles, /customer-dashboard-main/, "customer dashboard main layout should exist");
 assert.match(styles, /customer-dashboard-lower-full[\s\S]*grid-template-columns: 1fr/, "Recent Quotes full-width layout should exist");
@@ -274,7 +274,7 @@ assert.match(app, /"New Quote": "新建报价"/, "customer New Quote Chinese nav
 assert.match(app, /"My Shipments": "我的货件"/, "customer Shipments Chinese navigation should use 我的货件");
 assert.match(app, /"Track Shipment": "追踪货件"/, "customer Track Shipment Chinese terminology should be consistent");
 assert.match(app, /"Tracking": "货件追踪"/, "customer Tracking Chinese terminology should be consistent");
-assert.match(app, /"My Invoices": "我的账单"/, "customer Invoices Chinese navigation should use 我的账单");
+assert.match(app, /invoicesNavButton\.classList\.toggle\("hidden", !canManageCarrierInvoices\(\)\)/, "customer Invoices navigation should be hidden by permission rendering");
 assert.match(app, /"Welcome back, \{companyName\}": "欢迎回来，\{companyName\}"/, "welcome translation should exist");
 assert.match(app, /"Clear Filter": "清除筛选"/, "Clear Filter Chinese translation should exist");
 assert.match(app, /"Documents could not be loaded\.": "文件加载失败。"/, "document failure Chinese translation should exist");

@@ -603,6 +603,106 @@ async function createPostgresStore(dbUrl, { runOrganizationMigrationOnStartup = 
       );
       return result.rowCount > 0;
     },
+    async listCarrierDocuments(filters = {}) {
+      const { rows } = await pool.query("SELECT * FROM carrier_documents ORDER BY updated_at DESC, created_at DESC");
+      return rows.map(mapCarrierDocumentRow).filter((document) => carrierDocumentMatchesFilters(document, filters));
+    },
+    async getCarrierDocument(id) {
+      const { rows } = await pool.query("SELECT * FROM carrier_documents WHERE id = $1", [id]);
+      return rows[0] ? mapCarrierDocumentRow(rows[0]) : null;
+    },
+    async listDocumentsForShipment(shipmentId, options = {}) {
+      const { rows } = await pool.query(
+        "SELECT * FROM carrier_documents WHERE shipment_id = $1 ORDER BY document_type ASC, created_at ASC",
+        [shipmentId]
+      );
+      return rows.map(mapCarrierDocumentRow).filter((document) => carrierDocumentMatchesFilters(document, options));
+    },
+    async upsertCarrierDocuments(documents) {
+      const summary = { created: 0, updated: 0, skipped: 0 };
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        for (const document of documents) {
+          if (!document?.provider || !document?.externalDocumentKey) {
+            summary.skipped += 1;
+            continue;
+          }
+          const existing = await client.query(
+            "SELECT id FROM carrier_documents WHERE provider = $1 AND external_document_key = $2 LIMIT 1",
+            [document.provider, document.externalDocumentKey]
+          );
+          const values = [
+            document.id || createId("cdoc"),
+            document.shipmentId || null,
+            document.customerId || null,
+            document.provider,
+            document.externalDocumentKey,
+            normalizeCarrierDocumentType(document.documentType),
+            String(document.label || "").trim(),
+            document.filename || null,
+            document.contentType || null,
+            Boolean(document.customerVisible) && ["bol", "pod"].includes(normalizeCarrierDocumentType(document.documentType)),
+            document.status || "available",
+            JSON.stringify(document.providerReference || {}),
+            JSON.stringify(document.rawMetadata || {}),
+            document.fetchedAt || null,
+            nowIso()
+          ];
+          if (existing.rowCount > 0) {
+            await client.query(
+              `UPDATE carrier_documents
+               SET shipment_id = COALESCE($2, shipment_id),
+                   customer_id = COALESCE($3, customer_id),
+                   document_type = $6,
+                   label = $7,
+                   filename = $8,
+                   content_type = $9,
+                   customer_visible = $10,
+                   status = $11,
+                   provider_reference = $12::jsonb,
+                   raw_metadata = $13::jsonb,
+                   fetched_at = $14,
+                   updated_at = $15
+               WHERE provider = $4 AND external_document_key = $5`,
+              values
+            );
+            summary.updated += 1;
+            continue;
+          }
+          await client.query(
+            `INSERT INTO carrier_documents
+             (id, shipment_id, customer_id, provider, external_document_key, document_type, label, filename, content_type, customer_visible, status, provider_reference, raw_metadata, fetched_at, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13::jsonb, $14, $15, $15)`,
+            values
+          );
+          summary.created += 1;
+        }
+        await client.query("COMMIT");
+        return summary;
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+    async markCarrierDocumentSyncError(input) {
+      const document = {
+        provider: input.provider,
+        externalDocumentKey: input.externalDocumentKey || `${input.provider}:${input.shipmentId || "unmatched"}:${input.documentType || "sync-error"}`,
+        shipmentId: input.shipmentId || null,
+        customerId: input.customerId || null,
+        documentType: input.documentType || "other",
+        label: input.label || "Document sync error",
+        status: "error",
+        customerVisible: false,
+        providerReference: input.providerReference || {},
+        rawMetadata: { message: input.message || "Document sync failed." },
+        fetchedAt: nowIso()
+      };
+      return this.upsertCarrierDocuments([document]);
+    },
     async listQuotes() {
       const { rows } = await pool.query("SELECT * FROM quotes ORDER BY created_at DESC");
       return rows.map(mapQuoteRow);
@@ -1274,6 +1374,24 @@ async function ensureSchema(pool) {
       raw_carrier_response jsonb NOT NULL DEFAULT '{}'::jsonb,
       created_at timestamptz NOT NULL DEFAULT now()
     )`,
+    `CREATE TABLE IF NOT EXISTS carrier_documents (
+      id text PRIMARY KEY,
+      shipment_id text REFERENCES shipments(id) ON DELETE CASCADE,
+      customer_id text REFERENCES customers(id) ON DELETE CASCADE,
+      provider text NOT NULL,
+      external_document_key text NOT NULL,
+      document_type text NOT NULL,
+      label text NOT NULL DEFAULT '',
+      filename text,
+      content_type text,
+      customer_visible boolean NOT NULL DEFAULT false,
+      status text NOT NULL DEFAULT 'available',
+      provider_reference jsonb NOT NULL DEFAULT '{}'::jsonb,
+      raw_metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+      fetched_at timestamptz,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )`,
     `CREATE TABLE IF NOT EXISTS invoices (
       id bigserial PRIMARY KEY,
       shipment_id text REFERENCES shipments(id) ON DELETE CASCADE,
@@ -1331,6 +1449,8 @@ async function ensureSchema(pool) {
     "CREATE INDEX IF NOT EXISTS idx_shipments_customer_organization_id ON shipments(customer_organization_id)",
     "CREATE INDEX IF NOT EXISTS idx_shipments_quote_id ON shipments(quote_id)",
     "CREATE INDEX IF NOT EXISTS idx_tracking_events_shipment_id ON tracking_events(shipment_id)",
+    "CREATE INDEX IF NOT EXISTS idx_carrier_documents_shipment_id ON carrier_documents(shipment_id)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_carrier_documents_provider_key ON carrier_documents(provider, external_document_key)",
     "CREATE INDEX IF NOT EXISTS idx_invoices_shipment_id ON invoices(shipment_id)",
     "CREATE INDEX IF NOT EXISTS idx_invoices_customer_organization_id ON invoices(customer_organization_id)",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_external_invoice_id ON invoices(external_invoice_id)",
@@ -2079,6 +2199,7 @@ async function createJsonStore(filePath, { runOrganizationMigrationOnStartup = f
       db.shipments = db.shipments.filter((item) => item.customerId !== id);
       db.invoices = db.invoices.filter((item) => item.customerId !== id);
       db.trackingEvents = db.trackingEvents.filter((item) => remainingShipmentIds.has(item.shipmentId));
+      db.carrierDocuments = db.carrierDocuments.filter((item) => item.customerId !== id && (!item.shipmentId || remainingShipmentIds.has(item.shipmentId)));
       await writeJsonDb(filePath, db);
       return true;
     },
@@ -2242,6 +2363,74 @@ async function createJsonStore(filePath, { runOrganizationMigrationOnStartup = f
       preference.updatedAt = nowIso();
       await writeJsonDb(filePath, db);
       return true;
+    },
+    async listCarrierDocuments(filters = {}) {
+      const db = await readJsonDb(filePath);
+      return db.carrierDocuments
+        .slice()
+        .sort((left, right) => String(right.updatedAt || right.createdAt || "").localeCompare(String(left.updatedAt || left.createdAt || "")))
+        .filter((document) => carrierDocumentMatchesFilters(document, filters));
+    },
+    async getCarrierDocument(id) {
+      const db = await readJsonDb(filePath);
+      return db.carrierDocuments.find((document) => document.id === id) || null;
+    },
+    async listDocumentsForShipment(shipmentId, options = {}) {
+      const db = await readJsonDb(filePath);
+      return db.carrierDocuments
+        .filter((document) => document.shipmentId === shipmentId)
+        .filter((document) => carrierDocumentMatchesFilters(document, options));
+    },
+    async upsertCarrierDocuments(documents) {
+      const db = await readJsonDb(filePath);
+      const summary = { created: 0, updated: 0, skipped: 0 };
+      for (const input of documents) {
+        if (!input?.provider || !input?.externalDocumentKey) {
+          summary.skipped += 1;
+          continue;
+        }
+        const normalized = normalizeCarrierDocumentRecord({
+          ...input,
+          id: input.id || createId("cdoc"),
+          documentType: normalizeCarrierDocumentType(input.documentType),
+          customerVisible: Boolean(input.customerVisible) && ["bol", "pod"].includes(normalizeCarrierDocumentType(input.documentType)),
+          status: input.status || "available",
+          createdAt: input.createdAt || nowIso(),
+          updatedAt: nowIso()
+        });
+        const existing = db.carrierDocuments.find((document) =>
+          document.provider === normalized.provider &&
+          document.externalDocumentKey === normalized.externalDocumentKey
+        );
+        if (existing) {
+          Object.assign(existing, {
+            ...normalized,
+            id: existing.id,
+            createdAt: existing.createdAt
+          });
+          summary.updated += 1;
+        } else {
+          db.carrierDocuments.push(normalized);
+          summary.created += 1;
+        }
+      }
+      await writeJsonDb(filePath, db);
+      return summary;
+    },
+    async markCarrierDocumentSyncError(input) {
+      return this.upsertCarrierDocuments([{
+        provider: input.provider,
+        externalDocumentKey: input.externalDocumentKey || `${input.provider}:${input.shipmentId || "unmatched"}:${input.documentType || "sync-error"}`,
+        shipmentId: input.shipmentId || null,
+        customerId: input.customerId || null,
+        documentType: input.documentType || "other",
+        label: input.label || "Document sync error",
+        status: "error",
+        customerVisible: false,
+        providerReference: input.providerReference || {},
+        rawMetadata: { message: input.message || "Document sync failed." },
+        fetchedAt: nowIso()
+      }]);
     },
     async listQuotes() {
       const db = await readJsonDb(filePath);
@@ -2663,6 +2852,7 @@ function createSeedDb() {
     quotes: [],
     shipments: [],
     invoices: [],
+    carrierDocuments: [],
     trackingEvents: []
   };
 }
@@ -2864,6 +3054,27 @@ function mapCarrierPreferenceRow(row) {
     reason: row.reason || null,
     status: row.status,
     createdByUserId: row.created_by_user_id || null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function mapCarrierDocumentRow(row) {
+  return {
+    id: row.id,
+    shipmentId: row.shipment_id || null,
+    customerId: row.customer_id || null,
+    provider: row.provider,
+    externalDocumentKey: row.external_document_key,
+    documentType: normalizeCarrierDocumentType(row.document_type),
+    label: row.label || "",
+    filename: row.filename || null,
+    contentType: row.content_type || null,
+    customerVisible: Boolean(row.customer_visible),
+    status: row.status || "available",
+    providerReference: row.provider_reference || {},
+    rawMetadata: row.raw_metadata || {},
+    fetchedAt: row.fetched_at || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -3094,6 +3305,7 @@ function normalizeJsonDb(db) {
     agentCustomerRelationships: Array.isArray(db.agentCustomerRelationships) ? db.agentCustomerRelationships : [],
     addressBookEntries: Array.isArray(db.addressBookEntries) ? db.addressBookEntries.map(normalizeAddressBookRecord) : [],
     carrierPreferences: Array.isArray(db.carrierPreferences) ? db.carrierPreferences.map(normalizeCarrierPreferenceRecord) : [],
+    carrierDocuments: Array.isArray(db.carrierDocuments) ? db.carrierDocuments.map(normalizeCarrierDocumentRecord) : [],
     quotes: Array.isArray(db.quotes) ? db.quotes.map(normalizeQuoteRecord) : [],
     shipments: Array.isArray(db.shipments) ? db.shipments : [],
     invoices: Array.isArray(db.invoices) ? db.invoices : [],
@@ -3188,6 +3400,48 @@ function normalizeCarrierPreferenceRecord(preference) {
     createdAt: preference?.createdAt || preference?.created_at || nowIso(),
     updatedAt: preference?.updatedAt || preference?.updated_at || nowIso()
   };
+}
+
+function normalizeCarrierDocumentType(value) {
+  const text = String(value || "").trim().toLowerCase().replace(/[\s_-]+/g, "");
+  if (["bol", "billoflading", "billlading"].includes(text)) return "bol";
+  if (["pod", "proofofdelivery", "deliveryreceipt"].includes(text)) return "pod";
+  if (["invoice", "carrierinvoice", "customerinvoice"].includes(text)) return "invoice";
+  return "other";
+}
+
+function normalizeCarrierDocumentRecord(document) {
+  const documentType = normalizeCarrierDocumentType(document?.documentType || document?.document_type);
+  return {
+    id: String(document?.id || "").trim(),
+    shipmentId: document?.shipmentId || document?.shipment_id || null,
+    customerId: document?.customerId || document?.customer_id || null,
+    provider: String(document?.provider || "").trim(),
+    externalDocumentKey: String(document?.externalDocumentKey || document?.external_document_key || "").trim(),
+    documentType,
+    label: String(document?.label || "").trim(),
+    filename: document?.filename || null,
+    contentType: document?.contentType || document?.content_type || null,
+    customerVisible: Boolean(document?.customerVisible || document?.customer_visible) && ["bol", "pod"].includes(documentType),
+    status: String(document?.status || "available").trim() || "available",
+    providerReference: document?.providerReference || document?.provider_reference || {},
+    rawMetadata: document?.rawMetadata || document?.raw_metadata || {},
+    fetchedAt: document?.fetchedAt || document?.fetched_at || null,
+    createdAt: document?.createdAt || document?.created_at || nowIso(),
+    updatedAt: document?.updatedAt || document?.updated_at || nowIso()
+  };
+}
+
+function carrierDocumentMatchesFilters(document, filters = {}) {
+  if (filters.shipmentId && document.shipmentId !== filters.shipmentId) return false;
+  if (filters.provider && document.provider !== filters.provider) return false;
+  if (filters.type && document.documentType !== filters.type) return false;
+  if (filters.status && document.status !== filters.status) return false;
+  if (filters.customerVisible !== undefined && Boolean(document.customerVisible) !== Boolean(filters.customerVisible)) return false;
+  if (filters.customerId && document.customerId !== filters.customerId) return false;
+  if (filters.matched === "matched" && !document.shipmentId) return false;
+  if (filters.matched === "unmatched" && document.shipmentId) return false;
+  return true;
 }
 
 function normalizeQuoteRecord(quote) {

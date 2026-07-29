@@ -169,7 +169,7 @@ const translations = {
     "Draft invoices": "草稿账单",
     "Recent Shipments": "最近货件",
     "Welcome back, {companyName}": "欢迎回来，{companyName}",
-    "Manage your quotes, shipments, documents, and invoices.": "管理您的报价、货件、文件和账单。",
+    "Manage your quotes, shipments, and documents.": "管理您的报价、货件和文件。",
     "+ New Quote": "+ 新建报价",
     "Repeat Last Quote": "重复上次报价",
     "No previous quotes to repeat.": "暂无可重复的历史报价。",
@@ -815,6 +815,9 @@ const translations = {
     "Loading tracking details...": "正在加载运输轨迹...",
     "Tracking lookup failed.": "运输轨迹查询失败。",
     "Carrier Documents": "承运商文档",
+    "Sync All Documents": "同步全部文件",
+    "Refresh Documents": "刷新文件",
+    "Documents synchronized.": "文件已同步。",
     "Document": "文档",
     "Loading proof of delivery...": "正在加载送货回单...",
     "Loading bill of lading...": "正在加载提单...",
@@ -1651,6 +1654,12 @@ function wireNavigation() {
       return;
     }
 
+    const syncDocumentsButton = event.target.closest("[data-sync-carrier-documents]");
+    if (syncDocumentsButton) {
+      syncCarrierDocuments(syncDocumentsButton.dataset.syncCarrierDocuments || "");
+      return;
+    }
+
     const bolButton = event.target.closest("[data-view-bol]");
     if (bolButton) {
       openShipmentDocuments(bolButton.dataset.viewBol, "bol");
@@ -2055,6 +2064,7 @@ async function refreshAll(options = {}) {
       ? Promise.resolve({ entries: [] })
       : api(`/api/address-book${isStaffUser() ? `?customerId=${encodeURIComponent(selectedQuoteCustomerId)}` : ""}`);
     const internalUsersRequest = canManageInternalUsers() ? api("/api/internal-users") : Promise.resolve({ users: [] });
+    const invoicesRequest = canManageCarrierInvoices() ? api("/api/invoices") : Promise.resolve({ invoices: [] });
     const [health, customers, tariffs, addressBook, quotes, shipments, invoices, internalUsers] = await Promise.all([
       api("/api/health"),
       api("/api/customers"),
@@ -2062,7 +2072,7 @@ async function refreshAll(options = {}) {
       addressBookRequest,
       api("/api/quotes"),
       api("/api/shipments"),
-      api("/api/invoices"),
+      invoicesRequest,
       internalUsersRequest
     ]);
 
@@ -2159,6 +2169,12 @@ async function api(path, options = {}) {
 }
 
 function setView(name, options = {}) {
+  if (name === "invoices" && !canManageCarrierInvoices()) {
+    name = "dashboard";
+  }
+  if (name === "users" && !canManageInternalUsers()) {
+    name = "dashboard";
+  }
   const activeView = document.querySelector(".nav-button.active")?.dataset.view || "";
   if (activeView === "customers" && name !== "customers" && hasCustomerManagementUnsavedChanges()) {
     if (!window.confirm(t("Unsaved changes will be lost. Continue?"))) {
@@ -2221,6 +2237,10 @@ function applyPermissions() {
   if (usersNavButton) {
     usersNavButton.classList.toggle("hidden", !canManageInternalUsers());
   }
+  const invoicesNavButton = document.querySelector('.nav-button[data-view="invoices"]');
+  if (invoicesNavButton) {
+    invoicesNavButton.classList.toggle("hidden", !canManageCarrierInvoices());
+  }
   const customersMetricButton = document.getElementById("customersMetricButton");
   if (customersMetricButton) {
     customersMetricButton.classList.toggle("hidden", !isStaff);
@@ -2261,7 +2281,7 @@ function applyPermissions() {
     quoteCustomerSelect.dataset.autofillBound = "true";
   }
   const activeView = document.querySelector(".nav-button.active")?.dataset.view;
-  if ((!isStaff && activeView === "customers") || (!canManageInternalUsers() && activeView === "users")) {
+  if ((!isStaff && activeView === "customers") || (!canManageInternalUsers() && activeView === "users") || (!canManageCarrierInvoices() && activeView === "invoices")) {
     setView("dashboard");
   }
   const portalSubtitle = document.getElementById("portalSubtitle");
@@ -2287,7 +2307,7 @@ function updateRolePresentation() {
     quotes: isCustomer ? "My Quotes" : "Quote Management",
     quote: "New Quote",
     shipments: isCustomer ? "My Shipments" : "Shipment Management",
-    invoices: isCustomer ? "My Invoices" : "Invoice Management"
+    invoices: "Invoice Management"
   };
   Object.entries(labels).forEach(([view, label]) => {
     const button = document.querySelector(`.nav-button[data-view="${view}"]`);
@@ -2308,6 +2328,10 @@ function isStaffUser() {
 }
 
 function canManageInternalUsers() {
+  return ["admin", "operations"].includes(state.user?.role);
+}
+
+function canManageCarrierInvoices() {
   return ["admin", "operations"].includes(state.user?.role);
 }
 
@@ -2607,6 +2631,22 @@ async function openShipmentDocuments(shipmentId, kind = "bol") {
       return;
     }
     paintModal(title, `<div class="empty-state">${escapeHtml(error.message || (normalizedKind === "pod" ? t("POD lookup failed.") : t("BOL lookup failed.")))}</div>`);
+  }
+}
+
+async function syncCarrierDocuments(shipmentId = "") {
+  if (!canManageCarrierInvoices()) {
+    return;
+  }
+  try {
+    await api("/api/carrier-documents/sync", {
+      method: "POST",
+      body: shipmentId ? { shipmentId } : {}
+    });
+    showToast(t("Documents synchronized."));
+    await refreshAll();
+  } catch (error) {
+    showToast(error.message || t("Documents could not be loaded."), true);
   }
 }
 
@@ -4589,6 +4629,7 @@ function shipmentRow(shipment, options = {}) {
       ${showActions ? `
         <div class="row-actions">
           <button class="secondary-action" type="button" data-track-shipment="${escapeHtml(shipment.id)}">${t("Track")}</button>
+          ${!isCustomerUser() && canManageCarrierInvoices() ? `<button class="secondary-action" type="button" data-sync-carrier-documents="${escapeHtml(shipment.id)}">${t("Refresh Documents")}</button>` : ""}
           <button class="secondary-action" type="button" data-view-bol="${escapeHtml(shipment.id)}">${t("BOL")}</button>
           <button class="secondary-action" type="button" data-view-pod="${escapeHtml(shipment.id)}">${t("POD")}</button>
         </div>
@@ -7495,7 +7536,7 @@ function staffKpiGridHtml(metrics) {
     { key: "quoteIssues", label: "Quote Issues", count: metrics.quoteIssues, helper: "No-rate or carrier-response issues.", filter: "quoteIssues", action: "View quotes", state: "amber" },
     { key: "activeShipments", label: "Active Shipments", count: metrics.activeShipments, helper: "Booked or currently moving.", filter: "activeShipments", action: "View shipments", state: "blue" },
     { key: "shipmentExceptions", label: "Shipment Exceptions", count: metrics.shipmentExceptions, helper: "Shipments requiring operational review.", filter: "shipmentExceptions", action: "View shipments", state: "red" },
-    { key: "openInvoices", label: "Open Invoices", count: metrics.openInvoices, helper: "Draft, unpaid, due, or overdue.", filter: "openInvoices", action: "View invoices", state: "amber" }
+    ...(canManageCarrierInvoices() ? [{ key: "openInvoices", label: "Open Invoices", count: metrics.openInvoices, helper: "Draft, unpaid, due, or overdue.", filter: "openInvoices", action: "View invoices", state: "amber" }] : [])
   ];
   return `
     <section class="staff-kpi-grid" aria-label="${escapeHtml(t("Operations Overview"))}">
@@ -7823,7 +7864,7 @@ function renderCustomerDashboard() {
   const model = customerDashboardViewModel({
     quotes: state.quotes,
     shipments: state.shipments,
-    invoices: state.invoices
+    invoices: []
   });
   const attentionItems = aggregateReadyQuoteAttentionItems(model.attentionItems);
   const latestQuote = latestCustomerQuote();
@@ -7836,7 +7877,7 @@ function renderCustomerDashboard() {
         <div>
           <p class="eyebrow">${escapeHtml(t("Customer Portal"))}</p>
           <h2>${escapeHtml(t("Welcome back, {companyName}", { companyName: customer?.companyName || t("Your account") }))}</h2>
-          <p>${escapeHtml(t("Manage your quotes, shipments, documents, and invoices."))}</p>
+          <p>${escapeHtml(t("Manage your quotes, shipments, and documents."))}</p>
         </div>
         <div class="customer-dashboard-actions" aria-label="${escapeHtml(t("Dashboard actions"))}">
           <button class="primary-action" type="button" data-customer-dashboard-action="newQuote">${t("New Quote")}</button>
@@ -7879,14 +7920,6 @@ function customerKpiGridHtml(metrics) {
       filter: "Active shipments"
     },
     {
-      key: "openInvoices",
-      label: t("Open Invoices"),
-      count: metrics.openInvoices,
-      helper: t("Invoices requiring review or payment"),
-      action: t("View invoices"),
-      filter: "Open invoices"
-    },
-    {
       key: "deliveredThisMonth",
       label: t("Delivered This Month"),
       count: metrics.deliveredThisMonth,
@@ -7914,7 +7947,6 @@ function customerKpiMarker(key) {
   return {
     readyQuotes: "Q",
     activeShipments: "S",
-    openInvoices: "I",
     deliveredThisMonth: "D"
   }[key] || "";
 }
@@ -8060,7 +8092,7 @@ function attentionViewAllAttrs(items) {
   if (items.some((item) => item.type === "shipment_exception")) {
     return `data-dashboard-filter="activeShipments"`;
   }
-  return `data-dashboard-filter="openInvoices"`;
+  return `data-dashboard-filter="activeShipments"`;
 }
 
 function recentQuotesSectionHtml(quotes) {
@@ -8310,7 +8342,6 @@ function navigateCustomerDashboardFilter(filter) {
     quoteAll: "All",
     readyQuotes: "Ready-to-book quotes",
     activeShipments: "Active shipments",
-    openInvoices: "Open invoices",
     deliveredThisMonth: "Delivered shipments this month"
   };
   state.dashboardFilter = filterLabels[filter] || "";
@@ -8320,11 +8351,6 @@ function navigateCustomerDashboardFilter(filter) {
   if (filter === "readyQuotes" || filter === "quoteAll") {
     state.customerFilters.quotes = filter === "readyQuotes" ? "ready" : "all";
     setView("quotes");
-    return;
-  }
-  if (filter === "openInvoices") {
-    state.customerFilters.invoices = "open";
-    setView("invoices");
     return;
   }
   if (filter === "activeShipments") {
@@ -8608,11 +8634,9 @@ function customerDocumentsPanelHtml(shipment, documents = [], loadState = "loade
   }
   const bol = filterShipmentDocumentsByKind(documents, "bol");
   const pod = filterShipmentDocumentsByKind(documents, "pod");
-  const other = documents.filter((document) => !bol.includes(document) && !pod.includes(document));
   const rows = [
     customerDocumentStatusRow(t("Bill of Lading"), bol, loadState, shipment),
-    customerDocumentStatusRow(t("Proof of Delivery"), pod, loadState, shipment),
-    customerDocumentStatusRow(t("Other Documents"), other, loadState, shipment)
+    customerDocumentStatusRow(t("Proof of Delivery"), pod, loadState, shipment)
   ];
   return `
     <div class="detail-grid">
@@ -8818,6 +8842,9 @@ function renderShipments() {
     adminRecordMatchesDateRange(shipment, activeRange)
   );
   list.innerHTML = `
+    <div class="toolbar-row">
+      ${canManageCarrierInvoices() ? `<button class="secondary-action" type="button" data-sync-carrier-documents="">${t("Sync All Documents")}</button>` : ""}
+    </div>
     ${staffFilterBarHtml("shipments", filters, activeFilter, activeRange)}
     <div class="customer-card-stack">
       ${shipments.length
@@ -8833,19 +8860,8 @@ function renderInvoices() {
     return;
   }
 
-  if (isCustomerUser()) {
-    const activeFilter = state.customerFilters.invoices || "all";
-    const filters = [
-      { value: "all", label: "All" },
-      { value: "open", label: "Open Invoices" }
-    ];
-    const invoices = state.invoices.filter((invoice) => customerInvoiceMatchesFilter(invoice, activeFilter));
-    list.innerHTML = `
-      ${customerFilterBarHtml("invoices", filters, activeFilter)}
-      <div class="customer-card-stack">
-        ${invoices.length ? invoices.map((invoice) => invoiceRow(invoice)).join("") : `<div class="empty-state">${t("No invoices yet.")}</div>`}
-      </div>
-    `;
+  if (!canManageCarrierInvoices()) {
+    list.innerHTML = "";
     return;
   }
 
