@@ -959,6 +959,10 @@ async function getShipmentDocuments(res, shipmentId, currentUser) {
     return;
   }
 
+  if (currentUser.role !== "customer") {
+    requireManager(currentUser);
+  }
+
   const filters = currentUser.role === "customer"
     ? { customerVisible: true, customerId: currentUser.customerId }
     : {};

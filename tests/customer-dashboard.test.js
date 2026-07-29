@@ -247,6 +247,12 @@ assert.match(renderCustomerDashboardSlice, /Contact Support/, "support action sh
 assert.match(app, /customerFilterBarHtml\("quotes"/, "Quotes view should render a filter bar");
 assert.match(app, /customerFilterBarHtml\("shipments"/, "Shipments view should render customer filters");
 assert.doesNotMatch(app.slice(app.indexOf("function renderInvoices"), app.indexOf("function invoiceGroupHtml")), /customerFilterBarHtml\("invoices"/, "customer invoice filters should not render");
+const shipmentRowSlice = app.slice(app.indexOf("function shipmentRow"), app.indexOf("function shipmentCarrierLabel"));
+assert.match(shipmentRowSlice, /const canViewShipmentDocuments = isCustomerUser\(\) \|\| canManageCarrierInvoices\(\);/, "shipment row document actions should be limited to customer or manager users");
+assert.match(shipmentRowSlice, /canManageCarrierInvoices\(\) \? `<button class="secondary-action" type="button" data-sync-carrier-documents/, "admin/sub-admin shipment rows should retain Refresh Documents");
+assert.match(shipmentRowSlice, /canViewShipmentDocuments \? `<button class="secondary-action" type="button" data-view-bol/, "customer and manager shipment rows should retain BOL");
+assert.match(shipmentRowSlice, /canViewShipmentDocuments \? `<button class="secondary-action" type="button" data-view-pod/, "customer and manager shipment rows should retain POD");
+assert.doesNotMatch(shipmentRowSlice, /<button class="secondary-action" type="button" data-view-bol="\$\{escapeHtml\(shipment\.id\)\}">\$\{t\("BOL"\)\}<\/button>\s*<button class="secondary-action" type="button" data-view-pod/, "staff shipment rows should not render unconditional BOL/POD actions");
 assert.match(app, /data-customer-filter="all">\$\{t\("Clear Filter"\)\}/, "filtered customer views should offer Clear Filter");
 assert.match(documentErrorSlice, /Documents could not be loaded\./, "document load failures should use a distinct customer-safe message");
 assert.match(documentErrorSlice, /Try Again/, "document load failures should offer retry");

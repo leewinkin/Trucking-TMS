@@ -4640,6 +4640,7 @@ function quoteRow(quote, options = {}) {
 
 function shipmentRow(shipment, options = {}) {
   const showActions = options.showActions !== false;
+  const canViewShipmentDocuments = isCustomerUser() || canManageCarrierInvoices();
   const priceLabel = customerPriceLabel();
   const carrierLabel = shipmentCarrierLabel(shipment);
   const statusPill = isCustomerUser()
@@ -4662,8 +4663,8 @@ function shipmentRow(shipment, options = {}) {
         <div class="row-actions">
           <button class="secondary-action" type="button" data-track-shipment="${escapeHtml(shipment.id)}">${t("Track")}</button>
           ${!isCustomerUser() && canManageCarrierInvoices() ? `<button class="secondary-action" type="button" data-sync-carrier-documents="${escapeHtml(shipment.id)}">${t("Refresh Documents")}</button>` : ""}
-          <button class="secondary-action" type="button" data-view-bol="${escapeHtml(shipment.id)}">${t("BOL")}</button>
-          <button class="secondary-action" type="button" data-view-pod="${escapeHtml(shipment.id)}">${t("POD")}</button>
+          ${canViewShipmentDocuments ? `<button class="secondary-action" type="button" data-view-bol="${escapeHtml(shipment.id)}">${t("BOL")}</button>` : ""}
+          ${canViewShipmentDocuments ? `<button class="secondary-action" type="button" data-view-pod="${escapeHtml(shipment.id)}">${t("POD")}</button>` : ""}
         </div>
       ` : ""}
     </article>
