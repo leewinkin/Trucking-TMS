@@ -10,6 +10,13 @@ import {
   internalOrganizationName,
   migrateJsonOrganizations
 } from "./server/migrations/organizations.js";
+import {
+  carrierShipmentBookingChannels,
+  carrierShipmentImportSources,
+  carrierShipmentMatchingStatuses,
+  carrierShipmentProviders,
+  normalizeCarrierShipmentValue
+} from "./server/carriers/carrier-shipment-normalizer.js";
 
 const __dirname = process.cwd();
 
@@ -750,6 +757,151 @@ async function createPostgresStore(dbUrl, { runOrganizationMigrationOnStartup = 
       const { rows } = await pool.query("SELECT * FROM shipments WHERE id = $1", [id]);
       return rows[0] ? mapShipmentRow(rows[0]) : null;
     },
+    async listCarrierShipments(filters = {}) {
+      const { rows } = await pool.query("SELECT * FROM carrier_shipments ORDER BY imported_at DESC, last_provider_update DESC NULLS LAST");
+      return rows.map(mapCarrierShipmentRow).filter((shipment) => carrierShipmentMatchesFilters(shipment, filters));
+    },
+    async getCarrierShipment(id) {
+      const { rows } = await pool.query("SELECT * FROM carrier_shipments WHERE id = $1", [id]);
+      return rows[0] ? mapCarrierShipmentRow(rows[0]) : null;
+    },
+    async upsertCarrierShipments(shipments) {
+      const summary = { created: 0, updated: 0, skipped: 0 };
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        for (const input of shipments) {
+          const record = normalizeCarrierShipmentRecord(input);
+          if (!record.provider || !record.externalShipmentId) {
+            summary.skipped += 1;
+            continue;
+          }
+          const result = await client.query(
+            `INSERT INTO carrier_shipments
+             (id, provider, import_source, booking_channel, booking_channel_evidence, linked_shipment_id, customer_id, matching_status, external_shipment_id, entity_id, transaction_id, confirmation_number, reference_number, pro_number, bol_number, origin, destination, carrier_name, service, status, carrier_cost, raw_provider_record, imported_at, last_provider_update, updated_at)
+             VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb, $17::jsonb, $18, $19, $20, $21, $22::jsonb, $23, $24, $25)
+             ON CONFLICT (provider, external_shipment_id)
+             DO UPDATE SET
+               import_source = EXCLUDED.import_source,
+               booking_channel = EXCLUDED.booking_channel,
+               booking_channel_evidence = EXCLUDED.booking_channel_evidence,
+               linked_shipment_id = EXCLUDED.linked_shipment_id,
+               customer_id = EXCLUDED.customer_id,
+               matching_status = EXCLUDED.matching_status,
+               entity_id = EXCLUDED.entity_id,
+               transaction_id = EXCLUDED.transaction_id,
+               confirmation_number = EXCLUDED.confirmation_number,
+               reference_number = EXCLUDED.reference_number,
+               pro_number = EXCLUDED.pro_number,
+               bol_number = EXCLUDED.bol_number,
+               origin = EXCLUDED.origin,
+               destination = EXCLUDED.destination,
+               carrier_name = EXCLUDED.carrier_name,
+               service = EXCLUDED.service,
+               status = EXCLUDED.status,
+               carrier_cost = EXCLUDED.carrier_cost,
+               raw_provider_record = EXCLUDED.raw_provider_record,
+               last_provider_update = EXCLUDED.last_provider_update,
+               updated_at = EXCLUDED.updated_at
+             RETURNING (xmax = 0) AS inserted`,
+            [
+              record.id || createId("cship"),
+              record.provider,
+              record.importSource,
+              record.bookingChannel,
+              JSON.stringify(record.bookingChannelEvidence || {}),
+              record.linkedShipmentId || null,
+              record.customerId || null,
+              record.matchingStatus,
+              record.externalShipmentId,
+              record.entityId || null,
+              record.transactionId || null,
+              record.confirmationNumber || "",
+              record.referenceNumber || "",
+              record.proNumber || "",
+              record.bolNumber || "",
+              JSON.stringify(record.origin || {}),
+              JSON.stringify(record.destination || {}),
+              record.carrierName || "",
+              record.service || "",
+              record.status || "",
+              record.carrierCost || 0,
+              JSON.stringify(record.rawProviderRecord || {}),
+              record.importedAt || nowIso(),
+              record.lastProviderUpdate || null,
+              nowIso()
+            ]
+          );
+          if (result.rows[0]?.inserted) summary.created += 1;
+          else summary.updated += 1;
+        }
+        await client.query("COMMIT");
+        return summary;
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+    async updateCarrierShipment(id, patch) {
+      const existing = await this.getCarrierShipment(id);
+      if (!existing) {
+        return null;
+      }
+      const record = normalizeCarrierShipmentRecord({ ...existing, ...patch, id: existing.id });
+      const result = await pool.query(
+        `UPDATE carrier_shipments
+         SET import_source = $2,
+             booking_channel = $3,
+             booking_channel_evidence = $4::jsonb,
+             linked_shipment_id = $5,
+             customer_id = $6,
+             matching_status = $7,
+             entity_id = $8,
+             transaction_id = $9,
+             confirmation_number = $10,
+             reference_number = $11,
+             pro_number = $12,
+             bol_number = $13,
+             origin = $14::jsonb,
+             destination = $15::jsonb,
+             carrier_name = $16,
+             service = $17,
+             status = $18,
+             carrier_cost = $19,
+             raw_provider_record = $20::jsonb,
+             last_provider_update = $21,
+             updated_at = $22
+         WHERE id = $1
+         RETURNING *`,
+        [
+          id,
+          record.importSource,
+          record.bookingChannel,
+          JSON.stringify(record.bookingChannelEvidence || {}),
+          record.linkedShipmentId || null,
+          record.customerId || null,
+          record.matchingStatus,
+          record.entityId || null,
+          record.transactionId || null,
+          record.confirmationNumber || "",
+          record.referenceNumber || "",
+          record.proNumber || "",
+          record.bolNumber || "",
+          JSON.stringify(record.origin || {}),
+          JSON.stringify(record.destination || {}),
+          record.carrierName || "",
+          record.service || "",
+          record.status || "",
+          record.carrierCost || 0,
+          JSON.stringify(record.rawProviderRecord || {}),
+          record.lastProviderUpdate || null,
+          nowIso()
+        ]
+      );
+      return result.rows[0] ? mapCarrierShipmentRow(result.rows[0]) : null;
+    },
     async createShipment(payload) {
       const client = await pool.connect();
       try {
@@ -1358,6 +1510,33 @@ async function ensureSchema(pool) {
       carrier_shipment jsonb NOT NULL,
       created_at timestamptz NOT NULL DEFAULT now()
     )`,
+    `CREATE TABLE IF NOT EXISTS carrier_shipments (
+      id text PRIMARY KEY,
+      provider text NOT NULL CHECK (provider IN ('mothership', 'priority1', 'speedship')),
+      import_source text NOT NULL DEFAULT 'provider_import' CHECK (import_source IN ('tms_created', 'provider_import', 'manual_import')),
+      booking_channel text NOT NULL DEFAULT 'unknown' CHECK (booking_channel IN ('tms_api', 'provider_portal', 'external_api', 'unknown')),
+      booking_channel_evidence jsonb NOT NULL DEFAULT '{}'::jsonb,
+      linked_shipment_id text REFERENCES shipments(id),
+      customer_id text REFERENCES customers(id),
+      matching_status text NOT NULL DEFAULT 'unmatched' CHECK (matching_status IN ('matched', 'manual', 'unmatched', 'conflict')),
+      external_shipment_id text NOT NULL,
+      entity_id text,
+      transaction_id text,
+      confirmation_number text NOT NULL DEFAULT '',
+      reference_number text NOT NULL DEFAULT '',
+      pro_number text NOT NULL DEFAULT '',
+      bol_number text NOT NULL DEFAULT '',
+      origin jsonb NOT NULL DEFAULT '{}'::jsonb,
+      destination jsonb NOT NULL DEFAULT '{}'::jsonb,
+      carrier_name text NOT NULL DEFAULT '',
+      service text NOT NULL DEFAULT '',
+      status text NOT NULL DEFAULT '',
+      carrier_cost numeric NOT NULL DEFAULT 0,
+      raw_provider_record jsonb NOT NULL DEFAULT '{}'::jsonb,
+      imported_at timestamptz NOT NULL DEFAULT now(),
+      last_provider_update timestamptz,
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )`,
     `CREATE TABLE IF NOT EXISTS tracking_events (
       id text PRIMARY KEY,
       shipment_id text NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
@@ -1442,6 +1621,9 @@ async function ensureSchema(pool) {
     "CREATE INDEX IF NOT EXISTS idx_shipments_customer_id ON shipments(customer_id)",
     "CREATE INDEX IF NOT EXISTS idx_shipments_customer_organization_id ON shipments(customer_organization_id)",
     "CREATE INDEX IF NOT EXISTS idx_shipments_quote_id ON shipments(quote_id)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_carrier_shipments_provider_external ON carrier_shipments(provider, external_shipment_id)",
+    "CREATE INDEX IF NOT EXISTS idx_carrier_shipments_provider ON carrier_shipments(provider)",
+    "CREATE INDEX IF NOT EXISTS idx_carrier_shipments_linked_shipment_id ON carrier_shipments(linked_shipment_id)",
     "CREATE INDEX IF NOT EXISTS idx_tracking_events_shipment_id ON tracking_events(shipment_id)",
     "CREATE INDEX IF NOT EXISTS idx_carrier_documents_shipment_id ON carrier_documents(shipment_id)",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_carrier_documents_provider_key ON carrier_documents(provider, external_document_key)",
@@ -2460,6 +2642,64 @@ async function createJsonStore(filePath, { runOrganizationMigrationOnStartup = f
       const db = await readJsonDb(filePath);
       return db.shipments.find((item) => item.id === id) || null;
     },
+    async listCarrierShipments(filters = {}) {
+      const db = await readJsonDb(filePath);
+      return db.carrierShipments
+        .slice()
+        .sort((left, right) => String(right.importedAt || "").localeCompare(String(left.importedAt || "")))
+        .filter((shipment) => carrierShipmentMatchesFilters(shipment, filters));
+    },
+    async getCarrierShipment(id) {
+      const db = await readJsonDb(filePath);
+      const record = db.carrierShipments.find((item) => item.id === id);
+      return record ? normalizeCarrierShipmentRecord(record) : null;
+    },
+    async upsertCarrierShipments(shipments) {
+      const db = await readJsonDb(filePath);
+      const summary = { created: 0, updated: 0, skipped: 0 };
+      for (const input of shipments) {
+        const record = normalizeCarrierShipmentRecord(input);
+        if (!record.provider || !record.externalShipmentId) {
+          summary.skipped += 1;
+          continue;
+        }
+        const existing = db.carrierShipments.find((item) => item.provider === record.provider && item.externalShipmentId === record.externalShipmentId);
+        if (existing) {
+          Object.assign(existing, {
+            ...record,
+            id: existing.id,
+            importedAt: existing.importedAt,
+            updatedAt: nowIso()
+          });
+          summary.updated += 1;
+        } else {
+          db.carrierShipments.push({
+            ...record,
+            id: record.id || createId("cship"),
+            importedAt: record.importedAt || nowIso(),
+            updatedAt: nowIso()
+          });
+          summary.created += 1;
+        }
+      }
+      await writeJsonDb(filePath, db);
+      return summary;
+    },
+    async updateCarrierShipment(id, patch) {
+      const db = await readJsonDb(filePath);
+      const index = db.carrierShipments.findIndex((item) => item.id === id);
+      if (index < 0) {
+        return null;
+      }
+      const record = normalizeCarrierShipmentRecord({ ...db.carrierShipments[index], ...patch, id });
+      db.carrierShipments[index] = {
+        ...record,
+        importedAt: db.carrierShipments[index].importedAt || record.importedAt || nowIso(),
+        updatedAt: nowIso()
+      };
+      await writeJsonDb(filePath, db);
+      return db.carrierShipments[index];
+    },
     async createShipment(payload) {
       const db = await readJsonDb(filePath);
       const quote = db.quotes.find((item) => item.id === payload.quoteId);
@@ -2845,6 +3085,7 @@ function createSeedDb() {
     sessions: [],
     quotes: [],
     shipments: [],
+    carrierShipments: [],
     invoices: [],
     carrierDocuments: [],
     trackingEvents: []
@@ -3141,6 +3382,36 @@ function mapShipmentRow(row) {
   };
 }
 
+function mapCarrierShipmentRow(row) {
+  return normalizeCarrierShipmentRecord({
+    id: row.id,
+    provider: row.provider,
+    importSource: row.import_source,
+    bookingChannel: row.booking_channel,
+    bookingChannelEvidence: row.booking_channel_evidence || {},
+    linkedShipmentId: row.linked_shipment_id || null,
+    customerId: row.customer_id || null,
+    matchingStatus: row.matching_status,
+    externalShipmentId: row.external_shipment_id,
+    entityId: row.entity_id || "",
+    transactionId: row.transaction_id || "",
+    confirmationNumber: row.confirmation_number || "",
+    referenceNumber: row.reference_number || "",
+    proNumber: row.pro_number || "",
+    bolNumber: row.bol_number || "",
+    origin: row.origin || {},
+    destination: row.destination || {},
+    carrierName: row.carrier_name || "",
+    service: row.service || "",
+    status: row.status || "",
+    carrierCost: row.carrier_cost || 0,
+    rawProviderRecord: row.raw_provider_record || {},
+    importedAt: row.imported_at,
+    lastProviderUpdate: row.last_provider_update || null,
+    updatedAt: row.updated_at
+  });
+}
+
 function mapInvoiceRow(row) {
   return {
     id: row.id,
@@ -3300,6 +3571,7 @@ function normalizeJsonDb(db) {
     addressBookEntries: Array.isArray(db.addressBookEntries) ? db.addressBookEntries.map(normalizeAddressBookRecord) : [],
     carrierPreferences: Array.isArray(db.carrierPreferences) ? db.carrierPreferences.map(normalizeCarrierPreferenceRecord) : [],
     carrierDocuments: Array.isArray(db.carrierDocuments) ? db.carrierDocuments.map(normalizeCarrierDocumentRecord) : [],
+    carrierShipments: Array.isArray(db.carrierShipments) ? db.carrierShipments.map(normalizeCarrierShipmentRecord) : [],
     quotes: Array.isArray(db.quotes) ? db.quotes.map(normalizeQuoteRecord) : [],
     shipments: Array.isArray(db.shipments) ? db.shipments : [],
     invoices: Array.isArray(db.invoices) ? db.invoices : [],
@@ -3453,6 +3725,71 @@ function carrierDocumentMatchesFilters(document, filters = {}) {
   if (filters.customerId && document.customerId !== filters.customerId) return false;
   if (filters.matched === "matched" && !document.shipmentId) return false;
   if (filters.matched === "unmatched" && document.shipmentId) return false;
+  return true;
+}
+
+function normalizeCarrierShipmentRecord(shipment) {
+  const provider = normalizeCarrierShipmentValue(
+    shipment?.provider,
+    carrierShipmentProviders,
+    ""
+  );
+  const importSource = normalizeCarrierShipmentValue(
+    shipment?.importSource || shipment?.import_source,
+    carrierShipmentImportSources,
+    "provider_import"
+  );
+  const bookingChannel = normalizeCarrierShipmentValue(
+    shipment?.bookingChannel || shipment?.booking_channel,
+    carrierShipmentBookingChannels,
+    "unknown"
+  );
+  const matchingStatus = normalizeCarrierShipmentValue(
+    shipment?.matchingStatus || shipment?.matching_status,
+    carrierShipmentMatchingStatuses,
+    "unmatched"
+  );
+  const origin = shipment?.origin && typeof shipment.origin === "object" ? shipment.origin : {};
+  const destination = shipment?.destination && typeof shipment.destination === "object" ? shipment.destination : {};
+  const rawProviderRecord = shipment?.rawProviderRecord || shipment?.raw_provider_record || {};
+  return {
+    id: String(shipment?.id || "").trim(),
+    provider,
+    importSource,
+    bookingChannel,
+    bookingChannelEvidence: shipment?.bookingChannelEvidence || shipment?.booking_channel_evidence || {},
+    linkedShipmentId: shipment?.linkedShipmentId || shipment?.linked_shipment_id || null,
+    customerId: shipment?.customerId || shipment?.customer_id || null,
+    matchingStatus,
+    externalShipmentId: String(shipment?.externalShipmentId || shipment?.external_shipment_id || "").trim(),
+    entityId: String(shipment?.entityId || shipment?.entity_id || "").trim(),
+    transactionId: String(shipment?.transactionId || shipment?.transaction_id || "").trim(),
+    confirmationNumber: String(shipment?.confirmationNumber || shipment?.confirmation_number || "").trim(),
+    referenceNumber: String(shipment?.referenceNumber || shipment?.reference_number || "").trim(),
+    proNumber: String(shipment?.proNumber || shipment?.pro_number || "").trim(),
+    bolNumber: String(shipment?.bolNumber || shipment?.bol_number || "").trim(),
+    origin,
+    destination,
+    carrierName: String(shipment?.carrierName || shipment?.carrier_name || "").trim(),
+    service: String(shipment?.service || "").trim(),
+    status: String(shipment?.status || "").trim(),
+    carrierCost: Number(shipment?.carrierCost ?? shipment?.carrier_cost ?? 0) || 0,
+    rawProviderRecord,
+    importedAt: shipment?.importedAt || shipment?.imported_at || nowIso(),
+    lastProviderUpdate: shipment?.lastProviderUpdate || shipment?.last_provider_update || null,
+    updatedAt: shipment?.updatedAt || shipment?.updated_at || nowIso()
+  };
+}
+
+function carrierShipmentMatchesFilters(shipment, filters = {}) {
+  if (filters.provider && filters.provider !== "all" && shipment.provider !== filters.provider) return false;
+  if (filters.importSource && filters.importSource !== "all" && shipment.importSource !== filters.importSource) return false;
+  if (filters.bookingChannel && filters.bookingChannel !== "all" && shipment.bookingChannel !== filters.bookingChannel) return false;
+  if (filters.matchingStatus && filters.matchingStatus !== "all" && shipment.matchingStatus !== filters.matchingStatus) return false;
+  if (filters.customerId && shipment.customerId !== filters.customerId) return false;
+  if (filters.linkedShipmentId && shipment.linkedShipmentId !== filters.linkedShipmentId) return false;
+  if (filters.matched === "matched" && !shipment.linkedShipmentId) return false;
+  if (filters.matched === "unmatched" && shipment.linkedShipmentId) return false;
   return true;
 }
 

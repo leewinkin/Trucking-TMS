@@ -176,6 +176,28 @@ try {
   assert.equal(adminDocuments.body.documents.length, 5);
   assert.equal(Object.hasOwn(adminDocuments.body.documents[0], "providerReference"), true);
   assert.equal(Object.hasOwn(adminDocuments.body.documents[0], "rawMetadata"), true);
+  const adminCarrierShipments = await admin.request("/api/carrier-shipments");
+  assert.equal(adminCarrierShipments.status, 200, "admin can list imported carrier shipments");
+  const operationsCarrierShipments = await operations.request("/api/carrier-shipments");
+  assert.equal(operationsCarrierShipments.status, 200, "sub-admin/operations can list imported carrier shipments");
+  const staffCarrierShipments = await staff.request("/api/carrier-shipments");
+  assert.equal(staffCarrierShipments.status, 403, "staff must not access imported carrier shipment management APIs");
+  const customerCarrierShipments = await customer.request("/api/carrier-shipments");
+  assert.equal(customerCarrierShipments.status, 403, "customers must not access imported carrier shipment management APIs");
+  const carrierShipmentSync = await admin.request("/api/carrier-shipments/sync", {
+    method: "POST",
+    body: { providers: ["mothership", "priority1", "speedship"], syncDocuments: true }
+  });
+  assert.equal(carrierShipmentSync.status, 200);
+  assert.deepEqual(Object.keys(carrierShipmentSync.body.synced).sort(), ["mothership", "priority1", "speedship"]);
+  assert.equal(carrierShipmentSync.body.synced.mothership.status, "unsupported");
+  assert.equal(carrierShipmentSync.body.synced.priority1.status, "unsupported");
+  assert.equal(carrierShipmentSync.body.synced.speedship.status, "unsupported");
+  assert.match(carrierShipmentSync.body.synced.mothership.message, /historical shipment list API contract is unavailable/i);
+  const staffCarrierShipmentSync = await staff.request("/api/carrier-shipments/sync", { method: "POST", body: {} });
+  assert.equal(staffCarrierShipmentSync.status, 403, "staff must not sync imported carrier shipments");
+  const customerCarrierShipmentSync = await customer.request("/api/carrier-shipments/sync", { method: "POST", body: {} });
+  assert.equal(customerCarrierShipmentSync.status, 403, "customers must not sync imported carrier shipments");
   const missingDocumentSync = await admin.request("/api/carrier-documents/sync", {
     method: "POST",
     body: { shipmentId: "missing_ship", providers: ["mothership", "mothership", "priority1"] }

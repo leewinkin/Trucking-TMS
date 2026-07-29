@@ -23,6 +23,13 @@ import {
 import { normalizeMothershipDocuments, normalizeMothershipInvoiceDocument } from "./server/carriers/mothership-documents.js";
 import { normalizeSpeedshipDocuments, speedshipCapabilitySummary } from "./server/carriers/speedship-documents.js";
 import { normalizePriority1InvoiceRecords, priority1DocumentCapabilitySummary, priority1InvoiceDocument, priority1InvoiceRows, priority1PaginationState } from "./server/carriers/priority1-documents.js";
+import { fetchMothershipHistoricalShipments } from "./server/carriers/mothership-shipments.js";
+import { fetchPriority1HistoricalShipments } from "./server/carriers/priority1-shipments.js";
+import { fetchSpeedshipHistoricalShipments } from "./server/carriers/speedship-shipments.js";
+import {
+  carrierShipmentProviders,
+  summarizeCarrierShipmentSync
+} from "./server/carriers/carrier-shipment-normalizer.js";
 import { buildAllowedDocumentHosts, fetchSecureDocument, validateDocumentDownloadUrl } from "./server/document-download-security.js";
 
 const __dirname = process.cwd();
@@ -526,6 +533,36 @@ async function handleApi(req, res, url) {
     const input = await readJson(req);
     const summary = await syncCarrierDocuments(input || {});
     sendJson(res, 200, { synced: summary });
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/carrier-shipments") {
+    requireManager(currentUser);
+    const filters = {
+      provider: url.searchParams.get("provider") || "",
+      importSource: url.searchParams.get("importSource") || "",
+      bookingChannel: url.searchParams.get("bookingChannel") || "",
+      matchingStatus: url.searchParams.get("matchingStatus") || "",
+      customerId: url.searchParams.get("customerId") || "",
+      linkedShipmentId: url.searchParams.get("linkedShipmentId") || ""
+    };
+    const carrierShipments = await store.listCarrierShipments(filters);
+    sendJson(res, 200, { carrierShipments: await internalCarrierShipments(carrierShipments) });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/carrier-shipments/sync") {
+    requireManager(currentUser);
+    const input = await readJson(req);
+    const summary = await syncCarrierShipments(input || {});
+    sendJson(res, 200, { synced: summary });
+    return;
+  }
+
+  const carrierShipmentActionMatch = url.pathname.match(/^\/api\/carrier-shipments\/([^/]+)\/([^/]+)$/);
+  if (carrierShipmentActionMatch && req.method === "POST") {
+    requireManager(currentUser);
+    await handleCarrierShipmentAction(res, carrierShipmentActionMatch[1], carrierShipmentActionMatch[2], currentUser, await readJson(req));
     return;
   }
 
@@ -1060,6 +1097,170 @@ async function syncCarrierDocumentsForShipment(provider, shipment) {
     });
     return { ...emptySyncSummary(provider), failed: 1, message: "sync failed" };
   }
+}
+
+async function syncCarrierShipments(input = {}) {
+  const providers = normalizeCarrierShipmentProviders(input.providers);
+  const summary = {};
+  for (const provider of providers) {
+    summary[provider] = await syncCarrierShipmentProvider(provider, input);
+  }
+  return summary;
+}
+
+async function syncCarrierShipmentProvider(provider, input = {}) {
+  try {
+    const response = await fetchCarrierShipmentProvider(provider, input);
+    if (response.capability?.status === "unsupported") {
+      return response.capability;
+    }
+    const shipments = Array.isArray(response.shipments) ? response.shipments : [];
+    const upsertSummary = shipments.length ? await store.upsertCarrierShipments(shipments) : { created: 0, updated: 0, skipped: 0 };
+    return summarizeCarrierShipmentSync(provider, shipments, upsertSummary);
+  } catch (error) {
+    return {
+      provider,
+      status: "failed",
+      fetched: 0,
+      created: 0,
+      updated: 0,
+      skipped: 0,
+      matched: 0,
+      unmatched: 0,
+      conflicts: 0,
+      failed: 1,
+      message: "Historical shipment sync failed."
+    };
+  }
+}
+
+async function fetchCarrierShipmentProvider(provider, input) {
+  const options = {
+    fromDate: input.fromDate || "",
+    toDate: input.toDate || "",
+    modifiedSince: input.modifiedSince || "",
+    syncDocuments: Boolean(input.syncDocuments)
+  };
+  if (provider === "mothership") return await fetchMothershipHistoricalShipments(options);
+  if (provider === "priority1") return await fetchPriority1HistoricalShipments(options);
+  if (provider === "speedship") return await fetchSpeedshipHistoricalShipments(options);
+  return { provider, shipments: [] };
+}
+
+function normalizeCarrierShipmentProviders(value) {
+  const requested = Array.isArray(value) && value.length ? value : Array.from(carrierShipmentProviders);
+  return Array.from(new Set(
+    requested
+      .map((provider) => String(provider || "").trim().toLowerCase())
+      .filter((provider) => carrierShipmentProviders.has(provider))
+  ));
+}
+
+async function handleCarrierShipmentAction(res, id, action, currentUser, input = {}) {
+  const carrierShipment = await store.getCarrierShipment(id);
+  if (!carrierShipment) {
+    sendJson(res, 404, { error: "CARRIER_SHIPMENT_NOT_FOUND", message: "Carrier shipment was not found." });
+    return;
+  }
+  const manualEvidence = {
+    ...carrierShipment.bookingChannelEvidence,
+    manualAction: action,
+    confirmedByUserId: currentUser.id,
+    confirmedAt: new Date().toISOString()
+  };
+  if (action === "link") {
+    const shipmentId = requiredString(input.linkedShipmentId || input.shipmentId, "linkedShipmentId");
+    const shipment = await store.getShipment(shipmentId);
+    if (!shipment) {
+      sendJson(res, 404, { error: "SHIPMENT_NOT_FOUND", message: "Shipment was not found." });
+      return;
+    }
+    const updated = await store.updateCarrierShipment(id, {
+      linkedShipmentId: shipment.id,
+      customerId: shipment.customerId,
+      matchingStatus: "manual",
+      bookingChannelEvidence: {
+        ...manualEvidence,
+        linkedShipmentId: shipment.id,
+        linkedCustomerId: shipment.customerId
+      }
+    });
+    sendJson(res, 200, { carrierShipment: await internalCarrierShipment(updated) });
+    return;
+  }
+  if (action === "confirm-provider-portal") {
+    const updated = await store.updateCarrierShipment(id, {
+      bookingChannel: "provider_portal",
+      bookingChannelEvidence: {
+        ...manualEvidence,
+        source: "manual_admin_confirmation",
+        reason: String(input.reason || "").trim()
+      }
+    });
+    sendJson(res, 200, { carrierShipment: await internalCarrierShipment(updated) });
+    return;
+  }
+  if (action === "set-source-unknown") {
+    const updated = await store.updateCarrierShipment(id, {
+      bookingChannel: "unknown",
+      bookingChannelEvidence: manualEvidence
+    });
+    sendJson(res, 200, { carrierShipment: await internalCarrierShipment(updated) });
+    return;
+  }
+  if (action === "unlink") {
+    const updated = await store.updateCarrierShipment(id, {
+      linkedShipmentId: null,
+      customerId: null,
+      matchingStatus: "unmatched",
+      bookingChannelEvidence: manualEvidence
+    });
+    sendJson(res, 200, { carrierShipment: await internalCarrierShipment(updated) });
+    return;
+  }
+  if (action === "sync-documents") {
+    if (!carrierShipment.linkedShipmentId) {
+      sendJson(res, 400, { error: "SHIPMENT_NOT_LINKED", message: "Link this provider shipment to a local shipment before syncing documents." });
+      return;
+    }
+    const synced = await syncCarrierDocuments({
+      shipmentId: carrierShipment.linkedShipmentId,
+      providers: [carrierShipment.provider]
+    });
+    sendJson(res, 200, { synced });
+    return;
+  }
+  sendJson(res, 404, { error: "NOT_FOUND", message: "Carrier shipment action was not found." });
+}
+
+async function internalCarrierShipments(carrierShipments) {
+  const shipments = await store.listShipments();
+  const customers = await store.listCustomers();
+  const shipmentById = new Map(shipments.map((shipment) => [shipment.id, shipment]));
+  const customerById = new Map(customers.map((customer) => [customer.id, customer]));
+  return carrierShipments.map((record) => internalCarrierShipment(record, shipmentById, customerById));
+}
+
+async function internalCarrierShipment(record, shipmentById = null, customerById = null) {
+  const shipment = record?.linkedShipmentId
+    ? shipmentById?.get?.(record.linkedShipmentId) || await store.getShipment(record.linkedShipmentId)
+    : null;
+  const customer = record?.customerId
+    ? customerById?.get?.(record.customerId) || await store.getCustomer(record.customerId)
+    : null;
+  return {
+    ...record,
+    linkedShipment: shipment ? {
+      id: shipment.id,
+      confirmationNumber: shipment.confirmationNumber,
+      referenceNumber: shipment.referenceNumber || "",
+      status: shipment.status
+    } : null,
+    linkedCustomer: customer ? {
+      id: customer.id,
+      companyName: customer.companyName
+    } : null
+  };
 }
 
 async function downloadCarrierDocument(res, id, currentUser) {

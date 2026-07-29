@@ -839,6 +839,60 @@ const translations = {
     "Sync All Documents": "同步全部文件",
     "Refresh Documents": "刷新文件",
     "Documents synchronized.": "文件已同步。",
+    "Imported Carrier Shipments": "导入的承运商货件",
+    "Historical shipments imported from configured carrier platforms.": "从已配置承运商平台导入的历史货件。",
+    "Sync Historical Shipments": "同步历史货件",
+    "Platform": "平台",
+    "Booking source": "预约来源",
+    "All Providers": "全部平台",
+    "All Sources": "全部来源",
+    "Booked via TMS": "通过 TMS 预约",
+    "Provider Portal": "承运商门户",
+    "External API": "外部 API",
+    "Source Unknown": "来源未知",
+    "No imported carrier shipments yet.": "尚未导入承运商货件。",
+    "No verified evidence": "暂无已验证依据",
+    "Imported": "已导入",
+    "TMS-created": "TMS 创建",
+    "Provider import": "平台导入",
+    "Manual import": "手动导入",
+    "Manual": "手动",
+    "Conflict": "冲突",
+    "Unknown carrier": "未知承运商",
+    "Unknown service": "未知服务",
+    "Unknown status": "未知状态",
+    "Unknown origin": "未知起点",
+    "Unknown destination": "未知终点",
+    "Import source": "导入来源",
+    "Booking channel": "预约渠道",
+    "Booking evidence": "预约依据",
+    "Matching status": "匹配状态",
+    "Linked local shipment": "关联本地货件",
+    "Linked customer": "关联客户",
+    "External shipment ID": "外部货件 ID",
+    "Entity/transaction ID": "实体/交易 ID",
+    "confirmation number": "确认号",
+    "reference number": "参考号",
+    "origin/destination": "起点/终点",
+    "carrier": "承运商",
+    "service": "服务",
+    "status": "状态",
+    "carrier cost": "承运商成本",
+    "imported date": "导入日期",
+    "last provider update": "平台最后更新",
+    "Not linked": "未关联",
+    "Link to Local Shipment": "关联本地货件",
+    "Confirm Provider Portal Booking": "确认承运商门户预约",
+    "Set Source Unknown": "设为来源未知",
+    "Unlink": "取消关联",
+    "Historical shipment sync failed.": "历史货件同步失败。",
+    "Enter local shipment ID to link.": "请输入要关联的本地货件 ID。",
+    "Optional reason for provider portal confirmation.": "可填写确认承运商门户预约的原因。",
+    "Carrier shipment updated.": "承运商货件已更新。",
+    "Carrier shipment could not be updated.": "无法更新承运商货件。",
+    "unsupported": "不支持",
+    "failed": "失败",
+    "imported": "已导入",
     "Document": "文档",
     "Loading proof of delivery...": "正在加载送货回单...",
     "Loading bill of lading...": "正在加载提单...",
@@ -1197,6 +1251,7 @@ const state = {
   shipments: [],
   invoices: [],
   carrierDocuments: [],
+  carrierShipments: [],
   currentQuote: null,
   quoteLoading: false,
   quoteResultsLimit: 12,
@@ -1216,6 +1271,10 @@ const state = {
     quotes: "all",
     shipments: "all",
     invoices: "all"
+  },
+  carrierShipmentFilters: {
+    provider: "all",
+    bookingChannel: "all"
   },
   staffFilterRanges: {
     quotes: "all",
@@ -1469,6 +1528,18 @@ function wireNavigation() {
     const staffClearAllButton = event.target.closest("[data-staff-clear-all-filters]");
     if (staffClearAllButton) {
       clearAllStaffFilters(staffClearAllButton.dataset.staffClearAllFilters);
+      return;
+    }
+
+    const carrierShipmentSyncButton = event.target.closest("[data-sync-carrier-shipments]");
+    if (carrierShipmentSyncButton) {
+      syncCarrierShipments();
+      return;
+    }
+
+    const carrierShipmentActionButton = event.target.closest("[data-carrier-shipment-action]");
+    if (carrierShipmentActionButton) {
+      handleCarrierShipmentAction(carrierShipmentActionButton.dataset.carrierShipmentId, carrierShipmentActionButton.dataset.carrierShipmentAction);
       return;
     }
 
@@ -1786,6 +1857,12 @@ function wireForms() {
       state.staffDashboardRange = staffRange.value || "last7";
       renderDashboard();
     }
+    const carrierShipmentFilter = event.target.closest("[data-carrier-shipment-filter]");
+    if (carrierShipmentFilter) {
+      state.carrierShipmentFilters[carrierShipmentFilter.dataset.carrierShipmentFilter] = carrierShipmentFilter.value || "all";
+      renderShipments();
+      return;
+    }
     const customerManagementFilter = event.target.closest("[data-customer-management-filter]");
     if (customerManagementFilter) {
       state.customerManagement[customerManagementFilter.dataset.customerManagementFilter] = customerManagementFilter.value;
@@ -2086,7 +2163,8 @@ async function refreshAll(options = {}) {
     const internalUsersRequest = canManageInternalUsers() ? api("/api/internal-users") : Promise.resolve({ users: [] });
     const invoicesRequest = canManageCarrierInvoices() ? api("/api/invoices") : Promise.resolve({ invoices: [] });
     const carrierDocumentsRequest = canManageCarrierInvoices() ? api("/api/carrier-documents") : Promise.resolve({ documents: [] });
-    const [health, customers, tariffs, addressBook, quotes, shipments, invoices, internalUsers, carrierDocuments] = await Promise.all([
+    const carrierShipmentsRequest = canManageCarrierInvoices() ? api("/api/carrier-shipments") : Promise.resolve({ carrierShipments: [] });
+    const [health, customers, tariffs, addressBook, quotes, shipments, invoices, internalUsers, carrierDocuments, carrierShipments] = await Promise.all([
       api("/api/health"),
       api("/api/customers"),
       api("/api/tariffs"),
@@ -2095,7 +2173,8 @@ async function refreshAll(options = {}) {
       api("/api/shipments"),
       invoicesRequest,
       internalUsersRequest,
-      carrierDocumentsRequest
+      carrierDocumentsRequest,
+      carrierShipmentsRequest
     ]);
 
     state.health = health;
@@ -2113,6 +2192,7 @@ async function refreshAll(options = {}) {
     state.shipments = shipments.shipments;
     state.invoices = invoices.invoices;
     state.carrierDocuments = carrierDocuments.documents || [];
+    state.carrierShipments = carrierShipments.carrierShipments || [];
     state.lastSuccessfulRefreshAt = new Date().toISOString();
     if (state.modal?.type === "customerManagement") {
       if (state.customerManagement.drawerMode === "view") {
@@ -2671,6 +2751,61 @@ async function syncCarrierDocuments(shipmentId = "") {
   } catch (error) {
     showToast(error.message || t("Documents could not be loaded."), true);
   }
+}
+
+async function syncCarrierShipments() {
+  if (!canManageCarrierInvoices()) {
+    return;
+  }
+  try {
+    const response = await api("/api/carrier-shipments/sync", {
+      method: "POST",
+      body: {
+        providers: ["mothership", "priority1", "speedship"],
+        syncDocuments: true
+      }
+    });
+    showToast(carrierShipmentSyncSummaryText(response.synced || {}));
+    await refreshAll();
+  } catch (error) {
+    showToast(error.message || t("Historical shipment sync failed."), true);
+  }
+}
+
+async function handleCarrierShipmentAction(id, action) {
+  if (!canManageCarrierInvoices() || !id || !action) {
+    return;
+  }
+  const body = {};
+  if (action === "link") {
+    const linkedShipmentId = window.prompt(t("Enter local shipment ID to link."));
+    if (!linkedShipmentId) return;
+    body.linkedShipmentId = linkedShipmentId.trim();
+  }
+  if (action === "confirm-provider-portal") {
+    body.reason = window.prompt(t("Optional reason for provider portal confirmation.")) || "";
+  }
+  try {
+    await api(`/api/carrier-shipments/${encodeURIComponent(id)}/${encodeURIComponent(action)}`, {
+      method: "POST",
+      body
+    });
+    showToast(t("Carrier shipment updated."));
+    await refreshAll();
+  } catch (error) {
+    showToast(error.message || t("Carrier shipment could not be updated."), true);
+  }
+}
+
+function carrierShipmentSyncSummaryText(summary = {}) {
+  const parts = ["mothership", "priority1", "speedship"].map((provider) => {
+    const item = summary?.[provider] || {};
+    const label = carrierShipmentProviderLabel(provider);
+    if (item.status === "unsupported") return `${label}: ${t("unsupported")}`;
+    if (item.status === "failed") return `${label}: ${t("failed")}`;
+    return `${label}: ${item.fetched || 0} ${t("imported")}`;
+  });
+  return parts.join(" • ");
 }
 
 function carrierInvoiceSyncSummaryText(summary = {}) {
@@ -4669,6 +4804,179 @@ function shipmentRow(shipment, options = {}) {
       ` : ""}
     </article>
   `;
+}
+
+function carrierShipmentManagementHtml() {
+  if (!canManageCarrierInvoices()) {
+    return "";
+  }
+  const filters = state.carrierShipmentFilters || { provider: "all", bookingChannel: "all" };
+  const shipments = filteredCarrierShipments();
+  return `
+    <section class="customer-card carrier-shipment-management" data-carrier-shipment-management>
+      <div class="section-heading">
+        <div>
+          <h3>${t("Imported Carrier Shipments")}</h3>
+          <p>${t("Historical shipments imported from configured carrier platforms.")}</p>
+        </div>
+        <button class="secondary-action" type="button" data-sync-carrier-shipments="">${t("Sync Historical Shipments")}</button>
+      </div>
+      <div class="filter-row">
+        <label>
+          ${t("Platform")}
+          <select data-carrier-shipment-filter="provider">
+            ${carrierShipmentProviderOptions(filters.provider)}
+          </select>
+        </label>
+        <label>
+          ${t("Booking source")}
+          <select data-carrier-shipment-filter="bookingChannel">
+            ${carrierShipmentBookingChannelOptions(filters.bookingChannel)}
+          </select>
+        </label>
+      </div>
+      <div class="carrier-shipment-list">
+        ${shipments.length
+          ? shipments.map(carrierShipmentRowHtml).join("")
+          : `<div class="empty-state">${escapeHtml(t("No imported carrier shipments yet."))}</div>`}
+      </div>
+    </section>
+  `;
+}
+
+function filteredCarrierShipments() {
+  const filters = state.carrierShipmentFilters || {};
+  return (state.carrierShipments || []).filter((shipment) => {
+    if (filters.provider && filters.provider !== "all" && shipment.provider !== filters.provider) return false;
+    if (filters.bookingChannel && filters.bookingChannel !== "all" && shipment.bookingChannel !== filters.bookingChannel) return false;
+    return true;
+  });
+}
+
+function carrierShipmentProviderOptions(active) {
+  return [
+    ["all", "All Providers"],
+    ["mothership", "Mothership"],
+    ["priority1", "Priority1"],
+    ["speedship", "SpeedShip"]
+  ].map(([value, label]) => `<option value="${value}" ${active === value ? "selected" : ""}>${t(label)}</option>`).join("");
+}
+
+function carrierShipmentBookingChannelOptions(active) {
+  return [
+    ["all", "All Sources"],
+    ["tms_api", "Booked via TMS"],
+    ["provider_portal", "Provider Portal"],
+    ["external_api", "External API"],
+    ["unknown", "Source Unknown"]
+  ].map(([value, label]) => `<option value="${value}" ${active === value ? "selected" : ""}>${t(label)}</option>`).join("");
+}
+
+function carrierShipmentRowHtml(shipment) {
+  const evidence = shipment.bookingChannelEvidence && Object.keys(shipment.bookingChannelEvidence).length
+    ? JSON.stringify(shipment.bookingChannelEvidence)
+    : t("No verified evidence");
+  const linkedShipment = shipment.linkedShipment
+    ? `${shipment.linkedShipment.confirmationNumber || shipment.linkedShipment.id} (${shipment.linkedShipment.status || t("unknown")})`
+    : t("Not linked");
+  const linkedCustomer = shipment.linkedCustomer?.companyName || shipment.customerId || t("Not linked");
+  return `
+    <article class="shipment-card carrier-shipment-row">
+      <div class="shipment-card__main">
+        <div>
+          <span class="pill">${escapeHtml(carrierShipmentProviderLabel(shipment.provider))}</span>
+          <span class="pill">${escapeHtml(carrierShipmentImportSourceLabel(shipment.importSource))}</span>
+          <span class="pill">${escapeHtml(carrierShipmentBookingChannelLabel(shipment.bookingChannel))}</span>
+          <span class="pill">${escapeHtml(carrierShipmentMatchingStatusLabel(shipment.matchingStatus))}</span>
+        </div>
+        <h4>${escapeHtml(shipment.carrierName || t("Unknown carrier"))}</h4>
+        <p>${escapeHtml(shipment.service || t("Unknown service"))} • ${escapeHtml(shipment.status || t("Unknown status"))}</p>
+        <p>${escapeHtml(formatCarrierShipmentLane(shipment))}</p>
+      </div>
+      <dl class="shipment-detail-grid">
+        ${carrierShipmentDetail("Provider", carrierShipmentProviderLabel(shipment.provider))}
+        ${carrierShipmentDetail("Import source", carrierShipmentImportSourceLabel(shipment.importSource))}
+        ${carrierShipmentDetail("Booking channel", carrierShipmentBookingChannelLabel(shipment.bookingChannel))}
+        ${carrierShipmentDetail("Booking evidence", evidence)}
+        ${carrierShipmentDetail("Matching status", carrierShipmentMatchingStatusLabel(shipment.matchingStatus))}
+        ${carrierShipmentDetail("Linked local shipment", linkedShipment)}
+        ${carrierShipmentDetail("Linked customer", linkedCustomer)}
+        ${carrierShipmentDetail("External shipment ID", shipment.externalShipmentId)}
+        ${carrierShipmentDetail("Entity/transaction ID", shipment.entityId || shipment.transactionId)}
+        ${carrierShipmentDetail("confirmation number", shipment.confirmationNumber)}
+        ${carrierShipmentDetail("reference number", shipment.referenceNumber)}
+        ${carrierShipmentDetail("PRO", shipment.proNumber)}
+        ${carrierShipmentDetail("BOL", shipment.bolNumber)}
+        ${carrierShipmentDetail("origin/destination", formatCarrierShipmentLane(shipment))}
+        ${carrierShipmentDetail("carrier", shipment.carrierName)}
+        ${carrierShipmentDetail("service", shipment.service)}
+        ${carrierShipmentDetail("status", shipment.status)}
+        ${carrierShipmentDetail("carrier cost", money.format(shipment.carrierCost || 0))}
+        ${carrierShipmentDetail("imported date", formatDate(shipment.importedAt))}
+        ${carrierShipmentDetail("last provider update", formatDate(shipment.lastProviderUpdate))}
+      </dl>
+      <div class="shipment-actions">
+        <button class="secondary-action" type="button" data-carrier-shipment-id="${escapeHtml(shipment.id)}" data-carrier-shipment-action="sync-documents">${t("Sync Documents")}</button>
+        <button class="secondary-action" type="button" data-carrier-shipment-id="${escapeHtml(shipment.id)}" data-carrier-shipment-action="link">${t("Link to Local Shipment")}</button>
+        <button class="secondary-action" type="button" data-carrier-shipment-id="${escapeHtml(shipment.id)}" data-carrier-shipment-action="confirm-provider-portal">${t("Confirm Provider Portal Booking")}</button>
+        <button class="secondary-action" type="button" data-carrier-shipment-id="${escapeHtml(shipment.id)}" data-carrier-shipment-action="set-source-unknown">${t("Set Source Unknown")}</button>
+        <button class="secondary-action danger" type="button" data-carrier-shipment-id="${escapeHtml(shipment.id)}" data-carrier-shipment-action="unlink">${t("Unlink")}</button>
+      </div>
+    </article>
+  `;
+}
+
+function carrierShipmentDetail(label, value) {
+  return `
+    <div>
+      <dt>${t(label)}</dt>
+      <dd>${escapeHtml(value || t("Not available"))}</dd>
+    </div>
+  `;
+}
+
+function formatCarrierShipmentLane(shipment) {
+  const origin = formatCarrierShipmentStop(shipment.origin);
+  const destination = formatCarrierShipmentStop(shipment.destination);
+  return `${origin || t("Unknown origin")} → ${destination || t("Unknown destination")}`;
+}
+
+function formatCarrierShipmentStop(stop = {}) {
+  return [stop.city, stop.state, stop.zip].filter(Boolean).join(", ") || stop.address || "";
+}
+
+function carrierShipmentProviderLabel(provider) {
+  return {
+    mothership: "Mothership",
+    priority1: "Priority1",
+    speedship: "SpeedShip"
+  }[provider] || provider || t("Unknown provider");
+}
+
+function carrierShipmentImportSourceLabel(source) {
+  return {
+    tms_created: t("TMS-created"),
+    provider_import: t("Provider import"),
+    manual_import: t("Manual import")
+  }[source] || source || t("Unknown import source");
+}
+
+function carrierShipmentBookingChannelLabel(channel) {
+  return {
+    tms_api: t("Booked via TMS"),
+    provider_portal: t("Provider Portal"),
+    external_api: t("External API"),
+    unknown: t("Source Unknown")
+  }[channel] || channel || t("Source Unknown");
+}
+
+function carrierShipmentMatchingStatusLabel(status) {
+  return {
+    matched: t("Matched"),
+    manual: t("Manual"),
+    unmatched: t("Unmatched"),
+    conflict: t("Conflict")
+  }[status] || status || t("Unmatched");
 }
 
 function shipmentCarrierLabel(shipment) {
@@ -8938,6 +9246,7 @@ function renderShipments() {
       ${canManageCarrierInvoices() ? `<button class="secondary-action" type="button" data-sync-carrier-documents="">${t("Sync All Documents")}</button>` : ""}
     </div>
     ${staffFilterBarHtml("shipments", filters, activeFilter, activeRange)}
+    ${carrierShipmentManagementHtml()}
     <div class="customer-card-stack">
       ${shipments.length
         ? shipments.map(shipmentRow).join("")
