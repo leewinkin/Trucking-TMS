@@ -7,6 +7,7 @@ import {
   normalizePriority1InvoiceRecords,
   priority1DocumentCapabilitySummary,
   priority1InvoiceDocument,
+  priority1PaginationState,
   priority1NextPageToken
 } from "../server/carriers/priority1-documents.js";
 import { normalizeMothershipInvoiceDocument } from "../server/carriers/mothership-documents.js";
@@ -69,6 +70,8 @@ try {
   ]);
   assert.equal(collisionInvoices[0].shipmentId, null, "Priority1 reference number must not match a shipment PRO number");
   assert.equal(priority1NextPageToken({ pagination: { nextCursor: "cursor_2" } }), "cursor_2", "Priority1 pagination cursor should be recognized");
+  assert.deepEqual(priority1PaginationState({ pagination: { currentPage: 1, totalPages: 2 } }), { type: "page", page: 2 }, "Priority1 page-number pagination should be explicit");
+  assert.equal(priority1PaginationState({ nextPage: 2 }).type, "unsupported", "generic nextPage should not be treated as verified pagination");
 
   const p1MetadataOnly = priority1InvoiceDocument({ externalInvoiceId: "p1:invoice:1", invoiceNumber: "P1-1", rawCarrierResponse: {} });
   assert.equal(p1MetadataOnly.status, "pending", "Priority1 invoice metadata alone should not create an available document");
@@ -79,16 +82,31 @@ try {
     rawCarrierResponse: { documentUrl: "https://priority.example.test/invoice.pdf" }
   });
   assert.equal(p1WithUrl.status, "available", "Priority1 invoice document URL should be available when supplied by fixture");
+  const p1WithSignedUrlAndId = priority1InvoiceDocument({
+    externalInvoiceId: "p1:invoice:3",
+    invoiceNumber: "P1-3",
+    rawCarrierResponse: { documentId: "DOC-3", documentUrl: "https://priority.example.test/invoice.pdf?X-Amz-Signature=secret" }
+  });
+  assert.equal(p1WithSignedUrlAndId.status, "pending", "signed URL with document ID but no refresh contract should remain pending");
 
   const mothershipMetadataOnly = normalizeMothershipInvoiceDocument({ externalInvoiceId: "ms_1", invoiceNumber: "MS-1", rawCarrierResponse: {} });
   assert.equal(mothershipMetadataOnly.status, "pending", "Mothership invoice metadata alone should not create an available document");
 
   const speedshipDocs = normalizeSpeedshipDocuments(
-    { documents: [{ documentUrl: "https://speedship.example.test/bol.pdf", documentId: "BOL-1" }] },
+    {
+      documents: [
+        { documentUrl: "https://speedship.example.test/bol.pdf", documentId: "BOL-1", documentType: "BILL_OF_LADING" },
+        { documentUrl: "https://speedship.example.test/track", documentId: "TRACK-1", documentType: "TRACKING" },
+        { url: "https://speedship.example.test/self", type: "self" },
+        { url: "https://speedship.example.test/support", type: "support" }
+      ]
+    },
     { id: "ship_ss", customerId: "cust_1", status: "local_booking" },
     "PRODUCT-123"
   );
   assert.equal(speedshipDocs.length, 1, "SpeedShip local_booking shipment with valid product transaction ID can reach the document adapter");
+  assert.equal(speedshipDocs[0].documentType, "bol", "only verified SpeedShip BOL documents should be normalized");
+  assert.equal(speedshipDocs[0].customerVisible, true, "verified SpeedShip BOL should be customer-visible");
   assert.equal(speedshipDocs[0].providerReference.productTransactionId, "PRODUCT-123");
   assert.equal(/^LOCAL-|^demo/i.test("LOCAL-123"), true, "test fixture sanity check for fake references");
 
@@ -104,6 +122,8 @@ try {
   for (const key of ["authorization", "token", "access_token", "api_key", "signature", "sig", "x-amz-signature", "x-amz-credential", "x-amz-security-token"]) {
     assert.equal(Object.hasOwn(sanitizeProviderReference({ [key]: "secret", documentId: "DOC-1" }), key), false, `${key} should be redacted from provider references`);
   }
+  const unsigned = collectUrlDocuments({ documentUrl: "https://docs.example.test/bol.pdf" }, "mothership", "bol")[0];
+  assert.equal(unsigned.status, "available", "unsigned stable HTTPS URL should be available");
 
   assert.equal(priority1DocumentCapabilitySummary().skipped, 1);
   assert.match(priority1DocumentCapabilitySummary().message, /schema unavailable/);
@@ -140,17 +160,63 @@ async function assertDocumentSecurity() {
     assert.equal(validateDocumentDownloadUrl(blocked, allowedHosts).ok, false, `${blocked} should be rejected`);
   }
   assert.equal(validateDocumentDownloadUrl("https://docs.example.test/file.pdf", allowedHosts).ok, true, "allowed HTTPS document host should be accepted");
+  assert.equal(validateDocumentDownloadUrl("https://user:pass@docs.example.test/file.pdf", allowedHosts).ok, false, "URL credentials should be rejected");
+  const privateResolutions = [
+    "127.0.0.1",
+    "10.0.0.1",
+    "169.254.169.254",
+    "fd00::1"
+  ];
+  for (const address of privateResolutions) {
+    const result = await fetchSecureDocument("https://docs.example.test/file.pdf", {
+      allowedHosts,
+      resolveHost: async () => [{ address, family: address.includes(":") ? 6 : 4 }],
+      requestImpl: async () => response("SHOULD_NOT_FETCH")
+    });
+    assert.equal(result.ok, false, `allowed hostname resolving to ${address} should be rejected`);
+  }
+  let requestCount = 0;
+  let resolveCount = 0;
+  const publicResult = await fetchSecureDocument("https://docs.example.test/file.pdf", {
+    allowedHosts,
+    resolveHost: async () => {
+      resolveCount += 1;
+      return [{ address: "93.184.216.34", family: 4 }];
+    },
+    requestImpl: async (url, addresses) => {
+      requestCount += 1;
+      assert.equal(addresses[0].address, "93.184.216.34", "request should receive the pinned DNS result");
+      return response("PDF", { headers: { "content-type": "application/pdf" } });
+    }
+  });
+  assert.equal(publicResult.ok, true, "allowed hostname resolving to public IP should be allowed");
+  assert.equal(resolveCount, 1, "DNS should be resolved once before the pinned request");
+  assert.equal(requestCount, 1, "transport should not perform a second test-visible lookup");
   const redirect = await fetchSecureDocument("https://docs.example.test/start", {
     allowedHosts,
-    fetchImpl: async () => response("", {
+    resolveHost: async (hostname) => [{ address: hostname === "docs.example.test" ? "93.184.216.34" : "10.0.0.1", family: 4 }],
+    requestImpl: async () => response("", {
       status: 302,
       headers: { location: "https://10.0.0.1/private.pdf" }
     })
   });
   assert.equal(redirect.ok, false, "redirects to private hosts should be rejected");
+  let redirectStep = 0;
+  const allowedRedirect = await fetchSecureDocument("https://docs.example.test/start", {
+    allowedHosts,
+    resolveHost: async () => [{ address: "93.184.216.34", family: 4 }],
+    requestImpl: async () => {
+      redirectStep += 1;
+      return redirectStep === 1
+        ? response("", { status: 302, headers: { location: "https://docs.example.test/file.pdf" } })
+        : response("PDF", { headers: { "content-type": "application/pdf" } });
+    }
+  });
+  assert.equal(allowedRedirect.ok, true, "redirect to same allowed public host should work");
   const downloaded = await fetchSecureDocument("https://docs.example.test/file.pdf", {
     allowedHosts,
-    fetchImpl: async () => response("PDF", {
+    resolveHost: async () => [{ address: "93.184.216.34", family: 4 }],
+    requestImpl: async () => response("PDF", {
       headers: { "content-type": "application/pdf", "content-length": "3" }
     })
   });

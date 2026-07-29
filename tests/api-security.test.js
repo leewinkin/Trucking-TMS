@@ -6,7 +6,7 @@ import path from "node:path";
 
 const tempDir = await mkdtemp(path.join(os.tmpdir(), "tms-api-security-"));
 const dataFile = path.join(tempDir, "db.json");
-const port = 4100 + Math.floor(Math.random() * 1000);
+const port = 4300 + Math.floor(Math.random() * 500);
 let serverProcess = null;
 
 try {
@@ -152,12 +152,14 @@ try {
   assert.equal(customerInvoiceDownload.status, 403, "customer cannot download carrier invoice documents");
   const otherCustomerBolDownload = await customer.request("/api/carrier-documents/doc_bol_b/download");
   assert.equal(otherCustomerBolDownload.status, 403, "customer cannot download another customer's BOL/POD");
+  const pendingDownload = await admin.request("/api/carrier-documents/doc_pending_a/download");
+  assert.equal(pendingDownload.status, 404, "pending documents must not be downloadable");
   const customerCarrierDocumentList = await customer.request("/api/carrier-documents");
   assert.equal(customerCarrierDocumentList.status, 403);
 
   const adminDocuments = await admin.request("/api/carrier-documents");
   assert.equal(adminDocuments.status, 200);
-  assert.equal(adminDocuments.body.documents.length, 4);
+  assert.equal(adminDocuments.body.documents.length, 5);
   assert.equal(Object.hasOwn(adminDocuments.body.documents[0], "providerReference"), true);
   assert.equal(Object.hasOwn(adminDocuments.body.documents[0], "rawMetadata"), true);
   const missingDocumentSync = await admin.request("/api/carrier-documents/sync", {
@@ -398,7 +400,8 @@ function seedDb() {
       carrierDocument("doc_bol_a", "ship_a", "cust_a", "mothership", "bol", true),
       carrierDocument("doc_pod_a", "ship_a", "cust_a", "mothership", "pod", true),
       carrierDocument("doc_invoice_a", "ship_a", "cust_a", "mothership", "invoice", false),
-      carrierDocument("doc_bol_b", "ship_b", "cust_b", "mothership", "bol", true)
+      carrierDocument("doc_bol_b", "ship_b", "cust_b", "mothership", "bol", true),
+      { ...carrierDocument("doc_pending_a", "ship_a", "cust_a", "mothership", "invoice", false), status: "pending" }
     ],
     trackingEvents: []
   };

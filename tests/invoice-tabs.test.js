@@ -8,7 +8,11 @@ const invoiceFunctions = [
   extractFunction("invoiceGroupHtml"),
   extractFunction("invoiceGroups"),
   extractFunction("invoiceGroupKey"),
-  extractFunction("resolveInvoiceTab")
+  extractFunction("resolveInvoiceTab"),
+  extractFunction("invoiceDocumentAvailability"),
+  extractFunction("carrierInvoiceDocumentMatches"),
+  extractFunction("normalizeProviderKey"),
+  extractFunction("nonEmptyEqual")
 ].join("\n\n");
 
 const allInvoices = [
@@ -70,6 +74,17 @@ assert.match(app, /body: \{ providers: \["mothership", "priority1", "speedship"\
 const renderInvoicesSource = app.slice(app.indexOf("function renderInvoices"), app.indexOf("function invoiceGroupHtml"));
 assert.doesNotMatch(renderInvoicesSource, /Imported from Mothership|Other invoices|visibleOtherInvoices/, "legacy two-tab invoice labels should not remain in render logic");
 
+const matchApi = invoiceMatchApi([
+  carrierDocument("doc_ms", "mothership", "INV-1", "ms_ext", "ship_ms"),
+  carrierDocument("doc_p1", "priority1", "INV-1", "p1_ext", "ship_p1"),
+  carrierDocument("doc_missing", "mothership", "", "", "")
+]);
+assert.equal(matchApi.availability(invoice("invoice_ms", "mothership", "open", true, "ship_ms", "INV-1", "ms_ext")).url, "/ms.pdf", "Mothership invoice should match same-provider document");
+assert.equal(matchApi.availability(invoice("invoice_p1", "priority1", "open", true, "ship_p1", "INV-1", "p1_ext")).url, "/p1.pdf", "Priority1 invoice should match same-provider document with same invoice number");
+assert.equal(matchApi.availability(invoice("invoice_p1_cross", "priority1", "open", true, "ship_x", "INV-1", "missing")).url, "/p1.pdf", "same-provider invoice number match should win over cross-provider same number");
+assert.equal(matchApi.availability(invoice("invoice_missing", "mothership", "open", true, "", "", "")).url, "", "missing invoice IDs should not match each other");
+assert.equal(matchApi.availability(invoice("invoice_ship_fallback", "priority1", "open", true, "ship_p1", "", "")).url, "/p1.pdf", "linked shipment fallback should work within the same provider");
+
 console.log("invoice tab tests passed");
 
 function renderStaffInvoices({ invoices, invoiceTab = "mothership", activeFilter = "all", activeRange = "all" }) {
@@ -127,8 +142,25 @@ function renderInvoicesWithContext({ isCustomer, state }) {
   }
 }
 
-function invoice(id, source, status, inRange, shipmentId = "") {
-  return { id, source, status, inRange, shipmentId };
+function invoice(id, source, status, inRange, shipmentId = "", invoiceNumber = id, externalInvoiceId = "") {
+  return { id, source, status, inRange, shipmentId, invoiceNumber, externalInvoiceId };
+}
+
+function carrierDocument(id, provider, invoiceNumber, invoiceId, shipmentId) {
+  return {
+    id,
+    provider,
+    shipmentId,
+    documentType: "invoice",
+    status: "available",
+    url: provider === "mothership" ? "/ms.pdf" : "/p1.pdf",
+    providerReference: { invoiceNumber, invoiceId }
+  };
+}
+
+function invoiceMatchApi(carrierDocuments) {
+  const context = { state: { carrierDocuments } };
+  return vm.runInNewContext(`${invoiceFunctions}\n({ availability: invoiceDocumentAvailability, matches: carrierInvoiceDocumentMatches });`, context);
 }
 
 function extractFunction(name) {

@@ -124,7 +124,7 @@ export function collectUrlDocuments(payload, provider, fallbackType = "other") {
         label: type === "bol" ? "Bill of Lading" : type === "pod" ? "Proof of Delivery" : String(value.label || value.name || "Document").trim(),
         filename: value.filename || value.fileName || null,
         contentType: value.contentType || value.mimeType || null,
-        status: urlHasSensitiveQuery(url) && !readNestedString(value, [["id"], ["documentId"], ["documentID"], ["key"]]) ? "pending" : "available",
+        status: urlHasSensitiveQuery(url) ? "pending" : "available",
         providerReference: sanitizeProviderReference({ id, url }),
         rawMetadata: redactSensitiveMetadata(value),
         fetchedAt: new Date().toISOString()

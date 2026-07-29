@@ -1,4 +1,4 @@
-import { readNestedString, sanitizeProviderReference, stableDocumentKey, stableUrlReference } from "./document-normalizer.js";
+import { readNestedString, sanitizeProviderReference, stableDocumentKey, stableUrlReference, urlHasSensitiveQuery } from "./document-normalizer.js";
 
 export function priority1DocumentCapabilitySummary(reason = "Priority1 shipment image request schema unavailable.") {
   return {
@@ -56,16 +56,23 @@ export function priority1InvoiceRows(payload) {
           : [];
 }
 
-export function priority1NextPageToken(payload) {
-  return readNestedString(payload, [
-    ["nextPage"],
-    ["nextPageToken"],
+export function priority1PaginationState(payload) {
+  const cursor = readNestedString(payload, [
     ["nextCursor"],
-    ["cursor", "next"],
-    ["pagination", "nextPage"],
     ["pagination", "nextCursor"],
     ["meta", "nextCursor"]
   ]);
+  if (cursor) return { type: "cursor", cursor };
+  const page = readPageNumber(payload, [["page"], ["currentPage"], ["pagination", "page"], ["pagination", "currentPage"], ["meta", "page"], ["meta", "currentPage"]]);
+  const totalPages = readPageNumber(payload, [["totalPages"], ["total_pages"], ["pagination", "totalPages"], ["pagination", "total_pages"], ["meta", "totalPages"], ["meta", "total_pages"]]);
+  if (page && totalPages && page < totalPages) return { type: "page", page: page + 1 };
+  if (page && totalPages) return { type: "complete" };
+  return { type: "unsupported" };
+}
+
+export function priority1NextPageToken(payload) {
+  const state = priority1PaginationState(payload);
+  return state.type === "cursor" ? state.cursor : "";
 }
 
 function matchPriority1Shipment({ providerShipmentId, proNumber, bolNumber, referenceNumber }, shipments) {
@@ -79,6 +86,15 @@ function matchPriority1Shipment({ providerShipmentId, proNumber, bolNumber, refe
 
 function exact(left, right) {
   return Boolean(left && right && String(left).trim() === String(right).trim());
+}
+
+function readPageNumber(source, paths) {
+  for (const path of paths) {
+    const value = readNestedString(source, path.map((segment) => [segment]).flat().length ? [path] : []);
+    const number = Number(value);
+    if (Number.isInteger(number) && number > 0) return number;
+  }
+  return 0;
 }
 
 export function priority1InvoiceDocument(invoice) {
@@ -106,7 +122,7 @@ export function priority1InvoiceDocument(invoice) {
     documentType: "invoice",
     label: "Carrier Invoice",
     customerVisible: false,
-    status: documentUrl ? "available" : "pending",
+    status: documentUrl && !urlHasSensitiveQuery(documentUrl) ? "available" : "pending",
     providerReference: sanitizeProviderReference({
       documentId,
       url: documentUrl,

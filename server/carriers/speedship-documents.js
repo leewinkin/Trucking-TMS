@@ -1,21 +1,66 @@
-import { collectUrlDocuments, documentCustomerVisible, normalizeDocumentType, sanitizeProviderReference } from "./document-normalizer.js";
+import { normalizeDocumentType, readNestedString, sanitizeProviderReference, stableDocumentKey, stableUrlReference, urlHasSensitiveQuery } from "./document-normalizer.js";
 
 export function normalizeSpeedshipDocuments(payload, shipment = {}, productTransactionId = "") {
-  return collectUrlDocuments(payload, "speedship", "bol").map((record) => {
-    const type = normalizeDocumentType(record.documentType || "bol");
+  return speedshipDocumentRecords(payload).map((record) => {
+    const safeUrl = stableUrlReference(record.url);
     return {
-      ...record,
       provider: "speedship",
       shipmentId: shipment.id || null,
       customerId: shipment.customerId || null,
-      documentType: type,
-      customerVisible: documentCustomerVisible(type),
+      externalDocumentKey: stableDocumentKey("speedship", ["bol", record.id || safeUrl]),
+      documentType: "bol",
+      label: "Bill of Lading",
+      filename: record.filename || null,
+      contentType: record.contentType || null,
+      status: urlHasSensitiveQuery(record.url) ? "pending" : "available",
+      customerVisible: true,
       providerReference: sanitizeProviderReference({
-        ...record.providerReference,
+        id: record.id,
+        url: record.url,
         productTransactionId
-      })
+      }),
+      rawMetadata: {},
+      fetchedAt: new Date().toISOString()
     };
   });
+}
+
+export function speedshipDocumentRecords(payload) {
+  const collections = [
+    payload?.documents,
+    payload?.documentList,
+    payload?.data?.documents,
+    payload?.response?.documents,
+    payload?.billOfLadingDocuments,
+    payload?.bolDocuments,
+    payload?.data?.billOfLadingDocuments,
+    payload?.data?.bolDocuments
+  ].filter(Array.isArray);
+  return collections.flatMap((items) =>
+    items.map((item) => normalizeSpeedshipDocumentRecord(item, isBolOnlyCollection(items, payload))).filter(Boolean)
+  );
+}
+
+function normalizeSpeedshipDocumentRecord(item, bolOnlyCollection = false) {
+  if (!item || typeof item !== "object") return null;
+  const rawType = readNestedString(item, [["documentType"], ["docType"], ["type"], ["name"], ["label"]]);
+  const isBol = bolOnlyCollection || ["bill_of_lading", "billoflading", "bol"].includes(rawType.toLowerCase().replace(/[\s-]+/g, "_")) || normalizeDocumentType(rawType) === "bol";
+  if (!isBol) return null;
+  const url = readNestedString(item, [["documentUrl"], ["downloadUrl"], ["url"], ["href"]]);
+  if (!/^https:\/\//i.test(url)) return null;
+  return {
+    id: readNestedString(item, [["documentId"], ["id"], ["key"]]),
+    url,
+    filename: readNestedString(item, [["filename"], ["fileName"]]) || null,
+    contentType: readNestedString(item, [["contentType"], ["mimeType"]]) || null
+  };
+}
+
+function isBolOnlyCollection(items, payload) {
+  return items === payload?.billOfLadingDocuments ||
+    items === payload?.bolDocuments ||
+    items === payload?.data?.billOfLadingDocuments ||
+    items === payload?.data?.bolDocuments;
 }
 
 export function speedshipCapabilitySummary(reason = "SpeedShip invoice API contract unavailable.") {

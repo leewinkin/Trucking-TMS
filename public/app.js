@@ -4748,19 +4748,31 @@ function invoiceProviderLabel(invoice) {
 }
 
 function invoiceDocumentAvailability(invoice) {
-  const source = String(invoice?.source || "").toLowerCase();
-  const invoiceDocument = state.carrierDocuments.find((document) =>
-    document.documentType === "invoice" &&
-    (
-      (invoice.shipmentId && document.shipmentId === invoice.shipmentId && String(document.provider || "").toLowerCase() === source) ||
-      document.providerReference?.invoiceId === invoice.externalInvoiceId ||
-      document.providerReference?.invoiceNumber === invoice.invoiceNumber
-    )
-  );
+  const invoiceDocument = state.carrierDocuments.find((document) => carrierInvoiceDocumentMatches(invoice, document));
   if (invoiceDocument?.status === "available" && invoiceDocument.url) {
     return { label: "Document available", url: invoiceDocument.url };
   }
   return { label: "Document pending", url: "" };
+}
+
+function carrierInvoiceDocumentMatches(invoice, document) {
+  if (!invoice || !document || document.documentType !== "invoice") return false;
+  const invoiceProvider = normalizeProviderKey(invoice.source);
+  const documentProvider = normalizeProviderKey(document.provider);
+  if (!invoiceProvider || invoiceProvider !== documentProvider) return false;
+  const reference = document.providerReference || {};
+  if (nonEmptyEqual(reference.invoiceId, invoice.externalInvoiceId)) return true;
+  if (nonEmptyEqual(reference.invoiceNumber, invoice.invoiceNumber)) return true;
+  if (nonEmptyEqual(document.shipmentId, invoice.shipmentId)) return true;
+  return false;
+}
+
+function normalizeProviderKey(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function nonEmptyEqual(left, right) {
+  return Boolean(left && right && String(left).trim() === String(right).trim());
 }
 
 function invoiceDocumentAction(documentStatus) {

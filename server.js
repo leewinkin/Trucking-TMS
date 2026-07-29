@@ -22,8 +22,8 @@ import {
 } from "./public/quote-time-validation.js";
 import { normalizeMothershipDocuments, normalizeMothershipInvoiceDocument } from "./server/carriers/mothership-documents.js";
 import { normalizeSpeedshipDocuments, speedshipCapabilitySummary } from "./server/carriers/speedship-documents.js";
-import { normalizePriority1InvoiceRecords, priority1DocumentCapabilitySummary, priority1InvoiceDocument, priority1InvoiceRows, priority1NextPageToken } from "./server/carriers/priority1-documents.js";
-import { buildAllowedDocumentHosts, fetchSecureDocument } from "./server/document-download-security.js";
+import { normalizePriority1InvoiceRecords, priority1DocumentCapabilitySummary, priority1InvoiceDocument, priority1InvoiceRows, priority1PaginationState } from "./server/carriers/priority1-documents.js";
+import { buildAllowedDocumentHosts, fetchSecureDocument, validateDocumentDownloadUrl } from "./server/document-download-security.js";
 
 const __dirname = process.cwd();
 const port = Number(process.env.PORT || 3000);
@@ -1904,7 +1904,8 @@ async function syncPriority1Invoices() {
       updated: invoiceSummary.updated + documentSummary.updated,
       skipped: invoiceSummary.skipped + documentSummary.skipped,
       unmatched: invoices.filter((invoice) => !invoice.shipmentId).length,
-      failed: 0
+      failed: 0,
+      message: payload.paginationUnsupported ? "Priority1 pagination contract unavailable; fetched first page only." : undefined
     };
   } catch {
     return { ...emptySyncSummary("priority1"), failed: 1, message: "Priority1 invoice sync failed." };
@@ -1914,10 +1915,14 @@ async function syncPriority1Invoices() {
 async function requestPriority1CustomerInvoices() {
   const rows = [];
   let cursor = "";
+  let pageNumber = 1;
+  let paginationUnsupported = false;
   for (let page = 0; page < 25; page += 1) {
     const url = new URL(`${priority1BaseUrl.replace(/\/$/, "")}${priority1CustomerInvoicesPath}`);
     if (cursor) {
       url.searchParams.set("cursor", cursor);
+    } else if (pageNumber > 1) {
+      url.searchParams.set("page", String(pageNumber));
     }
     const response = await fetch(url.href, {
       method: "GET",
@@ -1933,13 +1938,23 @@ async function requestPriority1CustomerInvoices() {
       throw new PublicError(response.status, payload.message || payload.title || "PRIORITY1_ERROR", payload.detail || payload.message || "Priority1 invoice request failed.");
     }
     rows.push(...priority1InvoiceRows(payload));
-    const next = priority1NextPageToken(payload);
-    if (!next || next === cursor) {
-      break;
+    const pagination = priority1PaginationState(payload);
+    if (pagination.type === "cursor" && pagination.cursor !== cursor) {
+      cursor = pagination.cursor;
+      pageNumber = 1;
+      continue;
     }
-    cursor = next;
+    if (pagination.type === "page" && pagination.page !== pageNumber) {
+      pageNumber = pagination.page;
+      cursor = "";
+      continue;
+    }
+    if (pagination.type === "unsupported" && page === 0) {
+      paginationUnsupported = true;
+    }
+    break;
   }
-  return { invoices: rows };
+  return { invoices: rows, paginationUnsupported };
 }
 
 async function requestSpeedship(route, options) {
@@ -4164,7 +4179,24 @@ function customerCarrierDocument(document) {
 function internalCarrierDocument(document) {
   return {
     ...document,
-    url: document.status === "available" ? `/api/carrier-documents/${encodeURIComponent(document.id)}/download` : null
+    url: document.status === "available" ? `/api/carrier-documents/${encodeURIComponent(document.id)}/download` : null,
+    documentHostDiagnostic: carrierDocumentHostDiagnostic(document)
+  };
+}
+
+function carrierDocumentHostDiagnostic(document) {
+  const rawUrl = document?.providerReference?.url || document?.providerReference?.downloadUrl || "";
+  let host = "";
+  try {
+    host = rawUrl ? new URL(rawUrl).hostname : "";
+  } catch {
+    host = "";
+  }
+  return {
+    provider: document?.provider || "",
+    host,
+    allowed: rawUrl ? validateDocumentDownloadUrl(rawUrl, carrierDocumentAllowedHosts).ok : false,
+    status: rawUrl ? (validateDocumentDownloadUrl(rawUrl, carrierDocumentAllowedHosts).ok ? "configured" : "configuration_error") : "missing_url"
   };
 }
 

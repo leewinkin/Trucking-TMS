@@ -1,7 +1,9 @@
-import { collectUrlDocuments, documentCustomerVisible, normalizeDocumentType, readNestedString, sanitizeProviderReference, stableDocumentKey, stableUrlReference } from "./document-normalizer.js";
+import { collectUrlDocuments, documentCustomerVisible, normalizeDocumentType, readNestedString, sanitizeProviderReference, stableDocumentKey, stableUrlReference, urlHasSensitiveQuery } from "./document-normalizer.js";
 
 export function normalizeMothershipDocuments(payload, shipment = {}) {
-  return collectUrlDocuments(payload, "mothership", "other").map((record) => {
+  const explicit = mothershipDocumentRecords(payload);
+  const records = explicit.length ? explicit : collectUrlDocuments(payload, "mothership", "other");
+  return records.map((record) => {
     const type = normalizeDocumentType(record.documentType || record.label);
     return {
       ...record,
@@ -17,6 +19,35 @@ export function normalizeMothershipDocuments(payload, shipment = {}) {
       })
     };
   });
+}
+
+export function mothershipDocumentRecords(payload) {
+  const collections = [
+    payload?.documents,
+    payload?.data?.documents,
+    payload?.shipmentDocuments,
+    payload?.data?.shipmentDocuments
+  ].filter(Array.isArray);
+  return collections.flatMap((items) =>
+    items.map((item) => {
+      const type = normalizeDocumentType(readNestedString(item, [["documentType"], ["type"], ["name"], ["label"]]));
+      const url = readNestedString(item, [["documentUrl"], ["downloadUrl"], ["url"], ["href"]]);
+      if (!url || !/^https:\/\//i.test(url)) return null;
+      const id = readNestedString(item, [["documentId"], ["id"], ["key"]]) || stableUrlReference(url);
+      return {
+        provider: "mothership",
+        externalDocumentKey: stableDocumentKey("mothership", [type, id]),
+        documentType: type,
+        label: type === "bol" ? "Bill of Lading" : type === "pod" ? "Proof of Delivery" : "Document",
+        filename: readNestedString(item, [["filename"], ["fileName"]]) || null,
+        contentType: readNestedString(item, [["contentType"], ["mimeType"]]) || null,
+        status: urlHasSensitiveQuery(url) ? "pending" : "available",
+        providerReference: sanitizeProviderReference({ id, url }),
+        rawMetadata: {},
+        fetchedAt: new Date().toISOString()
+      };
+    }).filter(Boolean)
+  );
 }
 
 export function mothershipMissingReferenceSummary(shipment) {
@@ -56,7 +87,7 @@ export function normalizeMothershipInvoiceDocument(invoice) {
     ["invoice", "documentUrl"]
   ]);
   const stableKey = documentId || (documentUrl ? stableUrlReference(documentUrl) : key);
-  const available = Boolean(documentUrl);
+  const available = Boolean(documentUrl) && !urlHasSensitiveQuery(documentUrl);
   return {
     provider: "mothership",
     shipmentId: invoice.shipmentId || null,
