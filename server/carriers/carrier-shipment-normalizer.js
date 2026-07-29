@@ -120,10 +120,10 @@ export function matchImportedCarrierShipment(imported, localShipments = []) {
     ["externalShipmentId", imported.externalShipmentId, (shipment) => sameProvider(provider, shipment) && sameText(shipment.carrierShipmentId, imported.externalShipmentId)],
     ["entityId", imported.entityId, (shipment) => sameProvider(provider, shipment) && sameText(shipment.carrierEntityId, imported.entityId)],
     ["transactionId", imported.transactionId, (shipment) => sameProvider(provider, shipment) && sameText(localShipmentTransactionId(shipment), imported.transactionId)],
-    ["confirmationNumber", imported.confirmationNumber, (shipment) => sameText(shipment.confirmationNumber, imported.confirmationNumber)],
-    ["proNumber", imported.proNumber, (shipment) => sameText(localShipmentProNumber(shipment), imported.proNumber)],
-    ["bolNumber", imported.bolNumber, (shipment) => sameText(localShipmentBolNumber(shipment), imported.bolNumber)],
-    ["referenceNumber", imported.referenceNumber, (shipment) => sameText(shipment.referenceNumber, imported.referenceNumber)]
+    ["confirmationNumber", imported.confirmationNumber, (shipment) => sameProvider(provider, shipment) && sameText(shipment.confirmationNumber, imported.confirmationNumber)],
+    ["proNumber", imported.proNumber, (shipment) => sameProvider(provider, shipment) && sameText(localShipmentProNumber(shipment), imported.proNumber)],
+    ["bolNumber", imported.bolNumber, (shipment) => sameProvider(provider, shipment) && sameText(localShipmentBolNumber(shipment), imported.bolNumber)],
+    ["referenceNumber", imported.referenceNumber, (shipment) => sameProvider(provider, shipment) && sameText(shipment.referenceNumber, imported.referenceNumber)]
   ];
   for (const [field, value, predicate] of stages) {
     if (!String(value || "").trim()) continue;
@@ -161,10 +161,10 @@ export function classifyCarrierShipmentBookingChannel(imported, localShipment = 
       bookingChannelEvidence: imported.bookingChannelEvidence
     };
   }
-  if (providerPayloadIndicatesPortalCreation(imported?.rawProviderRecord)) {
+  if (imported?.bookingChannel === "provider_portal" && hasVerifiedProviderPortalEvidence(imported.bookingChannelEvidence)) {
     return {
       bookingChannel: "provider_portal",
-      bookingChannelEvidence: { source: "provider_reported_portal_creation" }
+      bookingChannelEvidence: imported.bookingChannelEvidence
     };
   }
   const matchingIdentifier = localShipment ? exactTmsBookingIdentifierMatch(imported, localShipment) : "";
@@ -181,6 +181,12 @@ export function classifyCarrierShipmentBookingChannel(imported, localShipment = 
     bookingChannel: "unknown",
     bookingChannelEvidence: {}
   };
+}
+
+export function hasVerifiedProviderPortalEvidence(evidence = {}) {
+  if (!evidence || typeof evidence !== "object") return false;
+  return evidence.source === "verified_provider_contract" &&
+    Boolean(String(evidence.providerField || "").trim());
 }
 
 export function sanitizeCarrierShipmentPayload(value, depth = 0) {
@@ -292,19 +298,6 @@ function hasVerifiedTmsBookingRequest(shipment) {
   );
 }
 
-function providerPayloadIndicatesPortalCreation(payload) {
-  const channel = String(readShipmentString(payload, [
-    ["bookingChannel"],
-    ["booking_channel"],
-    ["createdVia"],
-    ["created_via"],
-    ["source"],
-    ["creationSource"],
-    ["createdByType"]
-  ])).trim().toLowerCase();
-  return ["provider_portal", "portal", "web_portal", "carrier_portal"].includes(channel);
-}
-
 function stableUrlWithoutSensitiveQuery(value) {
   try {
     const parsed = new URL(String(value || ""));
@@ -321,10 +314,32 @@ function urlHasSensitiveQuery(value) {
     const parsed = new URL(String(value || ""));
     return Array.from(parsed.searchParams.keys()).some(isSensitiveCarrierShipmentKey);
   } catch {
-    return /[?&](authorization|bearer|token|access_token|api_key|cookie|set-cookie|password|secret|signature|sig|x-amz-signature|x-amz-credential|x-amz-security-token)=/i.test(String(value || ""));
+    return /[?&][^=]*(authorization|bearer|token|access.?token|api.?key|cookie|set.?cookie|password|secret|signature|sig|x.?amz.?signature|x.?amz.?credential|x.?amz.?security.?token)[^=]*=/i.test(String(value || ""));
   }
 }
 
 function isSensitiveCarrierShipmentKey(key) {
-  return /^(authorization|bearer|token|access_token|api_key|cookie|set-cookie|password|secret|signature|sig|x-amz-signature|x-amz-credential|x-amz-security-token)$/i.test(String(key || ""));
+  return new Set([
+    "authorization",
+    "authorizationheader",
+    "bearer",
+    "token",
+    "authtoken",
+    "accesstoken",
+    "apikey",
+    "cookie",
+    "setcookie",
+    "password",
+    "secret",
+    "clientsecret",
+    "signature",
+    "sig",
+    "xamzsignature",
+    "xamzcredential",
+    "xamzsecuritytoken"
+  ]).has(canonicalSensitiveKey(key));
+}
+
+function canonicalSensitiveKey(key) {
+  return String(key || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
 }

@@ -768,6 +768,13 @@ async function createPostgresStore(dbUrl, { runOrganizationMigrationOnStartup = 
       const { rows } = await pool.query("SELECT * FROM carrier_shipments WHERE id = $1", [id]);
       return rows[0] ? mapCarrierShipmentRow(rows[0]) : null;
     },
+    async getCarrierShipmentByProviderExternal(provider, externalShipmentId) {
+      const { rows } = await pool.query(
+        "SELECT * FROM carrier_shipments WHERE provider = $1 AND external_shipment_id = $2",
+        [provider, externalShipmentId]
+      );
+      return rows[0] ? mapCarrierShipmentRow(rows[0]) : null;
+    },
     async upsertCarrierShipments(shipments) {
       const summary = { created: 0, updated: 0, skipped: 0 };
       const client = await pool.connect();
@@ -2670,6 +2677,11 @@ async function createJsonStore(filePath, { runOrganizationMigrationOnStartup = f
     async getCarrierShipment(id) {
       const db = await readJsonDb(filePath);
       const record = db.carrierShipments.find((item) => item.id === id);
+      return record ? normalizeCarrierShipmentRecord(record) : null;
+    },
+    async getCarrierShipmentByProviderExternal(provider, externalShipmentId) {
+      const db = await readJsonDb(filePath);
+      const record = db.carrierShipments.find((item) => item.provider === provider && item.externalShipmentId === externalShipmentId);
       return record ? normalizeCarrierShipmentRecord(record) : null;
     },
     async upsertCarrierShipments(shipments) {

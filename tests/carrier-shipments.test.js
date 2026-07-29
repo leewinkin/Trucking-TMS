@@ -82,6 +82,39 @@ try {
   assert.equal(unlinked.linkedShipmentId, null, "explicit unlink clears local shipment");
   assert.equal(unlinked.customerId, null, "explicit unlink clears customer");
   assert.equal(unlinked.matchingStatus, "manual", "explicit unlink remains a manual administrator decision");
+  await store.upsertCarrierShipments([
+    carrierShipmentRecord({
+      provider: "mothership",
+      externalShipmentId: "MS-1",
+      linkedShipmentId: null,
+      customerId: null,
+      matchingStatus: "matched"
+    })
+  ]);
+  const persistedAfterUnlink = await store.getCarrierShipmentByProviderExternal("mothership", "MS-1");
+  assert.equal(persistedAfterUnlink.linkedShipmentId, null, "manual unlink survives repeated sync");
+  assert.equal(persistedAfterUnlink.customerId, null, "manual unlink customer stays clear after repeated sync");
+  assert.equal(persistedAfterUnlink.matchingStatus, "manual");
+
+  const relinked = await store.updateCarrierShipment(mothership.id, {
+    linkedShipmentId: "ship_doc_link",
+    customerId: "cust_doc",
+    matchingStatus: "manual"
+  });
+  await store.upsertCarrierShipments([
+    carrierShipmentRecord({
+      provider: "mothership",
+      externalShipmentId: "MS-1",
+      linkedShipmentId: null,
+      customerId: null,
+      matchingStatus: "unmatched"
+    })
+  ]);
+  const persistedForDocumentSync = await store.getCarrierShipmentByProviderExternal("mothership", "MS-1");
+  assert.equal(persistedForDocumentSync.id, relinked.id);
+  assert.equal(persistedForDocumentSync.linkedShipmentId, "ship_doc_link", "document sync lookup should receive preserved linked shipment");
+  assert.equal(persistedForDocumentSync.customerId, "cust_doc", "document sync lookup should receive preserved linked customer");
+  assert.equal(persistedForDocumentSync.matchingStatus, "manual");
 
   const unsupported = await Promise.all([
     fetchMothershipHistoricalShipments({}),
@@ -134,6 +167,8 @@ try {
   assert.match(serverSource, /requireManager\(currentUser\);[\s\S]*api\/carrier-shipments/, "carrier shipment management APIs should require manager access");
   assert.doesNotMatch(serverSource, /customer name|date proximity|reference-number similarity/i, "booking channel should not be inferred from fuzzy fields");
   assert.match(serverSource, /syncImportedCarrierShipmentDocuments/, "syncDocuments should use imported carrier shipment records");
+  assert.match(serverSource, /persistedCarrierShipmentsForSync/, "syncDocuments and summaries should use persisted merged records");
+  assert.match(serverSource, /getCarrierShipmentByProviderExternal/, "server should retrieve persisted rows by provider and external ID after upsert");
   assert.match(serverSource, /normalizeImportedShipmentDocuments/, "imported document sync should normalize unmatched/customer-visible behavior");
   assert.match(serverSource, /customerVisible: linked && \["bol", "pod"\]\.includes\(document\.documentType\)/, "linked BOL/POD may be visible but unmatched and invoices remain internal");
 
@@ -164,9 +199,11 @@ function assertExactMatchingAndBookingClassification() {
       carrierShipment: { request: { quoteId: "q", rateId: "r" }, response: { id: "MS-EXACT" } },
       status: "booked_with_carrier"
     }),
-    localShipment({ id: "ship_pro", proNumber: "PRO-EXACT", carrierShipment: { response: { proNumber: "PRO-EXACT" } } }),
+    localShipment({ id: "ship_pro", carrier: "mothership", proNumber: "PRO-EXACT", carrierShipment: { response: { proNumber: "PRO-EXACT" } } }),
+    localShipment({ id: "ship_bol", carrier: "mothership", bolNumber: "BOL-EXACT", carrierShipment: { response: { bolNumber: "BOL-EXACT" } } }),
     localShipment({ id: "ship_ref_a", referenceNumber: "DUP-REF" }),
-    localShipment({ id: "ship_ref_b", referenceNumber: "DUP-REF" })
+    localShipment({ id: "ship_ref_b", referenceNumber: "DUP-REF" }),
+    localShipment({ id: "ship_priority_conf", carrier: "priority1", confirmationNumber: "CONF-CROSS", proNumber: "PRO-CROSS", bolNumber: "BOL-CROSS", referenceNumber: "REF-CROSS", carrierShipment: { response: { proNumber: "PRO-CROSS", bolNumber: "BOL-CROSS" } } })
   ];
 
   const externalMatch = matchImportedCarrierShipment(carrierShipmentRecord({ provider: "mothership", externalShipmentId: "MS-EXACT" }), localShipments);
@@ -182,9 +219,23 @@ function assertExactMatchingAndBookingClassification() {
 
   const crossField = matchImportedCarrierShipment(carrierShipmentRecord({ externalShipmentId: "NOPE", entityId: "", transactionId: "", confirmationNumber: "", proNumber: "CONF-EXACT", bolNumber: "", referenceNumber: "" }), localShipments);
   assert.equal(crossField.status, "unmatched", "cross-field values must not match");
+  assert.equal(matchImportedCarrierShipment(carrierShipmentRecord({ provider: "mothership", externalShipmentId: "NOPE", entityId: "", transactionId: "", confirmationNumber: "CONF-CROSS", proNumber: "", bolNumber: "", referenceNumber: "" }), localShipments).status, "unmatched", "confirmation number must not cross-match another provider");
+  assert.equal(matchImportedCarrierShipment(carrierShipmentRecord({ provider: "mothership", externalShipmentId: "NOPE", entityId: "", transactionId: "", confirmationNumber: "", proNumber: "PRO-CROSS", bolNumber: "", referenceNumber: "" }), localShipments).status, "unmatched", "PRO must not cross-match another provider");
+  assert.equal(matchImportedCarrierShipment(carrierShipmentRecord({ provider: "mothership", externalShipmentId: "NOPE", entityId: "", transactionId: "", confirmationNumber: "", proNumber: "", bolNumber: "BOL-CROSS", referenceNumber: "" }), localShipments).status, "unmatched", "BOL must not cross-match another provider");
+  assert.equal(matchImportedCarrierShipment(carrierShipmentRecord({ provider: "mothership", externalShipmentId: "NOPE", entityId: "", transactionId: "", confirmationNumber: "", proNumber: "", bolNumber: "", referenceNumber: "REF-CROSS" }), localShipments).status, "unmatched", "reference must not cross-match another provider");
+  assert.equal(matchImportedCarrierShipment(carrierShipmentRecord({ provider: "mothership", externalShipmentId: "NOPE", entityId: "", transactionId: "", confirmationNumber: "", proNumber: "", bolNumber: "BOL-EXACT", referenceNumber: "" }), localShipments).shipment.id, "ship_bol", "same-provider exact BOL should still match");
 
   const localBooking = localShipment({ id: "local_only", carrier: "mothership", carrierShipmentId: "MS-LOCAL", status: "local_booking" });
   assert.equal(classifyCarrierShipmentBookingChannel(carrierShipmentRecord({ externalShipmentId: "MS-LOCAL" }), localBooking).bookingChannel, "unknown", "local_booking is not tms_api");
+  assert.equal(classifyCarrierShipmentBookingChannel(carrierShipmentRecord({ rawProviderRecord: { source: "portal" } })).bookingChannel, "unknown", "rawProviderRecord.source alone must not infer provider_portal");
+  assert.equal(classifyCarrierShipmentBookingChannel(carrierShipmentRecord({
+    bookingChannel: "provider_portal",
+    bookingChannelEvidence: { source: "verified_provider_contract", providerField: "creationChannel" }
+  })).bookingChannel, "provider_portal", "trusted normalized adapter evidence may classify provider_portal");
+  assert.equal(classifyCarrierShipmentBookingChannel(carrierShipmentRecord({
+    bookingChannel: "provider_portal",
+    bookingChannelEvidence: { source: "manual_admin_confirmation" }
+  })).bookingChannel, "provider_portal", "manual administrator confirmation remains provider_portal");
   assert.equal(classifyCarrierShipmentBookingChannel(carrierShipmentRecord({ externalShipmentId: "MS-EXACT" }), localShipments[0]).bookingChannel, "tms_api", "verified booking response exact ID is tms_api");
 
   const applied = applyAutomaticShipmentMatch(carrierShipmentRecord({ provider: "mothership", externalShipmentId: "MS-EXACT" }), localShipments);
@@ -208,13 +259,21 @@ function assertRawPayloadRedaction() {
     signature: "abc",
     sig: "abc",
     "x-amz-signature": "abc",
+    accessToken: "abc",
+    "Access-Token": "abc",
+    apiKey: "abc",
+    authToken: "abc",
+    clientSecret: "abc",
+    xAmzSignature: "abc",
+    "X-Amz-Credential": "abc",
+    x_amz_security_token: "abc",
     nested: {
-      url: "https://docs.example.test/file.pdf?X-Amz-Signature=hidden&safe=1",
+      url: "https://docs.example.test/file.pdf?X-Amz-Signature=hidden&accessToken=hidden2&safe=1",
       keep: "ok"
     }
   });
   const serialized = JSON.stringify(redacted);
-  for (const forbidden of ["authorization", "bearer", "token", "access_token", "api_key", "cookie", "set-cookie", "password", "secret", "signature", "sig", "x-amz-signature", "hidden"]) {
+  for (const forbidden of ["authorization", "bearer", "token", "access_token", "Access-Token", "api_key", "apiKey", "authToken", "clientSecret", "cookie", "set-cookie", "password", "secret", "signature", "sig", "x-amz-signature", "xAmzSignature", "X-Amz-Credential", "x_amz_security_token", "hidden", "hidden2"]) {
     assert.equal(serialized.includes(forbidden), false, `${forbidden} should be redacted`);
   }
   assert.equal(redacted.nested.url, "https://docs.example.test/file.pdf", "signed URL query parameters should be stripped");

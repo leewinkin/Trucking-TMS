@@ -1120,9 +1120,10 @@ async function syncCarrierShipmentProvider(provider, input = {}) {
     const shipments = (Array.isArray(response.shipments) ? response.shipments : [])
       .map((shipment) => applyAutomaticShipmentMatch(shipment, localShipments));
     const upsertSummary = shipments.length ? await store.upsertCarrierShipments(shipments) : { created: 0, updated: 0, skipped: 0 };
-    const summary = summarizeCarrierShipmentSync(provider, shipments, upsertSummary);
+    const persistedShipments = await persistedCarrierShipmentsForSync(provider, shipments);
+    const summary = summarizeCarrierShipmentSync(provider, persistedShipments, upsertSummary);
     if (input.syncDocuments) {
-      summary.documents = await syncImportedCarrierShipmentDocuments(provider, shipments);
+      summary.documents = await syncImportedCarrierShipmentDocuments(provider, persistedShipments);
     }
     return summary;
   } catch (error) {
@@ -1140,6 +1141,19 @@ async function syncCarrierShipmentProvider(provider, input = {}) {
       message: "Historical shipment sync failed."
     };
   }
+}
+
+async function persistedCarrierShipmentsForSync(provider, shipments = []) {
+  const records = [];
+  for (const shipment of shipments) {
+    const persisted = shipment.externalShipmentId
+      ? await store.getCarrierShipmentByProviderExternal(provider, shipment.externalShipmentId)
+      : null;
+    if (persisted) {
+      records.push(persisted);
+    }
+  }
+  return records;
 }
 
 async function fetchCarrierShipmentProvider(provider, input) {
